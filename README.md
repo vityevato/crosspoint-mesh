@@ -1,8 +1,10 @@
-# CrossPoint Reader
+# CrossPoint Mesh
 
-[![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
-
-CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
+CrossPoint Mesh is a fork of CrossPoint Reader — open-source firmware
+that combines a full-featured e-reader with a MeshCore client.
+Read EPUBs, manage your library, and stay connected to the MeshCore
+decentralized mesh network for off-grid communication — all from a
+single device. Community-built, fully hackable, free forever.
 
 **Now running on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
 
@@ -10,7 +12,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 ## What can CrossPoint do?
 
-- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more. 
+- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
 
 - **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
 
@@ -23,7 +25,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 - **Library workflow**: folder browser, hidden-file toggle, long-press delete, recent books, SD-cache management.
 
 - **Wireless workflows**:
-  
+
   - File transfer web UI
   - EPUB Optimizer
   - Web settings UI/API (edit many device settings from browser)
@@ -37,6 +39,25 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 - **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
 
 - **Localization**: 24 UI languages and counting. RTL support.
+
+- **MeshCore Client**: Built-in BLE client for the [MeshCore](https://meshcore.co.uk/) decentralized
+  mesh network — communicate without internet access, even in remote areas.
+
+  - **BLE companion connection** — scan for and pair with MeshCore companion devices (T-Beam,
+    etc.) via encrypted BLE with PIN authentication
+  - **Auto-reconnect** — automatically reconnects to the last paired companion when in range
+  - **Channels** — join and send messages on public channels, hashtag channels, and encrypted
+    private channels (up to 8)
+  - **Contacts & discovered nodes** — view saved contacts, browse mesh nodes discovered via
+    network advertisements, and add them as contacts
+  - **Direct messages** — send private messages to individual contacts with paginated
+    conversation history
+  - **Companion status** — view companion device info: battery level, storage, firmware version,
+    radio configuration (frequency, bandwidth, spreading factor)
+  - **SD persistence** — messages, contacts, and unread counts survive reboots via SD card
+    storage
+  - **Desktop simulator** — test all MeshCore UI without hardware using mock data
+    (`fs_/meshcore_mock.json`) and hotkeys 1-6
 
 ### Coming soon:
 
@@ -61,13 +82,13 @@ https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
 USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
 
 > ### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
-> 
+>
 > **The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
-> 
+>
 > Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
 > stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
 > the firmware you flashed doesn't support OTA, **there is no way out**.
-> 
+>
 > **The Papyrix fork has removed OTA update support from its code.** If you flash Papyrix onto a
 > USB-locked unit, you will have **zero update or recovery path** and will be stuck on it forever. **Do not flash
 > Papyrix (or any other unsupported firmware) on a locked device.**
@@ -143,6 +164,67 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 
 ---
 
+## Desktop Simulator
+
+A desktop simulator lets you test firmware UI without a device. It
+compiles natively (macOS/Linux) and renders the e-ink display in an
+SDL2 window.
+
+**Prerequisites**:
+- macOS: `brew install sdl2`
+- Linux (Debian/Ubuntu): `sudo apt install libsdl2-dev libssl-dev`
+
+**Build and run**:
+```bash
+# Build + launch in one command
+pio run -e simulator -t run_simulator
+
+# Or build only, then run
+pio run -e simulator
+.pio/build/simulator/program
+```
+
+**Setup**: Place EPUB books in `./fs_/books/` (maps to SD card
+`/books/`).
+
+**Keyboard controls**:
+
+| Key | Action |
+| --- | --- |
+| ↑ / ↓ | Page back / forward (side buttons) |
+| ← / → | Left / right front buttons |
+| Return | Confirm / Select |
+| Escape | Back |
+| P | Power |
+| S | Simulate sleep |
+
+For architecture details, stub descriptions, and cache management
+under the simulator, see the [Desktop Simulator](./CLAUDE.md) section
+in CLAUDE.md.
+
+**MeshCore simulation**: MeshCore activities (hub, discover, scan,
+status, thread) compile and render in the simulator. Place a
+`meshcore_mock.json` file in `fs_/` to activate the mock BLE layer —
+BLE operations return data from JSON instead of no-ops. Without the
+JSON file, all BLE operations are no-ops (the simulator has no real
+BLE hardware). All UI screens remain interactive regardless.
+
+Mock hotkeys for injecting BLE events:
+
+| Key | Action |
+| --- | --- |
+| 1 | Inject BLE disconnect |
+| 2 | Inject contact (discovered node) |
+| 3 | Inject channel created |
+| 4 | Inject channel message |
+| 5 | Inject direct message |
+| 6 | Inject companion status update |
+
+See [CLAUDE.md](./CLAUDE.md) for detailed simulator architecture
+and the mock session lifecycle.
+
+---
+
 ## Development quick start
 
 ### Prerequisites
@@ -203,7 +285,7 @@ Minor adjustments may be required for Windows.
 
 ## Internals
 
-CrossPoint Reader is pretty aggressive about caching data down to the SD card to minimise RAM usage. The ESP32-C3 only has ~380KB of usable RAM, so we have to be careful. A lot of the decisions made in the design of the firmware were based on this constraint.
+CrossPoint Mesh is pretty aggressive about caching data down to the SD card to minimise RAM usage. The ESP32-C3 only has ~380KB of usable RAM, so we have to be careful. A lot of the decisions made in the design of the firmware were based on this constraint.
 
 ### Data caching
 
@@ -257,7 +339,7 @@ One of the best things about open source is that anyone can take the code in a d
 
 - ~~[PlusPoint](https://github.com/ngxson/pluspoint-reader) — custom JS apps support.~~ (Unmaintained)
 
-- [crosspoint-reader-papers3](https://github.com/juicecultus/crosspoint-reader-papers3) — Crosspoint port for M5Stack Paper S3. 
+- [crosspoint-reader-papers3](https://github.com/juicecultus/crosspoint-reader-papers3) — Crosspoint port for M5Stack Paper S3.
 
 - [t5s3-reader](https://github.com/ShallowGreen123/t5s3-reader) — Crosspoint port for LilyGo T5 ePaper S3 / T5S3 4.7-inch e-paper device.
 
@@ -267,6 +349,6 @@ Want to build your own device? Be sure to check out the [de-link](https://github
 
 ---
 
-CrossPoint Reader is **not affiliated with Xteink or any device manufacturer**.
+CrossPoint Mesh is **not affiliated with Xteink or any device manufacturer**.
 
 Huge shoutout to [diy-esp32-epub-reader](https://github.com/atomic14/diy-esp32-epub-reader), which inspired this project.

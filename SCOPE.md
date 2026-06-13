@@ -1,7 +1,10 @@
-# Project Vision & Scope: CrossPoint Reader
+# Project Vision & Scope: CrossPoint Mesh
 
-The goal of CrossPoint Reader is to create an efficient, open-source reading experience for the Xteink X4. We believe a
-dedicated e-reader should do one thing exceptionally well: **facilitate focused reading.**
+The goal of CrossPoint Mesh is to create an efficient, open-source
+reading and MeshCore communication experience for the Xteink X4/X3. We
+believe a dedicated e-reader should do two things exceptionally
+well: **facilitate focused reading** and **enable offline MeshCore
+communication.**
 
 ## 1. Core Mission
 
@@ -25,6 +28,9 @@ usability over "swiss-army-knife" functionality.
 * **Library Management:** E.g. Simple, intuitive ways to organize and navigate a collection of books.
 * **Local Transfer:** E.g. Simple, "pull" based book loading via a basic web-server or public and widely-used standards.
 * **Language Support:** E.g. Support for multiple languages both in the reader and in the interfaces.
+* **MeshCore Communication:** E.g. BLE connection to MeshCore
+  companion devices, channel messaging, direct messages, contact
+  management, node discovery, companion status monitoring.
 * **Reference Tools:** E.g. Local dictionary lookup. Providing quick, offline definitions to enhance comprehension 
   without breaking focus.
 * **Clock Display (device dependent):** 
@@ -39,8 +45,11 @@ usability over "swiss-army-knife" functionality.
 *These items are rejected because they compromise the device's stability or mission.*
 
 * **Interactive Apps:** No Notepads, Calculators, or Games. This is a reader, not a PDA.
-* **Active Connectivity:** No RSS readers, News aggregators, or Web browsers. Background Wi-Fi tasks drain the battery
-  and complicate the single-core CPU's execution.
+* **Active Connectivity:** No RSS readers, News aggregators, or Web
+  browsers. Background Wi-Fi tasks drain the battery and complicate
+  the single-core CPU's execution. **Exception:** Bluetooth Low
+  Energy (BLE) for MeshCore communication is permitted — it is a
+  core feature of CrossPoint Mesh.
 * **Media Playback:** No Audio players or Audio-books.
 * **Complex Annotation:** No typed out notes. These features are better suited for devices with better input
   capabilities and more powerful chips.
@@ -53,10 +62,12 @@ usability over "swiss-army-knife" functionality.
 
 ## 3. Idea Evaluation
 
-While I appreciate the desire to add new and exciting features to CrossPoint Reader, CrossPoint Reader is designed to be
+While I appreciate the desire to add new and exciting features to CrossPoint Mesh, CrossPoint Mesh is designed to be
 a lightweight, reliable, and performant e-reader. Things which distract or compromise the device's core mission will not
-be accepted. As a guiding question, consider if your idea improve the "core reading experience" for the average user,
-and, critically, not distract from that reading experience.
+be accepted. As a guiding question, consider if your idea improves the "core
+reading experience" OR enhances the "MeshCore communication
+experience" for the average user, and, critically, not distract from
+either experience.
 
 > **Note to Contributors:** If you are unsure if your idea fits the scope, please open a **Discussion** before you start
 > coding!
