@@ -41,13 +41,17 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
     - `crosspoint-simulator` — desktop simulator library (SDL2-based
       HAL for macOS/Linux)
     - `ArduinoJson 7.4.2` — JSON parsing for settings
-    - `PNGdec ^1.0.0` — PNG decoding
+    - `PNGdec 1.1.6` — PNG decoding
     - `JPEGDEC` (pinned commit) — JPEG decoding
     - `QRCode 0.0.1` — QR code generation
     - `WebSockets 2.7.3` — WebSocket server for file upload
     - `NimBLE-Arduino 2.5.0` — BLE client for MeshCore
     - `expat` — XML parsing (vendored in `lib/expat/`)
     - `uzlib` — zlib decompression (vendored in `lib/uzlib/`)
+- **Internal libraries**:
+    - `lib/MeshCore/` — MeshCore BLE protocol client, message store
+    - `lib/Memory/` — `makeUniqueNoThrow` allocation helper
+    - `lib/MiniBidi/` — bidirectional text layout (Arabic, Hebrew)
 - **Storage**: SD card (SdFat via `HalStorage`). No database.
   Settings persist as `/settings.json`. EPUB caches persist as
   binary files under `.crosspoint/` on the SD card.
@@ -70,20 +74,34 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 ├── partitions.csv           # ESP32 flash partition layout
 ├── CLAUDE.md                # Detailed AI agent development guide
 ├── SCOPE.md                 # Feature scope boundaries
+├── GOVERNANCE.md            # Project governance
 ├── README.md                # User-facing project overview and install guide
 ├── USER_GUIDE.md            # End-user operating instructions
 ├── bin/                     # Developer scripts (clang-format-fix)
 ├── .githooks/               # Git hooks (pre-commit runs clang-format)
 ├── .github/workflows/       # CI: build, format check, cppcheck, releases
 ├── docs/                    # Technical and contributor documentation
-│   └── contributing/        # Getting started, architecture, workflow, testing
+│   ├── contributing/        # Getting started, architecture, workflow, testing
+│   └── images/              # Documentation images (comparison, focus-reading, wifi)
 ├── scripts/                 # Build-time and utility scripts (Python/Bash)
 ├── src/
 │   ├── main.cpp             # Entry point, boot sequence, activity orchestration
 │   ├── CrossPointSettings.h # SETTINGS singleton — user preferences
+│   ├── CrossPointSettings.cpp
 │   ├── CrossPointState.h    # APP_STATE singleton — runtime state
+│   ├── CrossPointState.cpp
 │   ├── MappedInputManager.h # Logical-to-physical button mapping
+│   ├── MappedInputManager.cpp
 │   ├── fontIds.h            # Global font ID constants
+│   ├── BookmarkEntry.h      # Bookmark data structure
+│   ├── FontInstaller.h/cpp  # SD card font installation
+│   ├── JsonSettingsIO.h/cpp # Settings JSON serialization
+│   ├── OpdsServerStore.h/cpp # OPDS server bookmark storage
+│   ├── RecentBooksStore.h/cpp # Recent books persistence
+│   ├── SdCardFontSystem.h/cpp # SD card font management
+│   ├── SettingsList.h       # Settings list definitions
+│   ├── SilentRestart.h      # Silent restart helper
+│   ├── WifiCredentialStore.h/cpp # WiFi credential persistence
 │   ├── activities/          # Activity lifecycle, ActivityManager, all activities
 │   │   ├── home/            # Home screen, file browser, recent books
 │   │   ├── reader/          # EPUB/TXT/XTC reading flows
@@ -91,10 +109,16 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   │   ├── network/         # WiFi selection, web server activity
 │   │   ├── boot_sleep/      # Boot and deep sleep transitions
 │   │   ├── browser/         # OPDS book browser
+│   │   ├── meshcore/        # MeshCore BLE activities (hub, discover, scan, chat)
 │   │   └── util/            # Keyboard entry, full-screen messages
-│   ├── meshcore/           # MeshCore BLE activities (hub, discover, scan, chat)
-│   ├── simulator/          # Simulator stubs: NimBLE, FreeRTOS, MeshCore mock
+│   ├── components/          # UI theme system, icons, themes
+│   │   ├── UITheme.h/cpp    # GUI singleton — orientation-aware rendering
+│   │   ├── icons/           # Icon headers (book, bookmark, cover, folder, wifi, …)
+│   │   └── themes/          # Lyra, Lyra3Covers, RoundedRaff themes
+│   ├── images/              # Image data (logo, loading icon, moon icon)
+│   ├── simulator/           # Simulator stubs: NimBLE, FreeRTOS, MeshCore mock
 │   ├── network/             # Web server, OTA updater, WebDAV, HTTP downloader
+│   │   └── html/            # HTML page sources (→ *.generated.h at build time)
 │   ├── util/                # Button navigator, string/URL/QR/screenshot utils
 │   └── platform/            # Platform-level patches (efuse check skip)
 ├── lib/
@@ -103,6 +127,9 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   ├── GfxRenderer/         # E-ink framebuffer rendering, orientation transforms
 │   ├── EpdFont/             # Font data structures, glyph rendering, built-in fonts
 │   ├── I18n/                # Internationalization (YAML translations → generated C++)
+│   ├── MeshCore/            # MeshCore BLE protocol client, message store
+│   ├── Memory/              # `makeUniqueNoThrow` allocation helper
+│   ├── MiniBidi/            # Bidirectional text layout (Arabic, Hebrew)
 │   ├── Txt/                 # Plain text file reader
 │   ├── Xtc/                 # XTC format reader
 │   ├── ZipFile/             # ZIP extraction (for EPUB)
@@ -121,7 +148,10 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   └── uzlib/               # Vendored zlib decompression
 ├── open-x4-sdk/             # Hardware SDK submodule (display, input, storage, battery)
 ├── fs_/                     # Simulator virtual SD card (./fs_/books/ maps to /books/)
+│   └── meshcore_mock.json   # MeshCore mock data for simulator
 └── test/                    # Desktop algorithm tests (JSON, hyphenation, rounding)
+    ├── epubs/               # Sample EPUB files for manual testing
+    └── language/             # Language-specific tests (RTL)
 ```
 
 ## Build And Test Commands
@@ -209,7 +239,7 @@ python3 scripts/gen_i18n.py lib/I18n/translations lib/I18n/
 
 - Do NOT manually edit generated files. These are regenerated at
   build time:
-    - `src/network/html/*.generated.h` (source: `data/html/`)
+    - `src/network/html/*.generated.h` (source: `src/network/html/`)
     - `lib/I18n/I18nKeys.h`, `lib/I18n/I18nStrings.h`,
       `lib/I18n/I18nStrings.cpp` (source:
       `lib/I18n/translations/*.yaml`)
@@ -436,8 +466,6 @@ constrained embedded target.
 
 **Known exclusions**:
 
-- `PNGdec ^1.0.0` uses a caret range instead of an exact pin.
-  Should be pinned to an exact version.
 - `JPEGDEC` is pinned to a specific git commit hash — acceptable
   for reproducibility, but should migrate to a tagged release when
   available.
@@ -471,7 +499,7 @@ build overrides. Never put personal settings in `platformio.ini`.
   [docs/webserver-endpoints.md](docs/webserver-endpoints.md)
 - Changes to i18n → edit YAML in `lib/I18n/translations/`, not
   generated files
-- Changes to HTML UI → edit source in `data/html/`, not
+- Changes to HTML UI → edit source in `src/network/html/`, not
   `*.generated.h`
 
 ### Markdown Formatting
