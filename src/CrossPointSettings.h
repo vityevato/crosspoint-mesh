@@ -225,6 +225,8 @@ class CrossPointSettings {
   uint8_t tiltPageTurn = TILT_OFF;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
+  // MeshCore: auto-reconnect to last companion on hub entry
+  uint8_t meshCoreAutoReconnect = 1;
 
   ~CrossPointSettings() = default;
 

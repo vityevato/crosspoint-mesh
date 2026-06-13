@@ -57,6 +57,11 @@ void logPrintf(const char* level, const char* origin, const char* format, ...);
 
 std::string getLastLogs();
 void clearLastLogs();
+
+// SD card file logging sink. When set, every log line is also written to this
+// Print object (typically an open HalFile). Caller owns the Print lifetime.
+void setLogFileSink(Print* sink);
+void clearLogFileSink();
 // Validates the RTC log state (magic word + logHead range). Returns true if
 // corruption was detected (magic mismatch or logHead out of range), meaning
 // logMessages is untrusted garbage. Callers should call clearLastLogs() when

@@ -1,0 +1,9 @@
+[685077] [INF] [MESH] SD log sink enabled: /meshcore.log
+[685085] [INF] [MESH] Message store initialized
+[685095] [INF] [MESH] Loaded 0 contacts
+[685126] [INF] [MESH] BLE initialized
+[685130] [INF] [MESH] Hub state: 2
+[685135] [INF] [MESH] Connecting to c2:0e:d3:71:13:d9 (type=1)
+[685156] [DBG] [GFX] Time = 21 ms from clearScreen to displayBuffer
+[685862] [INF] [MESH] BLE pairing complete (encrypted=1 bonded=1)
+[685868] [INF] [MESH] BLE link encrypted

@@ -33,6 +33,11 @@ void addToLogRingBuffer(const char* message) {
 // Since logging can take a large amount of flash, we want to make the format string as short as possible.
 // This logPrintf prepend the timestamp, level and origin to the user-provided message, so that the user only needs to
 // provide the format string for the message itself.
+static Print* sdLogSink = nullptr;
+
+void setLogFileSink(Print* sink) { sdLogSink = sink; }
+void clearLogFileSink() { sdLogSink = nullptr; }
+
 void logPrintf(const char* level, const char* origin, const char* format, ...) {
   va_list args;
   va_start(args, format);
@@ -61,6 +66,11 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
   va_end(args);
   if (logSerial) {
     logSerial.print(buf);
+  }
+  if (sdLogSink) {
+    size_t msgLen = strnlen(buf, MAX_ENTRY_LEN);
+    sdLogSink->write(reinterpret_cast<const uint8_t*>(buf), msgLen);
+    sdLogSink->flush();
   }
   addToLogRingBuffer(buf);
 }

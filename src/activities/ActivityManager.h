@@ -87,6 +87,7 @@ class ActivityManager {
   void goToSleep();
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
+  void goToMeshCore();
   void goToCrashReport();
   void goHome();
 
