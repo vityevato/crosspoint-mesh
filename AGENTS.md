@@ -201,6 +201,26 @@ bash test/run_differential_rounding_test.sh
 python3 scripts/gen_i18n.py lib/I18n/translations lib/I18n/
 ```
 
+### Language Server (clangd) Setup
+
+The project uses ESP32-C3 cross-compiler (`riscv32-esp-elf-g++`) which macOS
+clang cannot parse. To avoid false-positive errors in VS Code (red squiggles
+from RISC-V flags like `-march=rv32imc_zicsr_zifencei`):
+
+1. **Generate a clang-compatible compilation database**:
+   ```sh
+   pio run -e simulator -t compiledb
+   ```
+   This overwrites `compile_commands.json` with simulator (native clang)
+   commands instead of ESP32-C3 cross-compiler commands.
+
+2. **After `pio run -t compiledb` (default env)**: the file gets overwritten
+   back to ESP32-C3. Just re-run step 1.
+
+3. **`.clangd`** is configured with `Compiler: clang++` and `Remove` rules for
+   incompatible flags as a safety net. Both `.clangd` and `compile_commands*.json`
+   are gitignored — local dev setup only.
+
 ## Contribution Instructions
 
 - You MUST verify your changes with the formatter and static analysis.

@@ -1,2 +1,11 @@
 CompileFlags:
-    Add: [-std=c++2a]
+    # Use macOS clang++ for parsing, not riscv32-esp-elf-g++ from compile_commands.json
+    Compiler: clang++
+    Add: [-std=c++2a, -I/opt/homebrew/include]
+    Remove: [-fstrict-volatile-bitfields, -fno-tree-switch-conversion, -march=*, -nostartfiles, -gdwarf-4, -ggdb, -fno-jump-tables, -fstack-protector, -Wno-*, -fno-rtti, -fuse-cxa-atexit]
+
+Hover:
+    ShowAKA: Yes
+
+Diagnostics:
+    UnusedIncludes: Strict

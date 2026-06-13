@@ -9,6 +9,22 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
+/**
+ * MeshCoreThreadActivity shows a paginated message thread for either a
+ * LoRa channel (group chat) or a direct message conversation with a
+ * contact.
+ *
+ * Two constructors:
+ *  - Channel thread: takes a channel index and name.
+ *  - Direct message thread: takes a MeshCoreContact (stores pubkey).
+ *
+ * Messages are loaded from MeshCoreMessageStore in pages. The activity
+ * auto-refreshes when the store grows (new messages from hub callbacks)
+ * and automatically scrolls to the newest page.
+ *
+ * Up/Down navigates pages; Confirm opens KeyboardEntryActivity to send
+ * a reply.
+ */
 class MeshCoreThreadActivity final : public Activity {
  public:
   // Channel thread constructor

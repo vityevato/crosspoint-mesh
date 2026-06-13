@@ -7,6 +7,19 @@
 
 struct Rect;
 
+/**
+ * MeshCoreStatusActivity displays companion device status information
+ * after a successful BLE connection.
+ *
+ * Fields shown:
+ *  - Device name, model, firmware version
+ *  - Battery voltage (requested on enter, refreshable via Confirm)
+ *  - Storage usage (used / total KB)
+ *  - Radio configuration (frequency, bandwidth, SF, CR)
+ *  - BLE address
+ *
+ * Displays "Disconnected" if the BLE link is lost.
+ */
 class MeshCoreStatusActivity final : public Activity {
  public:
   MeshCoreStatusActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, MeshCoreClient& client);

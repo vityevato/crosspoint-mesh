@@ -10,6 +10,25 @@
 
 struct Rect;
 
+/**
+ * MeshCoreHubActivity is the central entry point for all MeshCore
+ * functionality. It owns the BLE client and message store for its
+ * entire lifetime.
+ *
+ * On enter:
+ * - Initialises BLE, disconnects WiFi (ESP32-C3 shares radio).
+ * - Launches MeshCoreScanActivity to find and pair with a companion.
+ * - On reconnect-enabled: auto-connects via stored bonding.
+ *
+ * After connection, it presents a tabbed UI:
+ *  - CHANNELS — list of LoRa channels from the companion.
+ *  - CONTACTS — saved peer contacts.
+ *  - DISCOVERED — advertised nodes not yet saved.
+ *  - STATUS — companion device info (battery, firmware, radio, etc.).
+ *
+ * Callbacks (static → instance trampolines) handle BLE state changes,
+ * incoming messages, contacts, adverts, and channel list updates.
+ */
 class MeshCoreHubActivity final : public Activity {
  public:
   explicit MeshCoreHubActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
