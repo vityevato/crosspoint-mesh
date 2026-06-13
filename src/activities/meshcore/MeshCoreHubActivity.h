@@ -33,7 +33,7 @@ class MeshCoreHubActivity final : public Activity {
   MeshCoreClient client;
   MeshCoreMessageStore store;
   ButtonNavigator buttonNavigator;
-  FsFile sdLogFile;
+  HalFile sdLogFile;
 
   Tab currentTab = Tab::CHANNELS;
   int selectedIndex = 0;

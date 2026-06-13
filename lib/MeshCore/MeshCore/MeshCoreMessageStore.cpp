@@ -46,7 +46,7 @@ void MeshCoreMessageStore::buildContactPath(const uint8_t* pubkey32, char* out, 
 // --- Generic message operations ---
 
 bool MeshCoreMessageStore::appendMessage(const char* filePath, const MeshCoreMessage& msg) {
-  FsFile file;
+  HalFile file;
 
   if (Storage.exists(filePath)) {
     // Read existing file
@@ -130,7 +130,7 @@ bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t cu
     return false;
   }
 
-  FsFile src;
+  HalFile src;
   if (!Storage.openFileForRead("MESH", filePath, src)) {
     free(buf);
     return false;
@@ -149,7 +149,7 @@ bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t cu
   }
 
   // Overwrite the file with header + kept messages
-  FsFile dst;
+  HalFile dst;
   if (!Storage.openFileForWrite("MESH", filePath, dst)) {
     free(buf);
     return false;
@@ -166,7 +166,7 @@ bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t cu
 }
 
 uint16_t MeshCoreMessageStore::getMessageCount(const char* filePath) {
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForRead("MESH", filePath, file)) {
     return 0;
   }
@@ -186,7 +186,7 @@ uint16_t MeshCoreMessageStore::getMessageCount(const char* filePath) {
 bool MeshCoreMessageStore::loadMessages(const char* filePath, uint16_t offset,
                                         MeshCoreMessage* out, uint8_t count, uint8_t& loaded) {
   loaded = 0;
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForRead("MESH", filePath, file)) {
     return false;
   }
@@ -290,7 +290,7 @@ bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint16_t 
 // --- Contacts ---
 
 bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint8_t count) {
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForWrite("MESH", CONTACTS_FILE, file)) {
     LOG_ERR("MESH", "Failed to open contacts file for write");
     return false;
@@ -309,7 +309,7 @@ bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint8_t
 }
 
 uint8_t MeshCoreMessageStore::loadContacts(MeshCoreContact* out, uint8_t maxCount) {
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForRead("MESH", CONTACTS_FILE, file)) {
     return 0;
   }
@@ -342,7 +342,7 @@ uint8_t MeshCoreMessageStore::loadContacts(MeshCoreContact* out, uint8_t maxCoun
 bool MeshCoreMessageStore::saveCompanionAddress(const char* bleAddr, uint8_t addressType) {
   if (!bleAddr || bleAddr[0] == '\0') return false;
 
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForWrite("MESH", COMPANION_FILE, file)) {
     LOG_ERR("MESH", "Failed to save companion address");
     return false;
@@ -356,7 +356,7 @@ bool MeshCoreMessageStore::saveCompanionAddress(const char* bleAddr, uint8_t add
 }
 
 bool MeshCoreMessageStore::loadCompanionAddress(char* out, size_t maxLen, uint8_t* addressType) {
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForRead("MESH", COMPANION_FILE, file)) {
     return false;
   }
@@ -392,7 +392,7 @@ bool MeshCoreMessageStore::loadCompanionAddress(char* out, size_t maxLen, uint8_
 bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8_t channelCount,
                                             const MeshCoreContact* contacts,
                                             uint8_t contactCount) {
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForWrite("MESH", UNREAD_FILE, file)) {
     LOG_ERR("MESH", "Failed to save unread counts");
     return false;
@@ -419,7 +419,7 @@ bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8
 
 bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint8_t channelCount,
                                             MeshCoreContact* contacts, uint8_t contactCount) {
-  FsFile file;
+  HalFile file;
   if (!Storage.openFileForRead("MESH", UNREAD_FILE, file)) {
     return false;
   }
