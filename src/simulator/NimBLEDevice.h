@@ -490,8 +490,7 @@ class NimBLERemoteCharacteristic {
         size_t bodyLen = strlen(msg.text);
         if (msg.direction == 0) {  // received
           // Prepend "SenderName: "
-          size_t prefixLen = snprintf(formattedText, sizeof(formattedText),
-                                      "%s: ", defaultSender);
+          size_t prefixLen = snprintf(formattedText, sizeof(formattedText), "%s: ", defaultSender);
           size_t copyLen = bodyLen;
           if (prefixLen + copyLen > sizeof(formattedText) - 1) {
             copyLen = sizeof(formattedText) - 1 - prefixLen;
@@ -514,15 +513,18 @@ class NimBLERemoteCharacteristic {
         size_t pktLen = 11 + textLen;
         uint8_t buf[256];
         size_t off = 0;
-        buf[off++] = 0x11;        // PKT_CHANNEL_MSG_V3
-        buf[off++] = 0;           // snr
-        buf[off++] = 0; buf[off++] = 0;  // 2 reserved
-        buf[off++] = ch;          // channel index
-        buf[off++] = 0;           // pathLen
-        buf[off++] = 0;           // txtType
+        buf[off++] = 0x11;  // PKT_CHANNEL_MSG_V3
+        buf[off++] = 0;     // snr
+        buf[off++] = 0;
+        buf[off++] = 0;   // 2 reserved
+        buf[off++] = ch;  // channel index
+        buf[off++] = 0;   // pathLen
+        buf[off++] = 0;   // txtType
         uint32_t ts = msg.timestamp;
-        memcpy(buf + off, &ts, 4); off += 4;  // timestamp LE
-        memcpy(buf + off, formattedText, textLen); off += textLen;
+        memcpy(buf + off, &ts, 4);
+        off += 4;  // timestamp LE
+        memcpy(buf + off, formattedText, textLen);
+        off += textLen;
         notifyCb(this, buf, off, true);
       }
     }
@@ -548,15 +550,15 @@ class NimBLERemoteCharacteristic {
     if (batteryMv > 0) {
       int jitter = randInRange(101) - 50;  // -50..+50 mV
       int newMv = static_cast<int>(batteryMv) + jitter;
-      if (newMv < 3000) newMv = 3000;   // plausible floor
-      if (newMv > 4300) newMv = 4300;   // plausible ceiling (LiPo)
+      if (newMv < 3000) newMv = 3000;  // plausible floor
+      if (newMv > 4300) newMv = 4300;  // plausible ceiling (LiPo)
       batteryMv = static_cast<uint16_t>(newMv);
     } else {
       batteryMv = 3700;  // default if JSON had 0
     }
 
     uint8_t buf[3];
-    buf[0] = 0x0C;  // PKT_BATTERY
+    buf[0] = 0x0C;                   // PKT_BATTERY
     memcpy(buf + 1, &batteryMv, 2);  // mV LE
     notifyCb(this, buf, 3, true);
     LOG_DBG("MOCK", "injectBattery: %d mV", batteryMv);
@@ -746,12 +748,15 @@ inline void pollMock(NimBLEClient* client, uint32_t nowMs) {
     size_t off = 0;
     buf[off++] = 0x11;
     buf[off++] = 0;
-    buf[off++] = 0; buf[off++] = 0;
+    buf[off++] = 0;
+    buf[off++] = 0;
     buf[off++] = sPendingEcho.channelIdx;
     buf[off++] = 0;
     buf[off++] = 0;
-    memcpy(buf + off, &ts, 4); off += 4;
-    memcpy(buf + off, echoText, textLen); off += textLen;
+    memcpy(buf + off, &ts, 4);
+    off += 4;
+    memcpy(buf + off, echoText, textLen);
+    off += textLen;
     client->injectPacket(buf, off);
     LOG_INF("MOCK", "echo channel msg ch=%d: %.40s", sPendingEcho.channelIdx, echoText);
   } else if (sPendingEcho.type == PendingEchoType::DM) {
@@ -763,12 +768,16 @@ inline void pollMock(NimBLEClient* client, uint32_t nowMs) {
     size_t off = 0;
     buf[off++] = 0x10;
     buf[off++] = 0;
-    buf[off++] = 0; buf[off++] = 0;
-    memcpy(buf + off, sPendingEcho.pubkeyPrefix, 6); off += 6;
     buf[off++] = 0;
     buf[off++] = 0;
-    memcpy(buf + off, &ts, 4); off += 4;
-    memcpy(buf + off, echoText, textLen); off += textLen;
+    memcpy(buf + off, sPendingEcho.pubkeyPrefix, 6);
+    off += 6;
+    buf[off++] = 0;
+    buf[off++] = 0;
+    memcpy(buf + off, &ts, 4);
+    off += 4;
+    memcpy(buf + off, echoText, textLen);
+    off += textLen;
     client->injectPacket(buf, off);
     LOG_INF("MOCK", "echo DM msg: %.40s", echoText);
   }

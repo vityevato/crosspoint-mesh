@@ -148,15 +148,18 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     size_t pktLen = 11 + textLen;
     uint8_t buf[256];
     size_t off = 0;
-    buf[off++] = 0x11;   // PKT_CHANNEL_MSG_V3
-    buf[off++] = 0;      // snr
-    buf[off++] = 0; buf[off++] = 0;  // 2 reserved
-    buf[off++] = 0;      // channelIdx = 0 (public channel)
-    buf[off++] = 0;      // pathLen
-    buf[off++] = 0;      // txtType
+    buf[off++] = 0x11;  // PKT_CHANNEL_MSG_V3
+    buf[off++] = 0;     // snr
+    buf[off++] = 0;
+    buf[off++] = 0;  // 2 reserved
+    buf[off++] = 0;  // channelIdx = 0 (public channel)
+    buf[off++] = 0;  // pathLen
+    buf[off++] = 0;  // txtType
     uint32_t ts = static_cast<uint32_t>(time(nullptr));
-    memcpy(buf + off, &ts, 4); off += 4;  // timestamp LE
-    memcpy(buf + off, msgText, textLen); off += textLen;
+    memcpy(buf + off, &ts, 4);
+    off += 4;  // timestamp LE
+    memcpy(buf + off, msgText, textLen);
+    off += textLen;
     bleClient->injectPacket(buf, off);
     LOG_INF("MOCK", "[%s] key 4: inject channel message", activityName);
     return true;
@@ -172,9 +175,10 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     size_t pktLen = 16 + textLen;
     uint8_t buf[256];
     size_t off = 0;
-    buf[off++] = 0x10;   // PKT_CONTACT_MSG_V3
-    buf[off++] = 0;      // snr
-    buf[off++] = 0; buf[off++] = 0;  // 2 reserved
+    buf[off++] = 0x10;  // PKT_CONTACT_MSG_V3
+    buf[off++] = 0;     // snr
+    buf[off++] = 0;
+    buf[off++] = 0;  // 2 reserved
     // Use the first contact's pubkey prefix if available
     const MockCompanion* comp = bleClient->getMockCompanion();
     if (comp && comp->contactCount > 0) {
@@ -187,19 +191,20 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
           if (c >= 'a' && c <= 'f') return c - 'a' + 10;
           return 0;
         };
-        pk6[i] = (nib(comp->contacts[0].publicKey[i * 2]) << 4)
-               | nib(comp->contacts[0].publicKey[i * 2 + 1]);
+        pk6[i] = (nib(comp->contacts[0].publicKey[i * 2]) << 4) | nib(comp->contacts[0].publicKey[i * 2 + 1]);
       }
       memcpy(buf + off, pk6, 6);
     } else {
       memset(buf + off, 0, 6);  // fallback: all zeros
     }
     off += 6;
-    buf[off++] = 0;      // pathLen
-    buf[off++] = 0;      // txtType
+    buf[off++] = 0;  // pathLen
+    buf[off++] = 0;  // txtType
     uint32_t ts = static_cast<uint32_t>(time(nullptr));
-    memcpy(buf + off, &ts, 4); off += 4;  // timestamp LE
-    memcpy(buf + off, msgText, textLen); off += textLen;
+    memcpy(buf + off, &ts, 4);
+    off += 4;  // timestamp LE
+    memcpy(buf + off, msgText, textLen);
+    off += textLen;
     bleClient->injectPacket(buf, off);
     LOG_INF("MOCK", "[%s] key 5: inject DM", activityName);
     return true;
@@ -225,8 +230,7 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
         if (c >= 'a' && c <= 'f') return c - 'a' + 10;
         return 0;
       };
-      buf[1 + i] = (nib(comp->publicKey[i * 2]) << 4)
-                 | nib(comp->publicKey[i * 2 + 1]);
+      buf[1 + i] = (nib(comp->publicKey[i * 2]) << 4) | nib(comp->publicKey[i * 2 + 1]);
     }
     bleClient->injectPacket(buf, sizeof(buf));
     LOG_INF("MOCK", "[%s] key 6: status refresh", activityName);

@@ -286,6 +286,11 @@ bool HalGPIO::isUsbConnected() const {
   return digitalRead(UART0_RXD) == HIGH;
 }
 
+bool HalGPIO::consumeSimulatorSleepRequest() {
+  // No-op on real hardware. The simulator overrides this to handle the 'S' key.
+  return false;
+}
+
 HalGPIO::WakeupReason HalGPIO::getWakeupReason() const {
   const auto wakeupCause = esp_sleep_get_wakeup_cause();
   const auto resetReason = esp_reset_reason();

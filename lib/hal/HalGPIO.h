@@ -72,6 +72,10 @@ class HalGPIO {
   unsigned long getHeldTime() const;
   unsigned long getPowerButtonHeldTime() const;
 
+  // Returns true on the simulator when the 'S' key was pressed since last call.
+  // On real hardware always returns false.
+  bool consumeSimulatorSleepRequest();
+
   // Setup wake up GPIO and enter deep sleep
   void startDeepSleep();
 
