@@ -18,6 +18,11 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+#ifdef SIMULATOR
+#include <MeshCoreMockHotkeys.h>
+#include <MockSession.h>
+#endif
+
 // --- Callbacks ---
 
 void MeshCoreHubActivity::onStateChanged(BleConnectionState state, void* ctx) {
@@ -46,6 +51,10 @@ static constexpr const char* MESH_LOG_PATH = "/meshcore.log";
 
 void MeshCoreHubActivity::onEnter() {
   Activity::onEnter();
+
+#ifdef SIMULATOR
+  MockSession::loadMockConfig("/meshcore_mock.json");
+#endif
 
   // SD card debug logging — delete old log and start fresh
   if (Storage.exists(MESH_LOG_PATH)) {
@@ -121,22 +130,26 @@ void MeshCoreHubActivity::onExit() {
   store.saveUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
 
   client.deinit();
+
+#ifdef SIMULATOR
+  MockSession::unloadMockConfig();
+#endif
+
   Activity::onExit();
 }
 
 void MeshCoreHubActivity::launchScanActivity() {
-  startActivityForResult(
-      std::make_unique<MeshCoreScanActivity>(renderer, mappedInput, client),
-      [this](const ActivityResult& result) {
-        if (result.isCancelled) {
-          onGoHome();
-          return;
-        }
-        // Connected — fetch channels
-        channelCount = client.getCompanion().maxChannels;
-        if (channelCount > 8) channelCount = 8;
-        requestUpdate();
-      });
+  startActivityForResult(std::make_unique<MeshCoreScanActivity>(renderer, mappedInput, client),
+                         [this](const ActivityResult& result) {
+                           if (result.isCancelled) {
+                             onGoHome();
+                             return;
+                           }
+                           // Connected — fetch channels
+                           channelCount = client.getCompanion().maxChannels;
+                           if (channelCount > 8) channelCount = 8;
+                           requestUpdate();
+                         });
 }
 
 // --- Input handling ---
@@ -185,6 +198,14 @@ void MeshCoreHubActivity::loop() {
     switchTab(static_cast<Tab>(tab));
     return;
   }
+
+#ifdef SIMULATOR
+  if (handleMockKey("Hub", client.getBleClient())) {
+    requestUpdate();
+    return;
+  }
+  pollMock(client.getBleClient(), millis());
+#endif
 
   int listCount = getListCountForCurrentTab();
 
@@ -278,8 +299,7 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   // Header
-  const char* companionName =
-      client.getState() == BleConnectionState::CONNECTED ? client.getCompanion().name : nullptr;
+  const char* companionName = client.getState() == BleConnectionState::CONNECTED ? client.getCompanion().name : nullptr;
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
                  companionName);
 
@@ -355,8 +375,7 @@ void MeshCoreHubActivity::renderChannelList(const Rect& contentRect) {
   }
 
   if (!hasChannels) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2,
-                              tr(STR_MESHCORE_NO_CHANNELS));
+    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_NO_CHANNELS));
     return;
   }
 
@@ -376,8 +395,7 @@ void MeshCoreHubActivity::renderChannelList(const Rect& contentRect) {
 
 void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
   if (savedContactCount == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2,
-                              tr(STR_MESHCORE_NO_CONTACTS));
+    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_NO_CONTACTS));
     return;
   }
 
@@ -397,8 +415,7 @@ void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
 
 void MeshCoreHubActivity::renderDiscoveredList(const Rect& contentRect) {
   if (discoveredNodeCount == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2,
-                              tr(STR_MESHCORE_NO_DEVICES));
+    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_NO_DEVICES));
     return;
   }
 
@@ -418,8 +435,7 @@ void MeshCoreHubActivity::renderDiscoveredList(const Rect& contentRect) {
 void MeshCoreHubActivity::renderStatus(const Rect& contentRect) {
   const auto& comp = client.getCompanion();
   if (client.getState() != BleConnectionState::CONNECTED) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2,
-                              tr(STR_MESHCORE_DISCONNECTED));
+    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_DISCONNECTED));
     return;
   }
 
@@ -449,8 +465,8 @@ void MeshCoreHubActivity::renderStatus(const Rect& contentRect) {
   drawField("Storage", storageBuf);
 
   char radioBuf[48];
-  snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw,
-           comp.radioSf, comp.radioCr);
+  snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw, comp.radioSf,
+           comp.radioCr);
   drawField("Radio", radioBuf);
 
   drawField("BLE Address", comp.bleAddress);
@@ -549,10 +565,9 @@ void MeshCoreHubActivity::handleChannel(const MeshCoreChannel& ch) {
 
 void MeshCoreHubActivity::openChannelThread(uint8_t channelIdx) {
   channels[channelIdx].unreadCount = 0;
-  startActivityForResult(
-      std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, channelIdx,
-                                               channels[channelIdx].name),
-      [this](const ActivityResult&) { requestUpdate(); });
+  startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, channelIdx,
+                                                                  channels[channelIdx].name),
+                         [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
@@ -563,9 +578,8 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
       break;
     }
   }
-  startActivityForResult(
-      std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, contact),
-      [this](const ActivityResult&) { requestUpdate(); });
+  startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, contact),
+                         [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void MeshCoreHubActivity::openDiscover() {
@@ -588,35 +602,34 @@ void MeshCoreHubActivity::addChannel() {
   }
   if (emptyIdx < 0) return;
 
-  startActivityForResult(
-      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_CHANNEL_NAME), "", 32,
-                                              InputType::Text),
-      [this, emptyIdx](const ActivityResult& result) {
-        if (result.isCancelled) {
-          requestUpdate();
-          return;
-        }
-        auto name = std::get<KeyboardResult>(result.data).text;
+  startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_CHANNEL_NAME),
+                                                                 "", 32, InputType::Text),
+                         [this, emptyIdx](const ActivityResult& result) {
+                           if (result.isCancelled) {
+                             requestUpdate();
+                             return;
+                           }
+                           auto name = std::get<KeyboardResult>(result.data).text;
 
-        startActivityForResult(
-            std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_CHANNEL_SECRET), "",
-                                                    32, InputType::Text),
-            [this, emptyIdx, name = std::move(name)](const ActivityResult& r2) {
-              if (r2.isCancelled) {
-                requestUpdate();
-                return;
-              }
-              auto secretHex = std::get<KeyboardResult>(r2.data).text;
-              uint8_t secret[16] = {};
-              for (size_t i = 0; i < 16 && i * 2 + 1 < secretHex.size(); ++i) {
-                char byte[3] = {secretHex[i * 2], secretHex[i * 2 + 1], '\0'};
-                secret[i] = static_cast<uint8_t>(strtoul(byte, nullptr, 16));
-              }
-              client.setChannel(static_cast<uint8_t>(emptyIdx), name.c_str(), secret);
-              client.requestChannel(static_cast<uint8_t>(emptyIdx));
-              requestUpdate();
-            });
-      });
+                           startActivityForResult(
+                               std::make_unique<KeyboardEntryActivity>(
+                                   renderer, mappedInput, tr(STR_MESHCORE_CHANNEL_SECRET), "", 32, InputType::Text),
+                               [this, emptyIdx, name = std::move(name)](const ActivityResult& r2) {
+                                 if (r2.isCancelled) {
+                                   requestUpdate();
+                                   return;
+                                 }
+                                 auto secretHex = std::get<KeyboardResult>(r2.data).text;
+                                 uint8_t secret[16] = {};
+                                 for (size_t i = 0; i < 16 && i * 2 + 1 < secretHex.size(); ++i) {
+                                   char byte[3] = {secretHex[i * 2], secretHex[i * 2 + 1], '\0'};
+                                   secret[i] = static_cast<uint8_t>(strtoul(byte, nullptr, 16));
+                                 }
+                                 client.setChannel(static_cast<uint8_t>(emptyIdx), name.c_str(), secret);
+                                 client.requestChannel(static_cast<uint8_t>(emptyIdx));
+                                 requestUpdate();
+                               });
+                         });
 }
 
 void MeshCoreHubActivity::deleteChannel(uint8_t idx) {

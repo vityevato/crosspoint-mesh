@@ -22,13 +22,7 @@ class MeshCoreHubActivity final : public Activity {
   bool preventAutoSleep() override { return true; }
 
  private:
-  enum class Tab : uint8_t {
-    CHANNELS = 0,
-    CONTACTS,
-    DISCOVERED,
-    STATUS,
-    TAB_COUNT
-  };
+  enum class Tab : uint8_t { CHANNELS = 0, CONTACTS, DISCOVERED, STATUS, TAB_COUNT };
 
   MeshCoreClient client;
   MeshCoreMessageStore store;

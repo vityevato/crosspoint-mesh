@@ -12,11 +12,11 @@
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#include "meshcore/MeshCoreHubActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
-#include "meshcore/MeshCoreHubActivity.h"
 #include "util/FullScreenMessageActivity.h"
 
 void ActivityManager::begin() {
@@ -173,9 +173,7 @@ void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToMeshCore() {
-  replaceActivity(std::make_unique<MeshCoreHubActivity>(renderer, mappedInput));
-}
+void ActivityManager::goToMeshCore() { replaceActivity(std::make_unique<MeshCoreHubActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 

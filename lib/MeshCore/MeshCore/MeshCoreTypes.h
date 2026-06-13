@@ -13,39 +13,19 @@ enum class BleConnectionState : uint8_t {
 };
 
 // MeshCore node types (from protocol advertisements)
-enum class MeshNodeType : uint8_t {
-  COMPANION = 0,
-  REPEATER = 1,
-  ROOM_SERVER = 2,
-  SENSOR = 3,
-  UNKNOWN = 255
-};
+enum class MeshNodeType : uint8_t { COMPANION = 0, REPEATER = 1, ROOM_SERVER = 2, SENSOR = 3, UNKNOWN = 255 };
 
 // Message direction
-enum class MsgDirection : uint8_t {
-  RECEIVED = 0,
-  SENT = 1
-};
+enum class MsgDirection : uint8_t { RECEIVED = 0, SENT = 1 };
 
 // Message type
-enum class MsgType : uint8_t {
-  CHANNEL = 0,
-  DIRECT = 1
-};
+enum class MsgType : uint8_t { CHANNEL = 0, DIRECT = 1 };
 
 // DM delivery status
-enum class DeliveryStatus : uint8_t {
-  SENT = 0,
-  ACKED = 1,
-  FAILED = 2
-};
+enum class DeliveryStatus : uint8_t { SENT = 0, ACKED = 1, FAILED = 2 };
 
 // Channel type
-enum class ChannelType : uint8_t {
-  PUBLIC = 0,
-  HASHTAG = 1,
-  PRIVATE_CH = 2
-};
+enum class ChannelType : uint8_t { PUBLIC = 0, HASHTAG = 1, PRIVATE_CH = 2 };
 
 struct MeshCoreCompanion {
   char name[64] = {};

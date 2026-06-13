@@ -1,6 +1,9 @@
+.sdd
 .pio
 .idea
 .DS_Store
+# Simulator virtual SD card filesystem
+/fs_/
 .vscode
 lib/EpdFont/fontsrc
 lib/I18n/I18nKeys.h

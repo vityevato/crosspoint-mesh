@@ -38,19 +38,24 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 - **Primary dependencies**:
     - `open-x4-sdk` — low-level hardware SDK (display, input, storage,
       battery) as a git submodule
+    - `crosspoint-simulator` — desktop simulator library (SDL2-based
+      HAL for macOS/Linux)
     - `ArduinoJson 7.4.2` — JSON parsing for settings
     - `PNGdec ^1.0.0` — PNG decoding
     - `JPEGDEC` (pinned commit) — JPEG decoding
     - `QRCode 0.0.1` — QR code generation
     - `WebSockets 2.7.3` — WebSocket server for file upload
+    - `NimBLE-Arduino 2.5.0` — BLE client for MeshCore
     - `expat` — XML parsing (vendored in `lib/expat/`)
     - `uzlib` — zlib decompression (vendored in `lib/uzlib/`)
 - **Storage**: SD card (SdFat via `HalStorage`). No database.
   Settings persist as `/settings.json`. EPUB caches persist as
   binary files under `.crosspoint/` on the SD card.
 - **Testing**: Shell-script-driven desktop tests for core algorithms
-  (JSON parser, hyphenation, differential rounding). No on-device
-  unit test framework — hardware testing is manual.
+  (JSON parser, hyphenation, differential rounding). Desktop simulator
+  (`pio run -e simulator`) provides UI-level testing on macOS/Linux
+  without a device. No on-device unit test framework — hardware
+  testing is manual.
 - **Target platform**: Xteink X4 hardware only (ESP32-C3 + SD card +
   800x480 e-ink + physical buttons)
 - **Project type**: Embedded firmware (single device)
@@ -87,7 +92,8 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   │   ├── boot_sleep/      # Boot and deep sleep transitions
 │   │   ├── browser/         # OPDS book browser
 │   │   └── util/            # Keyboard entry, full-screen messages
-│   ├── components/          # UITheme singleton, themes, icons
+│   ├── meshcore/           # MeshCore BLE activities (hub, discover, scan, chat)
+│   ├── simulator/          # Simulator stubs: NimBLE, FreeRTOS, MeshCore mock
 │   ├── network/             # Web server, OTA updater, WebDAV, HTTP downloader
 │   ├── util/                # Button navigator, string/URL/QR/screenshot utils
 │   └── platform/            # Platform-level patches (efuse check skip)
@@ -114,6 +120,7 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   ├── expat/               # Vendored XML parser library
 │   └── uzlib/               # Vendored zlib decompression
 ├── open-x4-sdk/             # Hardware SDK submodule (display, input, storage, battery)
+├── fs_/                     # Simulator virtual SD card (./fs_/books/ maps to /books/)
 └── test/                    # Desktop algorithm tests (JSON, hyphenation, rounding)
 ```
 
@@ -123,8 +130,15 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 # Build firmware (default development environment)
 pio run
 
-# Build specific environment (gh_release, gh_release_rc, slim)
+# Build specific environment (gh_release, gh_release_rc, slim, simulator)
 pio run -e gh_release
+
+# Build and run desktop simulator (no device required)
+pio run -e simulator
+.pio/build/simulator/program
+
+# Build + launch simulator in one command
+pio run -e simulator -t run_simulator
 
 # Clean build artifacts
 pio run -t clean

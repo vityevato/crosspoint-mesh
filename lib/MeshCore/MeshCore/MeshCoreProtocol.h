@@ -1,9 +1,9 @@
 #pragma once
 
-#include "MeshCoreTypes.h"
-
 #include <cstddef>
 #include <cstdint>
+
+#include "MeshCoreTypes.h"
 
 // MeshCore companion protocol command/packet constants
 namespace MeshProto {
@@ -59,16 +59,13 @@ size_t buildGetContacts(uint8_t* out, size_t maxLen);
 size_t buildGetChannel(uint8_t* out, size_t maxLen, uint8_t channelIdx);
 
 // CMD_SET_CHANNEL: 0x20 <index> <name[32]> <secret[16]>
-size_t buildSetChannel(uint8_t* out, size_t maxLen, uint8_t channelIdx, const char* name,
-                       const uint8_t* secret16);
+size_t buildSetChannel(uint8_t* out, size_t maxLen, uint8_t channelIdx, const char* name, const uint8_t* secret16);
 
 // CMD_SEND_CHANNEL_MESSAGE: 0x03 0x00 <idx> <ts[4]> <text>
-size_t buildSendChannelMsg(uint8_t* out, size_t maxLen, uint8_t channelIdx, uint32_t timestamp,
-                           const char* text);
+size_t buildSendChannelMsg(uint8_t* out, size_t maxLen, uint8_t channelIdx, uint32_t timestamp, const char* text);
 
 // CMD_SEND_DM: 0x02 <txt_type=0> <attempt=0> <ts[4]> <pubkey_prefix[6]> <text>
-size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, uint32_t timestamp,
-                          const char* text);
+size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, uint32_t timestamp, const char* text);
 
 // CMD_GET_MESSAGE: 0x0A
 size_t buildGetMessage(uint8_t* out, size_t maxLen);
@@ -93,8 +90,7 @@ bool parseChannelMessage(const uint8_t* data, size_t len, MeshCoreMessage& out);
 
 bool parseContactMessage(const uint8_t* data, size_t len, MeshCoreMessage& out);
 
-bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck,
-                  uint32_t& suggestedTimeoutMs);
+bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck, uint32_t& suggestedTimeoutMs);
 
 bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]);
 

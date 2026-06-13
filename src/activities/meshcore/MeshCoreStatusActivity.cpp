@@ -3,6 +3,10 @@
 #include <I18n.h>
 #include <Logging.h>
 
+#ifdef SIMULATOR
+#include <MeshCoreMockHotkeys.h>
+#endif
+
 #include <cstdio>
 
 #include "components/UITheme.h"
@@ -23,6 +27,14 @@ void MeshCoreStatusActivity::onExit() { Activity::onExit(); }
 void MeshCoreStatusActivity::loop() {
   client.poll();
 
+#ifdef SIMULATOR
+  if (handleMockKey("Status", client.getBleClient())) {
+    requestUpdate();
+    return;
+  }
+  pollMock(client.getBleClient(), millis());
+#endif
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
     return;
@@ -41,8 +53,8 @@ void MeshCoreStatusActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight),
-                 tr(STR_MESHCORE_STATUS), nullptr);
+  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE_STATUS),
+                 nullptr);
 
   int contentTop = metrics.topPadding + metrics.headerHeight;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
@@ -89,8 +101,8 @@ void MeshCoreStatusActivity::renderStatusFields(const Rect& contentRect) {
   drawField("Storage", storageBuf);
 
   char radioBuf[48];
-  snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw,
-           comp.radioSf, comp.radioCr);
+  snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw, comp.radioSf,
+           comp.radioCr);
   drawField("Radio", radioBuf);
 
   drawField("BLE Address", comp.bleAddress);

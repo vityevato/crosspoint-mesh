@@ -3,6 +3,10 @@
 #include <I18n.h>
 #include <Logging.h>
 
+#ifdef SIMULATOR
+#include <MeshCoreMockHotkeys.h>
+#endif
+
 #include <cstring>
 #include <string>
 
@@ -11,8 +15,7 @@
 
 MeshCoreDiscoverActivity::MeshCoreDiscoverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                    MeshCoreClient& client, MeshCoreMessageStore& store,
-                                                   MeshCoreContact* discoveredNodes,
-                                                   uint8_t& discoveredNodeCount,
+                                                   MeshCoreContact* discoveredNodes, uint8_t& discoveredNodeCount,
                                                    MeshCoreContact* savedContacts, uint8_t& savedContactCount)
     : Activity("MeshCoreDiscover", renderer, mappedInput),
       client(client),
@@ -31,6 +34,14 @@ void MeshCoreDiscoverActivity::onExit() { Activity::onExit(); }
 
 void MeshCoreDiscoverActivity::loop() {
   client.poll();
+
+#ifdef SIMULATOR
+  if (handleMockKey("Discover", client.getBleClient())) {
+    requestUpdate();
+    return;
+  }
+  pollMock(client.getBleClient(), millis());
+#endif
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
@@ -87,8 +98,8 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight),
-                 tr(STR_MESHCORE_DISCOVERED), nullptr);
+  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE_DISCOVERED),
+                 nullptr);
 
   int contentTop = metrics.topPadding + metrics.headerHeight;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
@@ -121,9 +132,8 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
         });
   }
 
-  const char* btn2 = (discoveredNodeCount > 0 && !isAlreadySaved(discoveredNodes[selectedIndex]))
-                          ? tr(STR_MESHCORE_ADD_CONTACT)
-                          : "";
+  const char* btn2 =
+      (discoveredNodeCount > 0 && !isAlreadySaved(discoveredNodes[selectedIndex])) ? tr(STR_MESHCORE_ADD_CONTACT) : "";
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, "", tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 

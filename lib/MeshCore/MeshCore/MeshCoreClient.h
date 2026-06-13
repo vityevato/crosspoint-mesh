@@ -1,7 +1,5 @@
 #pragma once
 
-#include "MeshCoreTypes.h"
-
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -9,12 +7,15 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "MeshCoreTypes.h"
+
 class NimBLEClient;
 class NimBLERemoteCharacteristic;
 class MeshBleClientCallbacks;
 
 class MeshCoreClient {
   friend class MeshBleClientCallbacks;
+
  public:
   // Callback types (raw function pointers, no std::function)
   using StateCallback = void (*)(BleConnectionState state, void* ctx);
@@ -84,6 +85,10 @@ class MeshCoreClient {
   const ScanResult* getScanResults() const { return scanResults; }
   uint8_t getScanResultCount() const { return scanResultCount; }
   bool isScanning() const { return state == BleConnectionState::SCANNING; }
+
+#ifdef SIMULATOR
+  NimBLEClient* getBleClient() const { return bleClient; }
+#endif
 
  private:
   BleConnectionState state = BleConnectionState::DISCONNECTED;
@@ -182,8 +187,7 @@ class MeshCoreClient {
   void processResponse(const uint8_t* data, size_t len);
   bool runInitSequence();
 
-  static void notifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length,
-                              bool isNotify);
+  static void notifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
 
   void setState(BleConnectionState newState);
 };

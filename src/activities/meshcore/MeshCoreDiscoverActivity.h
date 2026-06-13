@@ -12,9 +12,8 @@
 class MeshCoreDiscoverActivity final : public Activity {
  public:
   MeshCoreDiscoverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, MeshCoreClient& client,
-                           MeshCoreMessageStore& store, MeshCoreContact* discoveredNodes,
-                           uint8_t& discoveredNodeCount, MeshCoreContact* savedContacts,
-                           uint8_t& savedContactCount);
+                           MeshCoreMessageStore& store, MeshCoreContact* discoveredNodes, uint8_t& discoveredNodeCount,
+                           MeshCoreContact* savedContacts, uint8_t& savedContactCount);
 
   void onEnter() override;
   void onExit() override;

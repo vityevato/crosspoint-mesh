@@ -1,11 +1,11 @@
 #include "MeshCoreClient.h"
 
-#include "MeshCoreProtocol.h"
-
 #include <Logging.h>
 #include <NimBLEDevice.h>
 
 #include <cstring>
+
+#include "MeshCoreProtocol.h"
 
 // Nordic UART Service UUIDs
 static const NimBLEUUID NUS_SERVICE_UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
@@ -27,8 +27,7 @@ class MeshBleClientCallbacks : public NimBLEClientCallbacks {
 
   void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
     if (connInfo.isEncrypted()) {
-      LOG_INF("MESH", "BLE pairing complete (encrypted=%d bonded=%d)",
-              connInfo.isEncrypted(), connInfo.isBonded());
+      LOG_INF("MESH", "BLE pairing complete (encrypted=%d bonded=%d)", connInfo.isEncrypted(), connInfo.isBonded());
     } else {
       LOG_ERR("MESH", "BLE pairing failed — not encrypted");
     }
@@ -59,7 +58,7 @@ bool MeshCoreClient::init() {
   // BLE security: companion firmware requires encrypted MITM-authenticated link
   // (ESP_GATT_PERM_READ_ENC_MITM / ESP_GATT_PERM_WRITE_ENC_MITM on NUS chars).
   // Without this, all GATT writes and notification subscriptions are silently rejected.
-  NimBLEDevice::setSecurityAuth(true, true, true);   // bonding, MITM, SC
+  NimBLEDevice::setSecurityAuth(true, true, true);          // bonding, MITM, SC
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY);  // we input the passkey
 
   // Create worker task and queue for blocking BLE operations
@@ -102,8 +101,7 @@ void MeshCoreClient::deinit() {
   // Interrupt any in-progress blocking connect/init so the worker can exit.
   // Only disconnect the link here — do NOT call NimBLEDevice::deleteClient()
   // yet, as the worker task may still be holding a reference to bleClient.
-  if (bleClient && (state == BleConnectionState::CONNECTING ||
-                    state == BleConnectionState::INITIALIZING)) {
+  if (bleClient && (state == BleConnectionState::CONNECTING || state == BleConnectionState::INITIALIZING)) {
     bleClient->disconnect();
   }
 
@@ -603,8 +601,8 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     case MeshProto::PKT_CONTACT_MSG_V3: {
       MeshCoreMessage msg = {};
       if (MeshProto::parseContactMessage(data, len, msg)) {
-        LOG_DBG("MESH", "Contact msg from %02X%02X%02X: %.40s",
-                msg.pubkeyPrefix[0], msg.pubkeyPrefix[1], msg.pubkeyPrefix[2], msg.text);
+        LOG_DBG("MESH", "Contact msg from %02X%02X%02X: %.40s", msg.pubkeyPrefix[0], msg.pubkeyPrefix[1],
+                msg.pubkeyPrefix[2], msg.text);
         msg.direction = MsgDirection::RECEIVED;
         msg.type = MsgType::DIRECT;
         if (msgCb) msgCb(msg, msgCbCtx);
@@ -662,8 +660,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     case MeshProto::PKT_MSG_SENT: {
       uint32_t ackTag, timeout;
       if (MeshProto::parseMsgSent(data, len, ackTag, timeout)) {
-        LOG_DBG("MESH", "Msg sent, ack tag=%lu timeout=%lu", (unsigned long)ackTag,
-                (unsigned long)timeout);
+        LOG_DBG("MESH", "Msg sent, ack tag=%lu timeout=%lu", (unsigned long)ackTag, (unsigned long)timeout);
       }
       break;
     }
@@ -722,8 +719,7 @@ bool MeshCoreClient::runInitSequence() {
   bool gotDeviceInfo = false;
   bool gotSelfInfo = false;
   uint32_t start = millis();
-  while ((!gotDeviceInfo || !gotSelfInfo) &&
-         (millis() - start) < MeshProto::CMD_TIMEOUT_MS) {
+  while ((!gotDeviceInfo || !gotSelfInfo) && (millis() - start) < MeshProto::CMD_TIMEOUT_MS) {
     while (rxHead != rxTail) {
       uint8_t localBuf[RX_BUF_SIZE];
       size_t localLen = rxQueue[rxHead].len;
@@ -749,8 +745,7 @@ bool MeshCoreClient::runInitSequence() {
     return false;
   }
 
-  LOG_INF("MESH", "Device: %s %s pin=%lu", companion.model, companion.version,
-          (unsigned long)companion.blePin);
+  LOG_INF("MESH", "Device: %s %s pin=%lu", companion.model, companion.version, (unsigned long)companion.blePin);
 
   if (companion.blePin != 0 && pinCb) {
     pinCb(companion.blePin, pinCbCtx);
@@ -792,8 +787,7 @@ void MeshCoreClient::workerTaskFunc(void* param) {
   vTaskDelete(nullptr);
 }
 
-void MeshCoreClient::notifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData,
-                                     size_t length, bool isNotify) {
+void MeshCoreClient::notifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
   (void)pChar;
   (void)isNotify;
   if (!sInstance || length == 0 || length > RX_BUF_SIZE) {

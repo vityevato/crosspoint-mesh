@@ -3,6 +3,10 @@
 #include <I18n.h>
 #include <Logging.h>
 
+#ifdef SIMULATOR
+#include <MeshCoreMockHotkeys.h>
+#endif
+
 #include <cstring>
 #include <string>
 
@@ -12,8 +16,8 @@
 
 // Channel thread constructor
 MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                               MeshCoreClient& client, MeshCoreMessageStore& store,
-                                               uint8_t channelIdx, const char* channelName)
+                                               MeshCoreClient& client, MeshCoreMessageStore& store, uint8_t channelIdx,
+                                               const char* channelName)
     : Activity("MeshCoreThread", renderer, mappedInput),
       client(client),
       store(store),
@@ -61,6 +65,14 @@ void MeshCoreThreadActivity::loadPage() {
 void MeshCoreThreadActivity::loop() {
   client.poll();
 
+#ifdef SIMULATOR
+  if (handleMockKey("Thread", client.getBleClient())) {
+    requestUpdate();
+    return;
+  }
+  pollMock(client.getBleClient(), millis());
+#endif
+
   // Detect new messages appended to the store by the hub's callbacks.
   // If count grew and we are on the last page, reload so they appear.
   uint16_t currentTotal;
@@ -99,50 +111,49 @@ void MeshCoreThreadActivity::loop() {
 }
 
 void MeshCoreThreadActivity::sendMessage() {
-  startActivityForResult(
-      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_SEND), "", MESHCORE_SEND_CHAR_LIMIT,
-                                              InputType::Text),
-      [this](const ActivityResult& result) {
-        if (result.isCancelled) {
-          requestUpdate();
-          return;
-        }
-        const auto& text = std::get<KeyboardResult>(result.data).text;
-        if (text.empty()) {
-          requestUpdate();
-          return;
-        }
+  startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_SEND), "",
+                                                                 MESHCORE_SEND_CHAR_LIMIT, InputType::Text),
+                         [this](const ActivityResult& result) {
+                           if (result.isCancelled) {
+                             requestUpdate();
+                             return;
+                           }
+                           const auto& text = std::get<KeyboardResult>(result.data).text;
+                           if (text.empty()) {
+                             requestUpdate();
+                             return;
+                           }
 
-        bool sent = false;
-        if (isChannel) {
-          sent = client.sendChannelMessage(channelIdx, text.c_str());
-        } else {
-          sent = client.sendDirectMessage(contactPubkey, text.c_str());
-        }
+                           bool sent = false;
+                           if (isChannel) {
+                             sent = client.sendChannelMessage(channelIdx, text.c_str());
+                           } else {
+                             sent = client.sendDirectMessage(contactPubkey, text.c_str());
+                           }
 
-        if (sent) {
-          LOG_INF("MESH", "Message queued");
-          // Build a local copy for display
-          MeshCoreMessage msg = {};
-          msg.direction = MsgDirection::SENT;
-          msg.type = isChannel ? MsgType::CHANNEL : MsgType::DIRECT;
-          msg.channelIdx = channelIdx;
-          msg.timestamp = static_cast<uint32_t>(millis() / 1000);
-          msg.deliveryStatus = DeliveryStatus::SENT;
-          snprintf(msg.text, sizeof(msg.text), "%s", text.c_str());
+                           if (sent) {
+                             LOG_INF("MESH", "Message queued");
+                             // Build a local copy for display
+                             MeshCoreMessage msg = {};
+                             msg.direction = MsgDirection::SENT;
+                             msg.type = isChannel ? MsgType::CHANNEL : MsgType::DIRECT;
+                             msg.channelIdx = channelIdx;
+                             msg.timestamp = static_cast<uint32_t>(millis() / 1000);
+                             msg.deliveryStatus = DeliveryStatus::SENT;
+                             snprintf(msg.text, sizeof(msg.text), "%s", text.c_str());
 
-          if (isChannel) {
-            store.appendChannelMessage(channelIdx, msg);
-          } else {
-            store.appendDirectMessage(contactPubkey, msg);
-          }
-          pageOffset = 0;  // Jump to latest
-          loadPage();
-        } else {
-          LOG_ERR("MESH", "Failed to queue message");
-          requestUpdate();
-        }
-      });
+                             if (isChannel) {
+                               store.appendChannelMessage(channelIdx, msg);
+                             } else {
+                               store.appendDirectMessage(contactPubkey, msg);
+                             }
+                             pageOffset = 0;  // Jump to latest
+                             loadPage();
+                           } else {
+                             LOG_ERR("MESH", "Failed to queue message");
+                             requestUpdate();
+                           }
+                         });
 }
 
 void MeshCoreThreadActivity::nextPage() {

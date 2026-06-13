@@ -4,6 +4,10 @@
 #include <I18n.h>
 #include <Logging.h>
 
+#ifdef SIMULATOR
+#include <MeshCoreMockHotkeys.h>
+#endif
+
 #include "activities/ActivityResult.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -73,6 +77,14 @@ void MeshCoreScanActivity::connectToSelected() {
 }
 
 void MeshCoreScanActivity::loop() {
+#ifdef SIMULATOR
+  if (handleMockKey("Scan", nullptr)) {
+    requestUpdate();
+    return;
+  }
+  pollMock(nullptr, millis());
+#endif
+
   auto bleState = client.getState();
 
   // Detect scan completion
@@ -143,8 +155,7 @@ void MeshCoreScanActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE), nullptr);
 
   const int contentTop = metrics.topPadding + metrics.headerHeight;
-  const int contentHeight =
-      renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
+  const int contentHeight = renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
 
   const auto* results = client.getScanResults();
   uint8_t resultCount = client.getScanResultCount();

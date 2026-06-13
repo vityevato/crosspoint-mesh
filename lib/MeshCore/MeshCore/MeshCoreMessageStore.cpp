@@ -183,8 +183,8 @@ uint16_t MeshCoreMessageStore::getMessageCount(const char* filePath) {
   return count;
 }
 
-bool MeshCoreMessageStore::loadMessages(const char* filePath, uint16_t offset,
-                                        MeshCoreMessage* out, uint8_t count, uint8_t& loaded) {
+bool MeshCoreMessageStore::loadMessages(const char* filePath, uint16_t offset, MeshCoreMessage* out, uint8_t count,
+                                        uint8_t& loaded) {
   loaded = 0;
   HalFile file;
   if (!Storage.openFileForRead("MESH", filePath, file)) {
@@ -246,8 +246,7 @@ uint16_t MeshCoreMessageStore::getChannelMessageCount(uint8_t channelIdx) {
   return getMessageCount(filePath);
 }
 
-bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint16_t offset,
-                                               MeshCoreMessage* out, uint8_t count,
+bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint16_t offset, MeshCoreMessage* out, uint8_t count,
                                                uint8_t& loaded) {
   char dirPath[64];
   buildChannelPath(channelIdx, dirPath, sizeof(dirPath));
@@ -258,8 +257,7 @@ bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint16_t offs
 
 // --- Direct messages ---
 
-bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32,
-                                               const MeshCoreMessage& msg) {
+bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg) {
   char dirPath[64];
   buildContactPath(pubkey32, dirPath, sizeof(dirPath));
   ensureDir(dirPath);
@@ -277,9 +275,8 @@ uint16_t MeshCoreMessageStore::getDirectMessageCount(const uint8_t* pubkey32) {
   return getMessageCount(filePath);
 }
 
-bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint16_t offset,
-                                              MeshCoreMessage* out, uint8_t count,
-                                              uint8_t& loaded) {
+bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint16_t offset, MeshCoreMessage* out,
+                                              uint8_t count, uint8_t& loaded) {
   char dirPath[64];
   buildContactPath(pubkey32, dirPath, sizeof(dirPath));
   char filePath[80];
@@ -390,8 +387,7 @@ bool MeshCoreMessageStore::loadCompanionAddress(char* out, size_t maxLen, uint8_
 // --- Unread counts ---
 
 bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8_t channelCount,
-                                            const MeshCoreContact* contacts,
-                                            uint8_t contactCount) {
+                                            const MeshCoreContact* contacts, uint8_t contactCount) {
   HalFile file;
   if (!Storage.openFileForWrite("MESH", UNREAD_FILE, file)) {
     LOG_ERR("MESH", "Failed to save unread counts");
@@ -417,8 +413,8 @@ bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8
   return true;
 }
 
-bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint8_t channelCount,
-                                            MeshCoreContact* contacts, uint8_t contactCount) {
+bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint8_t channelCount, MeshCoreContact* contacts,
+                                            uint8_t contactCount) {
   HalFile file;
   if (!Storage.openFileForRead("MESH", UNREAD_FILE, file)) {
     return false;

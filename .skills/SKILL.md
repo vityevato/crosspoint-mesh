@@ -93,6 +93,7 @@ find src -name "*.cpp" -o -name "*.h" | xargs clang-format -i
   * `gh_release`: Production (LOG_LEVEL=0)
   * `gh_release_rc`: Release candidate (LOG_LEVEL=1)
   * `slim`: Minimal build (no serial logging)
+  * `simulator`: Desktop simulator (native build, SDL2, no device required)
 
 ### Critical Build Flags
 These flags in `platformio.ini` fundamentally affect firmware behavior:
@@ -129,6 +130,62 @@ These flags in `platformio.ini` fundamentally affect firmware behavior:
 * src/activities/: UI logic using the Activity Lifecycle (onEnter, loop, onExit)
 * open-x4-sdk/: Low-level SDK (EInkDisplay, InputManager, BatteryMonitor, SDCardManager)
 * .crosspoint/: SD-based binary cache for EPUB metadata and pre-rendered layout sections
+
+### Desktop Simulator
+
+A desktop simulator allows testing firmware UI without flashing a device. It compiles
+the firmware natively (macOS/Linux) and renders the e-ink display in an SDL2 window.
+
+**Prerequisites**:
+- macOS: `brew install sdl2`
+- Linux (Debian/Ubuntu): `sudo apt install libsdl2-dev libssl-dev`
+
+**Build and run**:
+```bash
+# Build + launch in one command
+pio run -e simulator -t run_simulator
+
+# Or build only, then run
+pio run -e simulator
+.pio/build/simulator/program
+```
+
+**Setup**: Place EPUB books in `./fs_/books/` (maps to SD card `/books/`).
+
+**Keyboard controls**:
+
+| Key    | Action                             |
+| ------ | ---------------------------------- |
+| ↑ / ↓  | Page back / forward (side buttons) |
+| ← / →  | Left / right front buttons         |
+| Return | Confirm / Select                   |
+| Escape | Back                               |
+| P      | Power                              |
+| S      | Simulate sleep                     |
+
+**Architecture**:
+- `platform = native` — compiles firmware as a host binary, not ESP32 firmware
+- `lib_ignore = hal, WebSockets` — simulator provides its own HAL layer
+  (SDL2-based display, POSIX file I/O, keyboard input)
+- The simulator library (`crosspoint-simulator`) is a PlatformIO `lib_deps`
+  fetched from `https://github.com/uxjulia/crosspoint-simulator`
+- `src/simulator/freertos/queue.h` — project-local FreeRTOS queue stub for MeshCore
+- `src/simulator/NimBLEDevice.h` — project-local NimBLE stub (no-op BLE for simulator)
+- `src/simulator/MockSession.h` / `.cpp` — mock JSON loading and session management
+- `src/simulator/MeshCoreMockHotkeys.h` — mock hotkey handler (keys 0-9)
+- `-Isrc/simulator` before `-Isrc` in simulator `build_flags` — project stubs take priority over
+  real libraries when both provide the same header
+- `build_src_filter` excludes ESP32-only files (networking, OTA, efuse check)
+  that cannot compile on the host
+- File I/O sandboxed under `./fs_/` relative to the binary's working directory
+- Clear stale caches after layout changes: `rm -rf ./fs_/.crosspoint/`
+
+**MeshCore on simulator**: MeshCore activities (hub, discover, scan, status,
+thread) compile and render on the simulator. When `fs_/meshcore_mock.json`
+is present, the mock layer (see `src/simulator/`) activates — BLE operations
+return data from JSON instead of no-ops. Without the JSON file, all BLE
+operations remain no-ops (simulator has no real BLE hardware). All UI
+screens are interactive regardless.
 
 ### Hardware Abstraction Layer (HAL)
 
