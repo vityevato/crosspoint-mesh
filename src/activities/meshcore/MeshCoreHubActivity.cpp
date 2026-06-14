@@ -11,9 +11,12 @@
 
 #include "CrossPointSettings.h"
 #include "MeshCoreBatteryPoller.h"
+#include "MeshCoreChannelListView.h"
+#include "MeshCoreContactListView.h"
 #include "MeshCoreDiscoverActivity.h"
+#include "MeshCoreDiscoveredListView.h"
 #include "MeshCoreScanActivity.h"
-#include "MeshCoreStatusActivity.h"
+#include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
 #include "MeshCoreThreadActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -269,9 +272,8 @@ void MeshCoreHubActivity::loop() {
           openDiscover();
           break;
         case Tab::STATUS:
-          // Refresh battery
-          client.requestBattery();
-          requestUpdate();
+          client.disconnect();
+          // State change will be handled by handleStateChange on next poll()
           break;
         default:
           break;
@@ -311,7 +313,7 @@ int MeshCoreHubActivity::getListCountForCurrentTab() const {
     case Tab::DISCOVERED:
       return discoveredNodeCount;
     case Tab::STATUS:
-      return 0;
+      return (client.getState() == BleConnectionState::CONNECTED) ? 1 : 0;
     default:
       return 0;
   }
@@ -374,7 +376,7 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   } else if (currentTab == Tab::CHANNELS || currentTab == Tab::CONTACTS) {
     btn2 = tr(STR_OPEN);
   } else if (currentTab == Tab::STATUS) {
-    btn2 = tr(STR_MESHCORE_RETRY);
+    btn2 = tr(STR_MESHCORE_DISCONNECT);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -383,110 +385,20 @@ void MeshCoreHubActivity::render(RenderLock&&) {
 }
 
 void MeshCoreHubActivity::renderChannelList(const Rect& contentRect) {
-  bool hasChannels = false;
-  for (uint8_t i = 0; i < channelCount; ++i) {
-    if (channels[i].configured) {
-      hasChannels = true;
-      break;
-    }
-  }
-
-  if (!hasChannels) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_NO_CHANNELS));
-    return;
-  }
-
-  const auto* ch = channels;
-  GUI.drawList(
-      renderer, contentRect, channelCount, selectedIndex - 1,
-      [ch](int index) { return std::string(ch[index].name[0] ? ch[index].name : "---"); },
-      [ch](int index) {
-        if (ch[index].unreadCount > 0) {
-          char buf[16];
-          snprintf(buf, sizeof(buf), "(%d)", ch[index].unreadCount);
-          return std::string(buf);
-        }
-        return std::string();
-      });
+  MeshCoreChannelListView::render(renderer, contentRect, channels, channelCount, selectedIndex);
 }
 
 void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
-  if (savedContactCount == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_NO_CONTACTS));
-    return;
-  }
-
-  const auto* contacts = savedContacts;
-  GUI.drawList(
-      renderer, contentRect, savedContactCount, selectedIndex - 1,
-      [contacts](int index) { return std::string(contacts[index].name); },
-      [contacts](int index) {
-        if (contacts[index].unreadCount > 0) {
-          char buf[16];
-          snprintf(buf, sizeof(buf), "(%d)", contacts[index].unreadCount);
-          return std::string(buf);
-        }
-        return std::string();
-      });
+  MeshCoreContactListView::render(renderer, contentRect, savedContacts, savedContactCount, selectedIndex);
 }
 
 void MeshCoreHubActivity::renderDiscoveredList(const Rect& contentRect) {
-  if (discoveredNodeCount == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_NO_DEVICES));
-    return;
-  }
-
-  const auto* nodes = discoveredNodes;
-  GUI.drawList(
-      renderer, contentRect, discoveredNodeCount, selectedIndex - 1,
-      [nodes](int index) { return std::string(nodes[index].name); },
-      [nodes](int index) {
-        char buf[32];
-        char prefix[13];
-        nodes[index].getPublicKeyPrefix(prefix);
-        snprintf(buf, sizeof(buf), "%s  %dhop", prefix, nodes[index].pathLength);
-        return std::string(buf);
-      });
+  MeshCoreDiscoveredListView::render(renderer, contentRect, discoveredNodes, discoveredNodeCount, savedContacts,
+                                     savedContactCount, selectedIndex);
 }
 
 void MeshCoreHubActivity::renderStatus(const Rect& contentRect) {
-  const auto& comp = client.getCompanion();
-  if (client.getState() != BleConnectionState::CONNECTED) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentRect.y + contentRect.height / 2, tr(STR_MESHCORE_DISCONNECTED));
-    return;
-  }
-
-  const auto& m = UITheme::getInstance().getMetrics();
-  int y = contentRect.y + m.topPadding;
-  const int x = contentRect.x + m.contentSidePadding;
-  const int lineH = renderer.getLineHeight(UI_10_FONT_ID) + 4;
-
-  auto drawField = [&](const char* label, const char* value) {
-    char buf[80];
-    snprintf(buf, sizeof(buf), "%s: %s", label, value);
-    renderer.drawText(UI_10_FONT_ID, x, y, buf, true);
-    y += lineH;
-  };
-
-  drawField("Name", comp.name);
-  drawField("Model", comp.model);
-  drawField("Firmware", comp.version);
-
-  char battBuf[16];
-  snprintf(battBuf, sizeof(battBuf), "%d.%02d V", comp.batteryMv / 1000, (comp.batteryMv % 1000) / 10);
-  drawField("Battery", battBuf);
-
-  char storageBuf[32];
-  snprintf(storageBuf, sizeof(storageBuf), "%lu / %lu KB", (unsigned long)comp.storageUsedKb,
-           (unsigned long)comp.storageTotalKb);
-  drawField("Storage", storageBuf);
-
-  char radioBuf[48];
-  snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw, comp.radioSf,
-           comp.radioCr);
-  drawField("Radio", radioBuf);
-
-  drawField("BLE Address", comp.bleAddress);
+  MeshCoreStatusView::render(renderer, contentRect, client, selectedIndex);
 }
 
 // --- Event handlers ---

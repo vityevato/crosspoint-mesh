@@ -109,7 +109,7 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
   Rect contentRect(0, contentTop, pageWidth, contentHeight);
 
   if (discoveredNodeCount == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, tr(STR_MESHCORE_NO_DEVICES));
+    GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_NO_DEVICES));
   } else {
     const auto* nodes = discoveredNodes;
     const auto* saved = savedContacts;

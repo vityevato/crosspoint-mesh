@@ -188,7 +188,7 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
 
   if (msgCount == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, tr(STR_MESHCORE_NO_MESSAGES));
+    GUI.drawHelpText(renderer, Rect(0, contentTop, pageWidth, contentHeight), tr(STR_MESHCORE_NO_MESSAGES));
   } else {
     const int lineH = renderer.getLineHeight(UI_10_FONT_ID) + 2;
     const int msgBlockH = lineH * 2 + 4;  // sender line + text line + spacing

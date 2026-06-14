@@ -11,6 +11,7 @@
     - [Code Quality](#code-quality)
     - [Testing](#testing)
     - [Dependency Management](#dependency-management)
+    - [UI Components](#ui-components)
     - [Configuration & Documentation](#configuration--documentation)
     - [Markdown Formatting](#markdown-formatting)
     - [Other](#other)
@@ -433,6 +434,17 @@ Failures on low/medium/high defects block merge.
 - Never hardcode `800` or `480`. Use `renderer.getScreenWidth()` and
   `renderer.getScreenHeight()`.
 - Use `renderer.getOrientedViewableTRBL()` for bezel margins.
+
+**UI components**:
+- Maximise use of existing `GUI.*` components (`drawList`, `drawHeader`,
+  `drawTabBar`, `drawButtonHints`, `drawHelpText`, `drawPopup`, etc.)
+  before resorting to raw `renderer.drawText()` or `renderer.fillRect()`.
+  The `GUI` macro delegates to the active theme, ensuring visual
+  consistency and orientation-aware layout.
+- If no existing component fits, prefer `UITheme::drawCenteredText()`
+  over `GfxRenderer::drawCenteredText()` — it respects screen safe-area.
+- Use `renderer.wrappedText()` for multi-line text wrapping when a
+  label:value pair or description may exceed one line.
 
 **Logical button mapping**:
 - Always use `MappedInputManager::Button::*` enums, never raw

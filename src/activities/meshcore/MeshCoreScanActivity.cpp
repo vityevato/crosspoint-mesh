@@ -215,8 +215,7 @@ void MeshCoreScanActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, scanning);
   } else if (resultCount == 0) {
     // No devices found
-    const char* noDevices = tr(STR_MESHCORE_NO_DEVICES);
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, noDevices);
+    GUI.drawHelpText(renderer, Rect(0, contentTop, pageWidth, contentHeight), tr(STR_MESHCORE_NO_DEVICES));
   } else {
     // Draw scan results list
     GUI.drawList(
