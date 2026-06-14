@@ -42,8 +42,9 @@ class MeshCoreClient {
   void disconnect();
   BleConnectionState getState() const { return state; }
 
-  // BLE pairing PIN (set before connectTo; default 0)
+  // BLE pairing PIN (set before connectTo; default 123456)
   void setConnectPin(uint32_t pin) { connectPin = pin; }
+  uint32_t getConnectPin() const { return connectPin; }
 
   // Companion info (valid after CONNECTED)
   const MeshCoreCompanion& getCompanion() const { return companion; }

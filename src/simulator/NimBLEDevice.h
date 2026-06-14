@@ -221,6 +221,16 @@ class NimBLERemoteCharacteristic {
 
   void setMockCompanion(const MockCompanion* c) { mockCompanion = c; }
 
+  // When this characteristic doesn't have its own notify callback,
+  // fall back to the linked source (e.g. rxChar uses txChar's callback).
+  void setNotifySource(NimBLERemoteCharacteristic* src) { notifySource = src; }
+
+  notify_callback effectiveNotifyCb() const {
+    if (notifyCb) return notifyCb;
+    if (notifySource) return notifySource->notifyCb;
+    return nullptr;
+  }
+
   bool subscribe(bool, notify_callback cb, bool) {
     notifyCb = cb;
     return true;
@@ -296,12 +306,13 @@ class NimBLERemoteCharacteristic {
   }
 
   // For disconnect injection: test callback plumbing
-  bool hasNotifyCallback() const { return notifyCb != nullptr; }
+  bool hasNotifyCallback() const { return effectiveNotifyCb() != nullptr; }
 
   // Inject a raw packet via notify callback. Returns true if callback exists.
   bool injectRawPacket(const uint8_t* data, size_t len) {
-    if (!notifyCb) return false;
-    notifyCb(this, const_cast<uint8_t*>(data), len, true);
+    auto cb = effectiveNotifyCb();
+    if (!cb) return false;
+    cb(this, const_cast<uint8_t*>(data), len, true);
     return true;
   }
 
@@ -309,13 +320,15 @@ class NimBLERemoteCharacteristic {
 
  private:
   notify_callback notifyCb = nullptr;
+  NimBLERemoteCharacteristic* notifySource = nullptr;
   const MockCompanion* mockCompanion = nullptr;
   bool messagesSent = false;  // track whether CMD_GET_MESSAGE already responded
 
   // Build and inject PKT_SELF_INFO (0x05) via notify callback.
   // Format: [0x05][3 skip][32 pubkey][12 skip][10 radio][name...]
   void injectSelfInfo() {
-    if (!notifyCb || !mockCompanion) return;
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
     uint8_t buf[128] = {};
     size_t off = 0;
 
@@ -340,14 +353,15 @@ class NimBLERemoteCharacteristic {
     memcpy(buf + off, mockCompanion->name, nameLen);
     off += nameLen;
 
-    notifyCb(this, buf, off, true);
+    cb(this, buf, off, true);
   }
 
   // Build and inject PKT_DEVICE_INFO (0x0D) via notify callback.
   // Format: [0x0D][fw_ver][max_contacts/2][max_channels][ble_pin LE]
   //         [build(12)][model(40)][version(20)] => 80 bytes
   void injectDeviceInfo() {
-    if (!notifyCb || !mockCompanion) return;
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
     uint8_t buf[80] = {};
     size_t off = 0;
 
@@ -377,32 +391,33 @@ class NimBLERemoteCharacteristic {
     memcpy(buf + off, mockCompanion->version, verLen);
     off += 20;
 
-    notifyCb(this, buf, off, true);
+    cb(this, buf, off, true);
   }
 
   // Build and inject PKT_CONTACT_START + PKT_CONTACT × N + PKT_CONTACT_END
   // via notify callback. Packets match parseContact() format (148 bytes).
   void injectContactList() {
-    if (!notifyCb || !mockCompanion) return;
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
 
     // 1. PKT_CONTACT_START (just the code byte)
     uint8_t start = 0x02;
-    notifyCb(this, &start, 1, true);
+    cb(this, &start, 1, true);
 
     // 2. PKT_CONTACT for each contact
     for (uint8_t i = 0; i < mockCompanion->contactCount; ++i) {
-      injectOneContact(mockCompanion->contacts[i]);
+      injectOneContact(cb, mockCompanion->contacts[i]);
     }
 
     // 3. PKT_CONTACT_END (just the code byte)
     uint8_t end = 0x04;
-    notifyCb(this, &end, 1, true);
+    cb(this, &end, 1, true);
   }
 
   // Build and inject a single PKT_CONTACT (0x03, 148 bytes).
   // Format: [0x03][32 pubkey][type][flags][pathLen][64 path][32 name]
   //         [4 lastSeen][4 gpsLat(0)][4 gpsLon(0)][4 lastmod]
-  void injectOneContact(const MockContact& c) {
+  void injectOneContact(notify_callback cb, const MockContact& c) {
     uint8_t buf[148] = {};
     size_t off = 0;
 
@@ -428,16 +443,17 @@ class NimBLERemoteCharacteristic {
     off += 4;
     memcpy(buf + off, &ts, 4);  // lastmod = same timestamp
 
-    notifyCb(this, buf, 148, true);
+    cb(this, buf, 148, true);
   }
 
   // Build and inject PKT_CHANNEL_INFO (0x12, 50 bytes) for channel index.
   // Format: [0x12][idx][32 name][16 secret]
+  // When the companion has no channel at this index, send an empty one
+  // (name[0] = '\0', configured=false) so the client doesn't hang waiting.
   void injectChannelInfo(uint8_t idx) {
-    if (!notifyCb || !mockCompanion) return;
-    if (idx >= mockCompanion->channelCount) return;
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
 
-    const MockChannel& ch = mockCompanion->channels[idx];
     uint8_t buf[50] = {};
     size_t off = 0;
 
@@ -445,15 +461,20 @@ class NimBLERemoteCharacteristic {
     buf[off++] = idx;   // channel index
 
     memset(buf + off, 0, 32);  // name (32 bytes, null-padded)
-    size_t nameLen = strlen(ch.name);
-    if (nameLen > 31) nameLen = 31;
-    memcpy(buf + off, ch.name, nameLen);
+    if (idx < mockCompanion->channelCount) {
+      size_t nameLen = strlen(mockCompanion->channels[idx].name);
+      if (nameLen > 31) nameLen = 31;
+      memcpy(buf + off, mockCompanion->channels[idx].name, nameLen);
+    }
     off += 32;
 
     // secret (16 bytes): all zeros = HASHTAG (or PUBLIC if idx==0)
     memset(buf + off, 0, 16);
+    off += 16;
 
-    notifyCb(this, buf, 50, true);
+    cb(this, buf, 50, true);
+    LOG_DBG("MOCK", "injectChannelInfo(%d): %s", idx,
+            idx < mockCompanion->channelCount ? mockCompanion->channels[idx].name : "(empty)");
   }
 
   // --- Issue 5-AFK: Message, battery, and send acknowledgment methods ---
@@ -462,12 +483,13 @@ class NimBLERemoteCharacteristic {
   // channels[], then PKT_NO_MORE_MSGS. Only sends messages on first call
   // after connect; subsequent calls just send PKT_NO_MORE_MSGS.
   void injectChannelMessages() {
-    if (!notifyCb || !mockCompanion) return;
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
 
     // Only send the full message dump once per connection.
     if (messagesSent) {
       uint8_t noMore = 0x0A;  // PKT_NO_MORE_MSGS
-      notifyCb(this, &noMore, 1, true);
+      cb(this, &noMore, 1, true);
       return;
     }
     messagesSent = true;
@@ -525,19 +547,20 @@ class NimBLERemoteCharacteristic {
         off += 4;  // timestamp LE
         memcpy(buf + off, formattedText, textLen);
         off += textLen;
-        notifyCb(this, buf, off, true);
+        cb(this, buf, off, true);
       }
     }
 
     // Signal end of message list
     uint8_t noMore = 0x0A;  // PKT_NO_MORE_MSGS
-    notifyCb(this, &noMore, 1, true);
+    cb(this, &noMore, 1, true);
   }
 
   // Build and inject PKT_BATTERY (0x0C, 3 bytes) with randomized values.
   // Varies battery by ±50 mV and storage by ±10 KB from JSON baseline.
   void injectBattery() {
-    if (!notifyCb || !mockCompanion) return;
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
 
     // Simple LCG for deterministic-but-varied randomization
     uint32_t seed = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this));
@@ -560,21 +583,22 @@ class NimBLERemoteCharacteristic {
     uint8_t buf[3];
     buf[0] = 0x0C;                   // PKT_BATTERY
     memcpy(buf + 1, &batteryMv, 2);  // mV LE
-    notifyCb(this, buf, 3, true);
+    cb(this, buf, 3, true);
     LOG_DBG("MOCK", "injectBattery: %d mV", batteryMv);
   }
 
   // Build and inject PKT_MSG_SENT (0x06, 10 bytes).
   // Acknowledges that the companion received the message.
   void injectMsgSent() {
-    if (!notifyCb) return;
+    auto cb = effectiveNotifyCb();
+    if (!cb) return;
 
     uint8_t buf[10] = {};
     buf[0] = 0x06;  // PKT_MSG_SENT
     // buf[1] = 0;  // isSentFlood
     // buf[2..5] = 0;  // ack_tag
     // buf[6..9] = 0;  // est_timeout
-    notifyCb(this, buf, 10, true);
+    cb(this, buf, 10, true);
   }
 
   // Convert hex string (max 64 chars) to binary bytes.
@@ -599,6 +623,7 @@ class NimBLERemoteService {
   void setMockCompanion(const MockCompanion* c) {
     rxChar.setMockCompanion(c);
     txChar.setMockCompanion(c);
+    rxChar.setNotifySource(&txChar);  // rxChar uses txChar's notify callback
   }
 
   // doConnect() requests RX first, then TX. Use call counter to match.
@@ -696,6 +721,7 @@ class NimBLEDevice {
   static void setSecurityAuth(bool, bool, bool) {}
   static void setSecurityIOCap(uint8_t) {}
   static void injectPassKey(NimBLEConnInfo&, uint32_t) {}
+  static void setConnectPin(uint32_t pin) { sConnectPin = pin; }
   static NimBLEScan* getScan() {
     static NimBLEScan s;
     return &s;
@@ -703,6 +729,10 @@ class NimBLEDevice {
   // Defined in MockNimBLEDevice.cpp to break circular include with MockSession.h.
   static NimBLEClient* createClient();
   static void deleteClient(NimBLEClient* client) { delete client; }
+  static uint32_t getConnectPin() { return sConnectPin; }
+
+ private:
+  static uint32_t sConnectPin;
 };
 
 // Key-1 hotkey helper: inject BLE disconnect into a mock client.

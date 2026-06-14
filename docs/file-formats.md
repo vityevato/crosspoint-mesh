@@ -306,3 +306,97 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## MeshCore storage
+
+MeshCore data is stored under `/.crosspoint/meshcore/`. The directory
+structure is companion-scoped: each paired companion device has its own
+subdirectory named after the BLE address with colons stripped
+(e.g. `c2:0e:d3:71:13:d9` → `c20ed37113d9`).
+
+```
+/.crosspoint/meshcore/
+├── companion.json            # Root-level: last-used BLE address + type
+├── <ble-addr-hex>/           # Per-companion data directory
+│   ├── contacts.bin          # Saved contacts
+│   ├── unread.bin            # Unread message counters
+│   ├── ch_<N>/               # Channel message threads (N = 0–7)
+│   │   └── msgs.bin
+│   └── dm_<pubkey-hex>/      # Direct message threads (12-char hex)
+│       └── msgs.bin
+```
+
+### `companion.json`
+
+Plain text, format: `<BLE_address>:<address_type>`
+
+```
+c2:0e:d3:71:13:d9:0
+```
+
+The last colon separates the 17-char BLE address from the address type byte
+(0 = public, 1 = random). Legacy format (address only, no colon) is also
+accepted and treated as type 0.
+
+### `contacts.bin` — version 1
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`MESHCORE_CONTACT_FILE_VERSION = 1`) |
+| 1 | 1 | Count (`uint8_t`) |
+| 2+ | 106× | `MeshCoreContact` records |
+
+**`MeshCoreContact`** (106 bytes):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 32 | `publicKey` — Ed25519 public key |
+| 32 | 64 | `name` — UTF-8 display name |
+| 96 | 1 | `type` — `MeshNodeType` enum |
+| 97 | 4 | `lastSeen` — Unix timestamp (`uint32_t`) |
+| 101 | 1 | `pathLength` — LoRa hop count |
+| 102 | 1 | `snr` — signal-to-noise ratio (`int8_t`) |
+| 103 | 1 | `isSaved` — bool |
+| 104 | 2 | `unreadCount` — `uint16_t` |
+
+### `unread.bin` — version 1
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (hardcoded `1`) |
+| 1 | 1 | Channel count (`uint8_t`) |
+| 2 | 2× | Per-channel unread counts (`uint16_t`) |
+| N+1 | 1 | Contact count (`uint8_t`) |
+| N+2 | 8× | Per-contact: 6-byte pubkey prefix + `uint16_t` unread |
+
+### `msgs.bin` (channels and DMs) — version 1
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`MESHCORE_MSG_FILE_VERSION = 1`) |
+| 1 | 2 | Count (`uint16_t`, little-endian) |
+| 3+ | 264× | `MeshCoreMessage` records |
+
+**`MeshCoreMessage`** (264 bytes):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | `direction` — `MsgDirection` (`RECEIVED=0`/`SENT=1`) |
+| 1 | 1 | `type` — `MsgType` (`CHANNEL=0`/`DIRECT=1`) |
+| 2 | 6 | `pubkeyPrefix` — first 6 bytes of sender pubkey |
+| 8 | 64 | `senderName` — sender display name |
+| 72 | 1 | `channelIdx` — channel index (for CHANNEL type) |
+| 73 | 4 | `timestamp` — Unix timestamp (`uint32_t`) |
+| 77 | 1 | `snr` — signal-to-noise ratio (`int8_t`) |
+| 78 | 1 | `pathLength` — LoRa hop count |
+| 79 | 1 | `deliveryStatus` — `DeliveryStatus` enum |
+| 80 | 184 | `text` — message text (`MAX_MSG_TEXT_LEN`) |
+
+Messages are truncated to the newest 100 when the count reaches
+`MAX_MSGS_PER_THREAD` (200).
+
+### Cache invalidation
+
+Version mismatch on any binary file causes a silent read failure (treated as
+empty). The caller is responsible for handling the resulting empty state.
+There is no automatic deletion of stale companion directories.

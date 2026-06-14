@@ -8,6 +8,9 @@
 #include <MeshCoreMockHotkeys.h>
 #endif
 
+#include <MeshCore/MeshCoreMessageStore.h>
+
+#include "MeshCoreSubtitle.h"
 #include "activities/ActivityResult.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -49,14 +52,23 @@ void MeshCoreScanActivity::connectToSelected() {
   const char* knownAddr = client.getAutoReconnectAddress();
   bool isKnown = knownAddr[0] != '\0' && strcmp(knownAddr, selected.address) == 0;
 
+  // If not the auto-reconnect companion, check if we have stored data (PIN) for this one
+  if (!isKnown) {
+    uint32_t storedPin = 123456;
+    if (MeshCoreMessageStore::loadCompanionPinForAddress(selected.address, &storedPin)) {
+      isKnown = true;
+      client.setConnectPin(storedPin);
+    }
+  }
+
   if (isKnown) {
-    // Known device — connect with stored PIN (NimBLE bonding handles re-pairing)
+    // Known device — connect with stored PIN
     connecting = true;
     connectFailed = false;
     client.connectTo(selected.address, selected.addressType);
     requestUpdate();
   } else {
-    // Unknown device — prompt user for BLE PIN shown on companion screen
+    // Truly unknown device — prompt user for BLE PIN with MeshCore factory default
     startActivityForResult(
         std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN), "123456", 6,
                                                 InputType::Text),
@@ -106,6 +118,36 @@ void MeshCoreScanActivity::loop() {
       LOG_ERR("MESH", "Connection failed");
       connecting = false;
       connectFailed = true;
+      client.setAutoReconnectAddress("");
+
+      // If this companion has a stored PIN, show PIN entry immediately
+      const auto* results = client.getScanResults();
+      if (results && selectedIndex < client.getScanResultCount()) {
+        uint32_t storedPin = 123456;
+        if (MeshCoreMessageStore::loadCompanionPinForAddress(results[selectedIndex].address, &storedPin)) {
+          char defaultPinStr[8];
+          snprintf(defaultPinStr, sizeof(defaultPinStr), "%lu", (unsigned long)storedPin);
+          startActivityForResult(
+              std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN), defaultPinStr,
+                                                      6, InputType::Text),
+              [this, addr = std::string(results[selectedIndex].address),
+               addrType = results[selectedIndex].addressType](const ActivityResult& result) {
+                if (result.isCancelled) {
+                  requestUpdate();
+                  return;
+                }
+                const auto& pinStr = std::get<KeyboardResult>(result.data).text;
+                uint32_t pin = strtoul(pinStr.c_str(), nullptr, 10);
+                client.setConnectPin(pin);
+                connecting = true;
+                connectFailed = false;
+                client.connectTo(addr.c_str(), addrType);
+                requestUpdate();
+              });
+          return;
+        }
+      }
+
       requestUpdate();
     }
     // Still CONNECTING/INITIALIZING — wait
@@ -152,7 +194,10 @@ void MeshCoreScanActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE), nullptr);
+  char headerSubtitle[64];
+  formatMeshCoreSubtitle(client, headerSubtitle, sizeof(headerSubtitle));
+  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
+                 headerSubtitle);
 
   const int contentTop = metrics.topPadding + metrics.headerHeight;
   const int contentHeight = renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.topPadding;

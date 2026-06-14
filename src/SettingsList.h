@@ -264,9 +264,6 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         }
       }
     }
-    // MeshCore settings
-    v.push_back(SettingInfo::Toggle(StrId::STR_MESHCORE_AUTO_RECONNECT, &CrossPointSettings::meshCoreAutoReconnect,
-                                    "meshCoreAutoReconnect", StrId::STR_MESHCORE));
     return v;
   }();
 

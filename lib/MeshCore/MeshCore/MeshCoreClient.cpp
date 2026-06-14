@@ -252,6 +252,11 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
   // Attach security callbacks (handles passkey entry during pairing)
   bleClient->setClientCallbacks(&sBleCallbacks, false);
 
+#ifdef SIMULATOR
+  // Propagate the PIN to the mock layer so it can validate against companion's blePin
+  NimBLEDevice::setConnectPin(connectPin);
+#endif
+
   NimBLEAddress addr(std::string(bleAddress), addressType);
   if (!bleClient->connect(addr)) {
     LOG_ERR("MESH", "BLE connect failed");
@@ -352,7 +357,9 @@ bool MeshCoreClient::requestChannel(uint8_t idx) {
 bool MeshCoreClient::requestBattery() {
   uint8_t buf[1];
   size_t len = MeshProto::buildGetBattery(buf, sizeof(buf));
-  return len > 0 && enqueueCmd(buf, len, MeshProto::PKT_BATTERY);
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_BATTERY);
+  LOG_DBG("MESH", "requestBattery: %s (queue=%d/%d)", ok ? "queued" : "FAILED", cmdCount, CMD_QUEUE_SIZE);
+  return ok;
 }
 
 bool MeshCoreClient::requestMessages() {
@@ -749,6 +756,12 @@ bool MeshCoreClient::runInitSequence() {
 
   if (companion.blePin != 0 && pinCb) {
     pinCb(companion.blePin, pinCbCtx);
+  }
+
+  // Queue battery FIRST so it doesn't get stuck behind slow channel requests.
+  // Battery data updates the header subtitle on every screen.
+  if (!requestBattery()) {
+    LOG_ERR("MESH", "Failed to queue battery request");
   }
 
   // Queue GET_CONTACTS and GET_CHANNEL x maxChannels

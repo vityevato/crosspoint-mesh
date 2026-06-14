@@ -13,6 +13,9 @@
 #include "MockSession.h"
 #include "NimBLEDevice.h"
 
+// Static storage
+uint32_t NimBLEDevice::sConnectPin = 123456;
+
 bool NimBLEClient::connect(const NimBLEAddress& addr) {
   if (!MockSession::isMockActive()) return false;
   const auto* comps = MockSession::getCompanions();
@@ -20,6 +23,12 @@ bool NimBLEClient::connect(const NimBLEAddress& addr) {
   std::string addrStr = addr.toString();
   for (uint8_t i = 0; i < count; ++i) {
     if (addrStr == std::string(comps[i].bleAddress)) {
+      // Validate PIN: if companion expects a non-zero PIN, it must match
+      if (comps[i].blePin != 0 && NimBLEDevice::getConnectPin() != comps[i].blePin) {
+        LOG_ERR("MOCK", "connect(): PIN mismatch for %s (expected %lu, got %lu)", addrStr.c_str(),
+                (unsigned long)comps[i].blePin, (unsigned long)NimBLEDevice::getConnectPin());
+        return false;
+      }
       mockCompanion = &comps[i];
       nusService.setMockCompanion(mockCompanion);
       connected = true;

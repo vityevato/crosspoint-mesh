@@ -10,6 +10,7 @@
 #include <cstring>
 #include <string>
 
+#include "MeshCoreSubtitle.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -98,8 +99,10 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
+  char headerSubtitle[64];
+  formatMeshCoreSubtitle(client, headerSubtitle, sizeof(headerSubtitle));
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE_DISCOVERED),
-                 nullptr);
+                 headerSubtitle);
 
   int contentTop = metrics.topPadding + metrics.headerHeight;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;

@@ -150,6 +150,13 @@ Typical persisted areas on SD:
     cover.bmp
     sections/*.bin
     img_* cache files
+  meshcore/
+    companion.json
+    <ble-addr-hex>/
+      contacts.bin
+      unread.bin
+      ch_<N>/msgs.bin
+      dm_<pubkey-hex>/msgs.bin
   settings.json
   state.json
 ```

@@ -252,9 +252,6 @@ class CrossPointSettings {
   uint8_t language = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
-  // MeshCore: auto-reconnect to last companion on hub entry
-  uint8_t meshCoreAutoReconnect = 1;
-
   ~CrossPointSettings() = default;
 
   // Get singleton instance

@@ -51,6 +51,10 @@ class MeshCoreHubActivity final : public Activity {
   Tab currentTab = Tab::CHANNELS;
   int selectedIndex = 0;
   bool autoReconnecting = false;
+  bool reconnectOnDisconnect = false;
+  bool pendingAutoScan = false;
+  uint32_t lastBatteryRequestMs = 0;
+  uint16_t lastBatteryMv = 0;
 
   // Data loaded from client/store
   MeshCoreChannel channels[8] = {};

@@ -10,6 +10,7 @@
 #include <cstring>
 #include <string>
 
+#include "MeshCoreSubtitle.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -179,8 +180,9 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  // Header with thread name
-  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, nullptr);
+  char headerSubtitle[64];
+  formatMeshCoreSubtitle(client, headerSubtitle, sizeof(headerSubtitle));
+  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
 
   int contentTop = metrics.topPadding + metrics.headerHeight;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;

@@ -9,14 +9,51 @@
 
 static constexpr char MESHCORE_DIR[] = "/.crosspoint/meshcore";
 static constexpr char COMPANION_FILE[] = "/.crosspoint/meshcore/companion.json";
-static constexpr char CONTACTS_FILE[] = "/.crosspoint/meshcore/contacts.bin";
-static constexpr char UNREAD_FILE[] = "/.crosspoint/meshcore/unread.bin";
 
-bool MeshCoreMessageStore::init() {
+void MeshCoreMessageStore::bleAddrToKey(const char* bleAddr, char* keyOut, size_t keySize) {
+  if (!bleAddr || keySize < 13) {
+    if (keySize > 0) keyOut[0] = '\0';
+    return;
+  }
+  size_t j = 0;
+  for (size_t i = 0; bleAddr[i] != '\0' && j < 12; ++i) {
+    char c = bleAddr[i];
+    if (c == ':') continue;
+    // Lowercase and validate hex
+    if (c >= 'A' && c <= 'F') c = static_cast<char>(c + 32);
+    keyOut[j++] = c;
+  }
+  keyOut[j] = '\0';
+}
+
+bool MeshCoreMessageStore::init(const char* companionBleAddr) {
   if (!ensureDir("/.crosspoint")) return false;
   if (!ensureDir(MESHCORE_DIR)) return false;
-  LOG_INF("MESH", "Message store initialized");
+
+  // Reset companion directory
+  companionDir[0] = '\0';
+
+  // Derive companion-scoped data directory from BLE address
+  if (companionBleAddr && companionBleAddr[0] != '\0') {
+    char key[13];
+    bleAddrToKey(companionBleAddr, key, sizeof(key));
+    if (key[0] != '\0') {
+      snprintf(companionDir, sizeof(companionDir), "%s/%s", MESHCORE_DIR, key);
+      if (!ensureDir(companionDir)) {
+        companionDir[0] = '\0';
+        return false;
+      }
+      LOG_INF("MESH", "Store init for companion: %s", key);
+      return true;
+    }
+  }
+
+  LOG_INF("MESH", "Message store initialized (no companion)");
   return true;
+}
+
+void MeshCoreMessageStore::buildDataPath(const char* subPath, char* out, size_t maxLen) {
+  snprintf(out, maxLen, "%s/%s", companionDir, subPath);
 }
 
 bool MeshCoreMessageStore::ensureDir(const char* path) {
@@ -29,7 +66,7 @@ bool MeshCoreMessageStore::ensureDir(const char* path) {
 }
 
 void MeshCoreMessageStore::buildChannelPath(uint8_t idx, char* out, size_t maxLen) {
-  snprintf(out, maxLen, "/.crosspoint/meshcore/ch_%d", idx);
+  snprintf(out, maxLen, "%s/ch_%d", companionDir, idx);
 }
 
 void MeshCoreMessageStore::buildContactPath(const uint8_t* pubkey32, char* out, size_t maxLen) {
@@ -40,7 +77,7 @@ void MeshCoreMessageStore::buildContactPath(const uint8_t* pubkey32, char* out, 
     hexPrefix[i * 2 + 1] = hex[pubkey32[i] & 0x0F];
   }
   hexPrefix[12] = '\0';
-  snprintf(out, maxLen, "/.crosspoint/meshcore/dm_%s", hexPrefix);
+  snprintf(out, maxLen, "%s/dm_%s", companionDir, hexPrefix);
 }
 
 // --- Generic message operations ---
@@ -287,8 +324,11 @@ bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint16_t 
 // --- Contacts ---
 
 bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint8_t count) {
+  if (companionDir[0] == '\0') return false;
+  char filePath[64];
+  buildDataPath("contacts.bin", filePath, sizeof(filePath));
   HalFile file;
-  if (!Storage.openFileForWrite("MESH", CONTACTS_FILE, file)) {
+  if (!Storage.openFileForWrite("MESH", filePath, file)) {
     LOG_ERR("MESH", "Failed to open contacts file for write");
     return false;
   }
@@ -306,8 +346,11 @@ bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint8_t
 }
 
 uint8_t MeshCoreMessageStore::loadContacts(MeshCoreContact* out, uint8_t maxCount) {
+  if (companionDir[0] == '\0') return 0;
+  char filePath[64];
+  buildDataPath("contacts.bin", filePath, sizeof(filePath));
   HalFile file;
-  if (!Storage.openFileForRead("MESH", CONTACTS_FILE, file)) {
+  if (!Storage.openFileForRead("MESH", filePath, file)) {
     return 0;
   }
 
@@ -384,12 +427,80 @@ bool MeshCoreMessageStore::loadCompanionAddress(char* out, size_t maxLen, uint8_
   return out[0] != '\0';
 }
 
+// --- Companion PIN (per-companion, stored in scoped directory) ---
+
+bool MeshCoreMessageStore::saveCompanionPin(uint32_t pin) {
+  if (companionDir[0] == '\0') {
+    LOG_ERR("MESH", "No companion scoped — cannot save PIN");
+    return false;
+  }
+  char filePath[64];
+  buildDataPath("pin.bin", filePath, sizeof(filePath));
+  HalFile file;
+  if (!Storage.openFileForWrite("MESH", filePath, file)) {
+    LOG_ERR("MESH", "Failed to save companion PIN");
+    return false;
+  }
+  file.write(reinterpret_cast<const uint8_t*>(&pin), sizeof(pin));
+  LOG_INF("MESH", "Saved companion PIN: %lu", (unsigned long)pin);
+  return true;
+}
+
+bool MeshCoreMessageStore::loadCompanionPin(uint32_t* out) {
+  if (!out) return false;
+  *out = 123456;  // MeshCore default PIN
+  if (companionDir[0] == '\0') return false;
+
+  char filePath[64];
+  buildDataPath("pin.bin", filePath, sizeof(filePath));
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) {
+    return false;  // No saved PIN file — return default
+  }
+
+  uint32_t pin = 0;
+  int bytesRead = file.read(reinterpret_cast<uint8_t*>(&pin), sizeof(pin));
+  if (bytesRead == sizeof(pin) && pin > 0) {
+    *out = pin;
+  }
+  return true;
+}
+
+// --- Static PIN lookup by address ---
+
+bool MeshCoreMessageStore::loadCompanionPinForAddress(const char* bleAddr, uint32_t* out) {
+  if (!out || !bleAddr || bleAddr[0] == '\0') return false;
+  *out = 123456;  // MeshCore default
+
+  char key[13];
+  bleAddrToKey(bleAddr, key, sizeof(key));
+  if (key[0] == '\0') return false;
+
+  char filePath[64];
+  snprintf(filePath, sizeof(filePath), "%s/%s/pin.bin", MESHCORE_DIR, key);
+
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) {
+    return false;  // No stored PIN for this companion
+  }
+
+  uint32_t pin = 0;
+  int bytesRead = file.read(reinterpret_cast<uint8_t*>(&pin), sizeof(pin));
+  if (bytesRead == sizeof(pin) && pin > 0) {
+    *out = pin;
+  }
+  return true;
+}
+
 // --- Unread counts ---
 
 bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8_t channelCount,
                                             const MeshCoreContact* contacts, uint8_t contactCount) {
+  if (companionDir[0] == '\0') return false;
+  char filePath[64];
+  buildDataPath("unread.bin", filePath, sizeof(filePath));
   HalFile file;
-  if (!Storage.openFileForWrite("MESH", UNREAD_FILE, file)) {
+  if (!Storage.openFileForWrite("MESH", filePath, file)) {
     LOG_ERR("MESH", "Failed to save unread counts");
     return false;
   }
@@ -415,8 +526,11 @@ bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8
 
 bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint8_t channelCount, MeshCoreContact* contacts,
                                             uint8_t contactCount) {
+  if (companionDir[0] == '\0') return false;
+  char filePath[64];
+  buildDataPath("unread.bin", filePath, sizeof(filePath));
   HalFile file;
-  if (!Storage.openFileForRead("MESH", UNREAD_FILE, file)) {
+  if (!Storage.openFileForRead("MESH", filePath, file)) {
     return false;
   }
 

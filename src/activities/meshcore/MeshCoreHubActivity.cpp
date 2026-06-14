@@ -10,9 +10,11 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "MeshCoreBatteryPoller.h"
 #include "MeshCoreDiscoverActivity.h"
 #include "MeshCoreScanActivity.h"
 #include "MeshCoreStatusActivity.h"
+#include "MeshCoreSubtitle.h"
 #include "MeshCoreThreadActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -66,8 +68,25 @@ void MeshCoreHubActivity::onEnter() {
     LOG_INF("MESH", "SD log sink enabled: %s", MESH_LOG_PATH);
   }
 
-  store.init();
-  savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
+  store.init();  // Create top-level directories only (no companion yet)
+
+  // Load companion address first (root-level, always readable)
+  char addr[18] = {};
+  uint8_t addrType = 0;
+  bool hasAddr = store.loadCompanionAddress(addr, sizeof(addr), &addrType);
+
+  // Now scope the store to this companion's data directory
+  if (hasAddr && addr[0] != '\0') {
+    store.init(addr);
+    savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
+
+    // Load unread counts
+    uint16_t channelUnread[8] = {};
+    store.loadUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
+    for (int i = 0; i < 8; ++i) {
+      channels[i].unreadCount = channelUnread[i];
+    }
+  }
 
   client.setStateCallback(onStateChanged, this);
   client.setMessageCallback(onMessageReceived, this);
@@ -75,17 +94,12 @@ void MeshCoreHubActivity::onEnter() {
   client.setAdvertCallback(onAdvertReceived, this);
   client.setChannelCallback(onChannelReceived, this);
 
-  char addr[18] = {};
-  uint8_t addrType = 0;
-  if (store.loadCompanionAddress(addr, sizeof(addr), &addrType)) {
+  if (hasAddr && addr[0] != '\0') {
     client.setAutoReconnectAddress(addr, addrType);
-  }
-
-  // Load unread counts
-  uint16_t channelUnread[8] = {};
-  store.loadUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
-  for (int i = 0; i < 8; ++i) {
-    channels[i].unreadCount = channelUnread[i];
+    // Load stored PIN and set it on the client for auto-reconnect
+    uint32_t storedPin = 123456;
+    store.loadCompanionPin(&storedPin);
+    client.setConnectPin(storedPin);
   }
 
   // Disconnect WiFi before BLE (ESP32-C3 shares the radio)
@@ -103,8 +117,8 @@ void MeshCoreHubActivity::onEnter() {
     return;
   }
 
-  // Auto-reconnect if setting enabled and address known
-  if (SETTINGS.meshCoreAutoReconnect && addr[0] != '\0') {
+  // Auto-reconnect to known companion address
+  if (addr[0] != '\0') {
     autoReconnecting = true;
     client.connectTo(addr, addrType);
     requestUpdate();
@@ -122,6 +136,7 @@ void MeshCoreHubActivity::onExit() {
   // Save state
   store.saveContacts(savedContacts, savedContactCount);
   store.saveCompanionAddress(client.getAutoReconnectAddress(), client.getAutoReconnectAddressType());
+  store.saveCompanionPin(client.getConnectPin());
 
   uint16_t channelUnread[8] = {};
   for (int i = 0; i < 8; ++i) {
@@ -157,6 +172,10 @@ void MeshCoreHubActivity::launchScanActivity() {
 void MeshCoreHubActivity::loop() {
   client.poll();
 
+  if (pollMeshCoreBattery(client, lastBatteryRequestMs, lastBatteryMv)) {
+    requestUpdate();
+  }
+
   // Handle async auto-reconnect result
   if (autoReconnecting) {
     auto bleState = client.getState();
@@ -180,22 +199,22 @@ void MeshCoreHubActivity::loop() {
     }
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    onGoHome();
+  // Handle unexpected BLE disconnect — auto-scan for companions
+  if (pendingAutoScan) {
+    pendingAutoScan = false;
+    reconnectOnDisconnect = false;
+    launchScanActivity();
     return;
   }
 
-  // Tab switching with Left/Right
-  if (mappedInput.wasPressed(MappedInputManager::Button::Left)) {
-    int tab = static_cast<int>(currentTab);
-    tab = (tab > 0) ? tab - 1 : static_cast<int>(Tab::TAB_COUNT) - 1;
-    switchTab(static_cast<Tab>(tab));
-    return;
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Right)) {
-    int tab = static_cast<int>(currentTab);
-    tab = (tab < static_cast<int>(Tab::TAB_COUNT) - 1) ? tab + 1 : 0;
-    switchTab(static_cast<Tab>(tab));
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    if (selectedIndex > 0) {
+      selectedIndex = 0;
+      requestUpdate();
+    } else {
+      reconnectOnDisconnect = false;
+      onGoHome();
+    }
     return;
   }
 
@@ -216,51 +235,60 @@ void MeshCoreHubActivity::loop() {
       return;
     }
     if (mappedInput.wasPressed(MappedInputManager::Button::PageBack) && listCount > 0 && selectedIndex > 0) {
-      deleteChannel(static_cast<uint8_t>(selectedIndex));
-      if (selectedIndex >= getListCountForCurrentTab()) {
-        selectedIndex = getListCountForCurrentTab() - 1;
+      deleteChannel(static_cast<uint8_t>(selectedIndex - 1));
+      if (selectedIndex > getListCountForCurrentTab()) {
+        selectedIndex = getListCountForCurrentTab();
         if (selectedIndex < 0) selectedIndex = 0;
       }
       return;
     }
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm) && listCount > 0) {
-    switch (currentTab) {
-      case Tab::CHANNELS:
-        if (selectedIndex < channelCount && channels[selectedIndex].configured) {
-          openChannelThread(selectedIndex);
-        }
-        break;
-      case Tab::CONTACTS:
-        if (selectedIndex < savedContactCount) {
-          openContactThread(savedContacts[selectedIndex]);
-        }
-        break;
-      case Tab::DISCOVERED:
-        openDiscover();
-        break;
-      case Tab::STATUS:
-        // Refresh battery
-        client.requestBattery();
-        requestUpdate();
-        break;
-      default:
-        break;
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    if (selectedIndex == 0) {
+      // Cycle to next tab (Settings-style navigation)
+      int tab = static_cast<int>(currentTab);
+      tab = (tab < static_cast<int>(Tab::TAB_COUNT) - 1) ? tab + 1 : 0;
+      switchTab(static_cast<Tab>(tab));
+      return;
+    }
+    if (listCount > 0) {
+      int itemIdx = selectedIndex - 1;
+      switch (currentTab) {
+        case Tab::CHANNELS:
+          if (itemIdx < channelCount && channels[itemIdx].configured) {
+            openChannelThread(itemIdx);
+          }
+          break;
+        case Tab::CONTACTS:
+          if (itemIdx < savedContactCount) {
+            openContactThread(savedContacts[itemIdx]);
+          }
+          break;
+        case Tab::DISCOVERED:
+          openDiscover();
+          break;
+        case Tab::STATUS:
+          // Refresh battery
+          client.requestBattery();
+          requestUpdate();
+          break;
+        default:
+          break;
+      }
     }
     return;
   }
 
-  if (listCount > 0) {
-    buttonNavigator.onNextRelease([this, listCount] {
-      selectedIndex = ButtonNavigator::nextIndex(selectedIndex, listCount);
-      requestUpdate();
-    });
-    buttonNavigator.onPreviousRelease([this, listCount] {
-      selectedIndex = ButtonNavigator::previousIndex(selectedIndex, listCount);
-      requestUpdate();
-    });
-  }
+  int navCount = listCount + 1;  // +1 for tab bar row
+  buttonNavigator.onNextRelease([this, navCount] {
+    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, navCount);
+    requestUpdate();
+  });
+  buttonNavigator.onPreviousRelease([this, navCount] {
+    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, navCount);
+    requestUpdate();
+  });
 }
 
 void MeshCoreHubActivity::switchTab(Tab tab) {
@@ -298,37 +326,23 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  // Header
-  const char* companionName = client.getState() == BleConnectionState::CONNECTED ? client.getCompanion().name : nullptr;
+  char headerSubtitle[64];
+  formatMeshCoreSubtitle(client, headerSubtitle, sizeof(headerSubtitle));
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
-                 companionName);
+                 headerSubtitle);
 
-  // Connection status sub-header
-  const char* statusText = nullptr;
-  switch (client.getState()) {
-    case BleConnectionState::CONNECTED:
-      statusText = tr(STR_MESHCORE_CONNECTED);
-      break;
-    case BleConnectionState::CONNECTING:
-    case BleConnectionState::INITIALIZING:
-      statusText = tr(STR_MESHCORE_CONNECTING);
-      break;
-    default:
-      statusText = tr(STR_MESHCORE_DISCONNECTED);
-      break;
-  }
-  int subHeaderTop = metrics.topPadding + metrics.headerHeight;
-  GUI.drawSubHeader(renderer, Rect(0, subHeaderTop, pageWidth, metrics.tabBarHeight), statusText);
-
-  // Tab bar
-  int tabBarTop = subHeaderTop + metrics.tabBarHeight;
+  // Tab bar — Settings-style: highlight tab bar when selectedIndex == 0
+  int tabBarTop = metrics.topPadding + metrics.headerHeight;
+  constexpr int tabCount = static_cast<int>(Tab::TAB_COUNT);
+  const char* tabNames[tabCount] = {
+      tr(STR_MESHCORE_CHANNEL_LIST), tr(STR_MESHCORE_CONTACTS), tr(STR_MESHCORE_DISCOVERED),
+      tr(STR_MESHCORE_STATUS)};
   std::vector<TabInfo> tabs;
-  tabs.reserve(4);
-  tabs.push_back({tr(STR_MESHCORE_CHANNEL_LIST), currentTab == Tab::CHANNELS});
-  tabs.push_back({tr(STR_MESHCORE_CONTACTS), currentTab == Tab::CONTACTS});
-  tabs.push_back({tr(STR_MESHCORE_DISCOVERED), currentTab == Tab::DISCOVERED});
-  tabs.push_back({tr(STR_MESHCORE_STATUS), currentTab == Tab::STATUS});
-  GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, false);
+  tabs.reserve(tabCount);
+  for (int i = 0; i < tabCount; ++i) {
+    tabs.push_back({tabNames[i], currentTab == static_cast<Tab>(i)});
+  }
+  GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, selectedIndex == 0);
 
   // Content area
   int contentTop = tabBarTop + metrics.tabBarHeight;
@@ -352,14 +366,17 @@ void MeshCoreHubActivity::render(RenderLock&&) {
       break;
   }
 
-  // Button hints
+  // Button hints — Settings-style: show next tab name when on tab row
   const char* btn2 = "";
-  if (currentTab == Tab::CHANNELS || currentTab == Tab::CONTACTS) {
+  if (selectedIndex == 0) {
+    int nextTab = (static_cast<int>(currentTab) + 1) % tabCount;
+    btn2 = tabNames[nextTab];
+  } else if (currentTab == Tab::CHANNELS || currentTab == Tab::CONTACTS) {
     btn2 = tr(STR_OPEN);
   } else if (currentTab == Tab::STATUS) {
     btn2 = tr(STR_MESHCORE_RETRY);
   }
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
@@ -381,7 +398,7 @@ void MeshCoreHubActivity::renderChannelList(const Rect& contentRect) {
 
   const auto* ch = channels;
   GUI.drawList(
-      renderer, contentRect, channelCount, selectedIndex,
+      renderer, contentRect, channelCount, selectedIndex - 1,
       [ch](int index) { return std::string(ch[index].name[0] ? ch[index].name : "---"); },
       [ch](int index) {
         if (ch[index].unreadCount > 0) {
@@ -401,7 +418,7 @@ void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
 
   const auto* contacts = savedContacts;
   GUI.drawList(
-      renderer, contentRect, savedContactCount, selectedIndex,
+      renderer, contentRect, savedContactCount, selectedIndex - 1,
       [contacts](int index) { return std::string(contacts[index].name); },
       [contacts](int index) {
         if (contacts[index].unreadCount > 0) {
@@ -421,7 +438,7 @@ void MeshCoreHubActivity::renderDiscoveredList(const Rect& contentRect) {
 
   const auto* nodes = discoveredNodes;
   GUI.drawList(
-      renderer, contentRect, discoveredNodeCount, selectedIndex,
+      renderer, contentRect, discoveredNodeCount, selectedIndex - 1,
       [nodes](int index) { return std::string(nodes[index].name); },
       [nodes](int index) {
         char buf[32];
@@ -475,6 +492,28 @@ void MeshCoreHubActivity::renderStatus(const Rect& contentRect) {
 // --- Event handlers ---
 
 void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
+  if (state == BleConnectionState::CONNECTED) {
+    // Save the PIN that was used for this successful connection
+    store.saveCompanionPin(client.getConnectPin());
+
+    // Scope the store to the newly connected companion
+    const char* addr = client.getAutoReconnectAddress();
+    if (addr[0] != '\0') {
+      store.init(addr);
+      savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
+      uint16_t channelUnread[8] = {};
+      store.loadUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
+      for (int i = 0; i < 8; ++i) {
+        channels[i].unreadCount = channelUnread[i];
+      }
+    }
+    reconnectOnDisconnect = true;
+  } else if (state == BleConnectionState::DISCONNECTED) {
+    // Unexpected disconnect while previously connected — auto-scan
+    if (reconnectOnDisconnect && !autoReconnecting) {
+      pendingAutoScan = true;
+    }
+  }
   LOG_INF("MESH", "Hub state: %d", static_cast<int>(state));
   requestUpdate();
 }

@@ -27,7 +27,11 @@ bool MockSession::loadMockConfig(const char* jsonPath) {
   }
 
   JsonDocument doc;
-  auto error = deserializeJson(doc, json);
+  // Use c_str() to pass a const char* to ArduinoJson, bypassing the
+  // simulator's custom String::read() which returns signed char.
+  // Without this, bytes >127 (Cyrillic UTF-8 etc.) become negative ints
+  // and are misinterpreted as end-of-input (= IncompleteInput error).
+  auto error = deserializeJson(doc, json.c_str());
   if (error) {
     LOG_ERR("MOCK", "JSON parse error at %s: %s", jsonPath, error.c_str());
     return false;
