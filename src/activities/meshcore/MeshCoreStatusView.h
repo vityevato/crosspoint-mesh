@@ -82,10 +82,8 @@ class MeshCoreStatusView {
 
     // Draw frame (white) and interior (black) with optional rounded corners
     if (popupMetrics.popupCornerRadius > 0) {
-      renderer.fillRoundedRect(popupX, popupY, popupW, popupH,
-                               popupMetrics.popupCornerRadius + frameTh, Color::White);
-      renderer.fillRoundedRect(innerX, innerY, innerW, innerH,
-                               popupMetrics.popupCornerRadius, Color::Black);
+      renderer.fillRoundedRect(popupX, popupY, popupW, popupH, popupMetrics.popupCornerRadius + frameTh, Color::White);
+      renderer.fillRoundedRect(innerX, innerY, innerW, innerH, popupMetrics.popupCornerRadius, Color::Black);
     } else {
       renderer.fillRect(popupX, popupY, popupW, popupH, true);
       renderer.fillRect(innerX, innerY, innerW, innerH, false);

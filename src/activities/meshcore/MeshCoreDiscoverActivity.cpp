@@ -13,6 +13,8 @@
 #include "MeshCoreSubtitle.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "utils/MeshCoreDisplayUtils.h"
+#include "utils/MeshCoreTimeUtils.h"
 
 MeshCoreDiscoverActivity::MeshCoreDiscoverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                    MeshCoreClient& client, MeshCoreMessageStore& store,
@@ -104,7 +106,7 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE_DISCOVERED),
                  headerSubtitle);
 
-  int contentTop = metrics.topPadding + metrics.headerHeight;
+  int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
   Rect contentRect(0, contentTop, pageWidth, contentHeight);
 
@@ -121,8 +123,12 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
         [nodes](int index) {
           char buf[48];
           char prefix[13];
+          char ts[16] = "---";
           nodes[index].getPublicKeyPrefix(prefix);
-          snprintf(buf, sizeof(buf), "%s  %dhop  SNR:%d", prefix, nodes[index].pathLength, nodes[index].snr);
+          if (nodes[index].lastSeen != 0) {
+            formatMeshCoreTimestamp(nodes[index].lastSeen, ts, sizeof(ts));
+          }
+          snprintf(buf, sizeof(buf), "%s %s %dhop  %s", prefix, meshcore::DotSeparator, nodes[index].pathLength, ts);
           return std::string(buf);
         },
         nullptr, nullptr, false,

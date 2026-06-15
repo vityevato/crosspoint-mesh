@@ -34,6 +34,9 @@ class NimBLEConnInfo {
  public:
   bool isEncrypted() const { return false; }
   bool isBonded() const { return false; }
+  bool isAuthenticated() const { return false; }
+  uint8_t getSecKeySize() const { return 0; }
+  uint16_t getConnTimeout() const { return 400; }  // default supervision timeout (×10 ms)
 };
 
 class NimBLEClient;  // forward decl for NimBLEClientCallbacks
@@ -73,7 +76,12 @@ struct MockContact {
 };
 
 struct MockDiscoveredNode {
-  char publicKey[65] = {};  // hex, 64 chars + null (just a pubkey for adverts)
+  char publicKey[65] = {};  // hex, 64 chars + null
+  char name[64] = {};
+  uint8_t type = 0;  // 0=COMPANION, 1=REPEATER, 2=ROOM_SERVER, 3=SENSOR
+  uint32_t lastSeen = 0;
+  uint8_t pathLength = 0;
+  int8_t snr = 0;
 };
 
 struct MockChannel {
@@ -610,21 +618,40 @@ class NimBLERemoteCharacteristic {
     cb(this, buf, 10, true);
   }
 
-  // Build and inject PKT_ADVERTISEMENT (0x80) for each discovered node.
-  // Format: [0x80][32-byte binary pubkey] = 33 bytes per packet.
-  // These populate the Hub's discoveredNodes array via advertCb.
+  // Build and inject PKT_NEW_ADVERT (0x8A) for each discovered node.
+  // Uses writeContactRespFrame format (148 bytes) parsed by parseContact().
+  // These populate the Hub's contact list via contactCb with full node info.
   void injectAdvertList() {
     auto cb = effectiveNotifyCb();
     if (!cb || !mockCompanion || mockCompanion->discoveredNodeCount == 0) return;
 
-    uint8_t buf[33];
-    buf[0] = 0x80;  // PKT_ADVERTISEMENT
+    // writeContactRespFrame layout (148 bytes):
+    // [0]=code [1..32]=pubkey [33]=type [34]=flags [35]=pathLen
+    // [36..99]=path(64) [100..131]=name(32) [132..135]=lastSeen
+    // [136..139]=gpsLat [140..143]=gpsLon [144..147]=lastmod
+    static constexpr size_t CONTACT_PKT_LEN = 148;
+    uint8_t buf[CONTACT_PKT_LEN] = {};
+    buf[0] = 0x8A;  // PKT_NEW_ADVERT
+
     for (uint8_t i = 0; i < mockCompanion->discoveredNodeCount; ++i) {
-      hexToBytes(mockCompanion->discoveredNodes[i].publicKey, buf + 1, 32);
-      cb(this, buf, sizeof(buf), true);
+      const auto& node = mockCompanion->discoveredNodes[i];
+
+      memset(buf + 1, 0, CONTACT_PKT_LEN - 1);  // reset payload
+
+      hexToBytes(node.publicKey, buf + 1, 32);
+      buf[33] = node.type;
+      buf[35] = node.pathLength;
+
+      // name: up to 32 bytes, null-terminated
+      size_t nameLen = strlen(node.name);
+      if (nameLen > 32) nameLen = 32;
+      memcpy(buf + 100, node.name, nameLen);
+
+      memcpy(buf + 132, &node.lastSeen, 4);
+
+      cb(this, buf, CONTACT_PKT_LEN, true);
     }
-    LOG_INF("MOCK", "injected %d PKT_ADVERTISEMENT(s) for discovered nodes",
-            mockCompanion->discoveredNodeCount);
+    LOG_INF("MOCK", "injected %d PKT_NEW_ADVERT(s) for discovered nodes", mockCompanion->discoveredNodeCount);
   }
 
   // Convert hex string (max 64 chars) to binary bytes.
@@ -695,6 +722,7 @@ class NimBLEClient {
 
   bool secureConnection() { return connected; }
   bool isConnected() const { return connected; }
+  NimBLEConnInfo getConnInfo() const { return NimBLEConnInfo(); }
 
   void disconnect() {
     connected = false;
@@ -747,6 +775,7 @@ class NimBLEDevice {
   static void setSecurityAuth(bool, bool, bool) {}
   static void setSecurityIOCap(uint8_t) {}
   static void injectPassKey(NimBLEConnInfo&, uint32_t) {}
+  static void deleteAllBonds() {}  // no-op on simulator
   static void setConnectPin(uint32_t pin) { sConnectPin = pin; }
   static NimBLEScan* getScan() {
     static NimBLEScan s;

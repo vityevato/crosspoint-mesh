@@ -356,8 +356,8 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     auto truncatedSubtitle = renderer.truncatedText(
         SMALL_FONT_ID, subtitle, rect.width - BaseMetrics::values.contentSidePadding * 2, EpdFontFamily::REGULAR);
     int truncatedSubtitleWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedSubtitle.c_str());
-    int subtitleY = renderer.getScreenHeight() - BaseMetrics::values.buttonHintsHeight
-                    - renderer.getLineHeight(SMALL_FONT_ID) - BaseMetrics::values.subtitleBottomMargin;
+    int subtitleY = renderer.getScreenHeight() - BaseMetrics::values.buttonHintsHeight -
+                    renderer.getLineHeight(SMALL_FONT_ID) - BaseMetrics::values.subtitleBottomMargin;
     renderer.drawText(SMALL_FONT_ID,
                       rect.x + rect.width - BaseMetrics::values.contentSidePadding - truncatedSubtitleWidth, subtitleY,
                       truncatedSubtitle.c_str(), true);

@@ -49,18 +49,19 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
   }
 
   if (wasKeyPressedThisFrame(SDL_SCANCODE_2)) {
-    // Inject a new contact into the mock session via TX notify.
-    // Build PKT_CONTACT (0x03, 148 bytes) with generated name and pubkey.
+    // Inject a newly discovered node into the mock session via TX notify.
+    // Build PKT_NEW_ADVERT (0x8A, 148 bytes) with generated name and pubkey.
+    // Companion pushes this unsolicited when it detects a new mesh node.
     if (!bleClient || !bleClient->isConnected()) return false;
 
     ++MockSession::injectContactCounter;
     uint16_t n = MockSession::injectContactCounter;
 
-    // Build PKT_CONTACT packet
+    // Build PKT_NEW_ADVERT packet (same 148-byte format as PKT_CONTACT)
     uint8_t buf[148] = {};
     size_t off = 0;
 
-    buf[off++] = 0x03;  // PKT_CONTACT
+    buf[off++] = 0x8A;  // PKT_NEW_ADVERT
 
     // Generate pseudo-random pubkey prefix from counter + name hash
     char hexBuf[65] = {};
@@ -103,7 +104,7 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     memcpy(buf + off, &ts, 4);  // lastmod
 
     bleClient->injectPacket(buf, sizeof(buf));
-    LOG_INF("MOCK", "[%s] key 2: inject contact \"%s\"", activityName, nameBuf);
+    LOG_INF("MOCK", "[%s] key 2: inject new node \"%s\"", activityName, nameBuf);
     return true;
   }
 

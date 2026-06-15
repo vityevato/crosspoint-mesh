@@ -245,10 +245,12 @@ void MeshCoreHubActivity::loop() {
   if (showingDisconnectPopup) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
       showingDisconnectPopup = false;
-      requestUpdate();    } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      requestUpdate();
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       showingDisconnectPopup = false;
       client.disconnect();
-      requestUpdate();    }
+      requestUpdate();
+    }
     return;
   }
 
@@ -426,9 +428,7 @@ void MeshCoreHubActivity::render(RenderLock&&) {
     GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
                    headerSubtitle);
 
-    const auto& comp = (client.getState() == BleConnectionState::CONNECTED)
-                           ? client.getCompanion()
-                           : lastCompanion;
+    const auto& comp = (client.getState() == BleConnectionState::CONNECTED) ? client.getCompanion() : lastCompanion;
     MeshCoreStatusView::renderAsPopup(renderer, comp);
 
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
@@ -591,24 +591,45 @@ void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
   // PKT_CONTACT_START sends an empty contact — skip it
   if (c.name[0] == '\0' && c.publicKey[0] == 0) return;
 
-  // Update saved contacts with server data
-  for (uint8_t i = 0; i < savedContactCount; ++i) {
-    if (memcmp(savedContacts[i].publicKey, c.publicKey, 32) == 0) {
-      savedContacts[i].lastSeen = c.lastSeen;
-      savedContacts[i].pathLength = c.pathLength;
-      savedContacts[i].snr = c.snr;
-      savedContacts[i].type = c.type;
-      if (c.name[0] != '\0') {
-        snprintf(savedContacts[i].name, sizeof(savedContacts[i].name), "%s", c.name);
+  // Only show clients (COMPANION), not repeaters or sensors
+  if (c.type != MeshNodeType::COMPANION) return;
+
+  if (c.isSaved) {
+    // Update saved contacts with server data
+    for (uint8_t i = 0; i < savedContactCount; ++i) {
+      if (memcmp(savedContacts[i].publicKey, c.publicKey, 32) == 0) {
+        savedContacts[i].lastSeen = c.lastSeen;
+        savedContacts[i].pathLength = c.pathLength;
+        savedContacts[i].snr = c.snr;
+        savedContacts[i].type = c.type;
+        if (c.name[0] != '\0') {
+          snprintf(savedContacts[i].name, sizeof(savedContacts[i].name), "%s", c.name);
+        }
+        store.saveContacts(savedContacts, savedContactCount);
+        return;
       }
-      return;
     }
-  }
-  // New contact from companion — add as saved
-  if (savedContactCount < MAX_VISIBLE_CONTACTS) {
-    savedContacts[savedContactCount] = c;
-    savedContacts[savedContactCount].isSaved = true;
-    savedContactCount++;
+    // New contact from companion — add as saved
+    if (savedContactCount < MAX_VISIBLE_CONTACTS) {
+      savedContacts[savedContactCount] = c;
+      savedContacts[savedContactCount].isSaved = true;
+      savedContactCount++;
+      store.saveContacts(savedContacts, savedContactCount);
+    }
+  } else {
+    // Unsolicited new node discovery (PKT_NEW_ADVERT) — add to discovered nodes
+    for (uint8_t i = 0; i < discoveredNodeCount; ++i) {
+      if (memcmp(discoveredNodes[i].publicKey, c.publicKey, 32) == 0) {
+        discoveredNodes[i] = c;
+        requestUpdate();
+        return;
+      }
+    }
+    if (discoveredNodeCount < MAX_VISIBLE_CONTACTS) {
+      discoveredNodes[discoveredNodeCount] = c;
+      discoveredNodeCount++;
+      requestUpdate();
+    }
   }
 }
 

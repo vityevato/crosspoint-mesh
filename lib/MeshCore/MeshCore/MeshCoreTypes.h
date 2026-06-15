@@ -28,33 +28,33 @@ enum class DeliveryStatus : uint8_t { SENT = 0, ACKED = 1, FAILED = 2 };
 enum class ChannelType : uint8_t { PUBLIC = 0, HASHTAG = 1, PRIVATE_CH = 2 };
 
 struct MeshCoreCompanion {
-  char name[64] = {};
-  uint8_t publicKey[32] = {};
-  char bleAddress[18] = {};
-  float radioFreq = 0;
-  float radioBw = 0;
-  uint8_t radioSf = 0;
-  uint8_t radioCr = 0;
-  char firmwareBuild[13] = {};
-  char model[41] = {};
-  char version[21] = {};
-  uint16_t batteryMv = 0;
-  uint32_t storageUsedKb = 0;
-  uint32_t storageTotalKb = 0;
-  uint8_t maxContacts = 0;
-  uint8_t maxChannels = 8;
-  uint32_t blePin = 0;  // PIN shown on companion device (0 = no PIN)
+  char name[64] = {};           ///< Display name of the companion device
+  uint8_t publicKey[32] = {};   ///< Ed25519 public key of the companion
+  char bleAddress[18] = {};     ///< BLE MAC address as string (e.g. "AA:BB:CC:DD:EE:FF")
+  float radioFreq = 0;          ///< LoRa center frequency (Hz)
+  float radioBw = 0;            ///< LoRa bandwidth (Hz)
+  uint8_t radioSf = 0;          ///< LoRa spreading factor (SF7..SF12)
+  uint8_t radioCr = 0;          ///< LoRa coding rate (4/5..4/8)
+  char firmwareBuild[13] = {};  ///< Firmware build version (string up to 12 chars)
+  char model[41] = {};          ///< Device model
+  char version[21] = {};        ///< Firmware version
+  uint16_t batteryMv = 0;       ///< Battery voltage in millivolts
+  uint32_t storageUsedKb = 0;   ///< Used storage space (KB)
+  uint32_t storageTotalKb = 0;  ///< Total storage capacity (KB)
+  uint8_t maxContacts = 0;      ///< Maximum number of contacts
+  uint8_t maxChannels = 8;      ///< Maximum number of channels
+  uint32_t blePin = 0;          ///< PIN displayed on the companion device (0 == no PIN)
 };
 
 struct MeshCoreContact {
-  uint8_t publicKey[32] = {};
-  char name[64] = {};
-  MeshNodeType type = MeshNodeType::UNKNOWN;
-  uint32_t lastSeen = 0;
-  uint8_t pathLength = 0;
-  int8_t snr = 0;
-  bool isSaved = false;
-  uint16_t unreadCount = 0;
+  uint8_t publicKey[32] = {};                 ///< Ed25519 public key of the contact
+  char name[64] = {};                         ///< Contact display name
+  MeshNodeType type = MeshNodeType::UNKNOWN;  ///< Mesh node type
+  uint32_t lastSeen = 0;                      ///< Last seen time (unix timestamp, sec)
+  uint8_t pathLength = 0;                     ///< Number of hops to the node
+  int8_t snr = 0;                             ///< SNR of last received packet (dB)
+  bool isSaved = false;                       ///< Whether the contact is saved in the address book
+  uint16_t unreadCount = 0;                   ///< Number of unread messages
 
   // Return 6-byte hex prefix for display
   void getPublicKeyPrefix(char out[13]) const {
@@ -68,12 +68,12 @@ struct MeshCoreContact {
 };
 
 struct MeshCoreChannel {
-  uint8_t index = 0;
-  char name[33] = {};
-  uint8_t secret[16] = {};
-  ChannelType type = ChannelType::PUBLIC;
-  uint16_t unreadCount = 0;
-  bool configured = false;
+  uint8_t index = 0;                       ///< Channel index (0..n-1)
+  char name[33] = {};                      ///< Channel name (up to 32 chars + null)
+  uint8_t secret[16] = {};                 ///< 16-byte channel secret (key)
+  ChannelType type = ChannelType::PUBLIC;  ///< Channel type (public/hashtag/private)
+  uint16_t unreadCount = 0;                ///< Number of unread messages in the channel
+  bool configured = false;                 ///< Whether the channel was explicitly configured by the user
 
   bool isEmpty() const { return name[0] == '\0'; }
 };
@@ -81,16 +81,16 @@ struct MeshCoreChannel {
 static constexpr uint16_t MAX_MSG_TEXT_LEN = 184;
 
 struct MeshCoreMessage {
-  MsgDirection direction = MsgDirection::RECEIVED;
-  MsgType type = MsgType::CHANNEL;
-  uint8_t pubkeyPrefix[6] = {};
-  char senderName[64] = {};
-  uint8_t channelIdx = 0;
-  uint32_t timestamp = 0;
-  int8_t snr = 0;
-  uint8_t pathLength = 0;
-  DeliveryStatus deliveryStatus = DeliveryStatus::SENT;
-  char text[MAX_MSG_TEXT_LEN] = {};
+  MsgDirection direction = MsgDirection::RECEIVED;       ///< Message direction (received/sent)
+  MsgType type = MsgType::CHANNEL;                       ///< Message type (channel/direct)
+  uint8_t pubkeyPrefix[6] = {};                          ///< First 6 bytes of sender's public key
+  char senderName[64] = {};                              ///< Sender name
+  uint8_t channelIdx = 0;                                ///< Channel index (for channel messages)
+  uint32_t timestamp = 0;                                ///< Message timestamp (unix timestamp, sec)
+  int8_t snr = 0;                                        ///< SNR at reception (dB)
+  uint8_t pathLength = 0;                                ///< Number of hops the message traversed
+  DeliveryStatus deliveryStatus = DeliveryStatus::SENT;  ///< Delivery status
+  char text[MAX_MSG_TEXT_LEN] = {};                      ///< Message text (up to MAX_MSG_TEXT_LEN bytes)
 };
 
 // Message store file version (increment on format change)

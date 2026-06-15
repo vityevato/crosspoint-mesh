@@ -23,8 +23,7 @@
  */
 class MeshCoreMenuView {
  public:
-  static void render(const GfxRenderer& renderer, const Rect& contentRect,
-                     int selectedIndex, bool isConnected) {
+  static void render(const GfxRenderer& renderer, const Rect& contentRect, int selectedIndex, bool isConnected) {
     // All 5 items are always present — no empty state needed.
     constexpr int kItemCount = 5;
 
@@ -33,12 +32,18 @@ class MeshCoreMenuView {
         /*rowTitle*/
         [](int index) -> std::string {
           switch (index) {
-            case 0: return tr(STR_MESHCORE_DISCOVERY_NODES);
-            case 1: return tr(STR_MESHCORE_SEND_ADVERT);
-            case 2: return tr(STR_MESHCORE_SEND_FLOOD_ADVERT);
-            case 3: return tr(STR_MESHCORE_STATUS);
-            case 4: return tr(STR_MESHCORE_DISCONNECT);
-            default: return {};
+            case 0:
+              return tr(STR_MESHCORE_DISCOVERY_NODES);
+            case 1:
+              return tr(STR_MESHCORE_SEND_ADVERT);
+            case 2:
+              return tr(STR_MESHCORE_SEND_FLOOD_ADVERT);
+            case 3:
+              return tr(STR_MESHCORE_STATUS);
+            case 4:
+              return tr(STR_MESHCORE_DISCONNECT);
+            default:
+              return {};
           }
         },
         /*rowSubtitle*/ nullptr,

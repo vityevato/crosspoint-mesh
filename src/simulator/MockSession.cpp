@@ -138,8 +138,7 @@ bool MockSession::parseCompanion(JsonObjectConst obj, MockCompanion& out) {
   // Parse discovered_nodes array
   JsonArrayConst discoveredArr = obj["discovered_nodes"];
   if (!discoveredArr.isNull()) {
-    out.discoveredNodeCount =
-        std::min(static_cast<uint8_t>(discoveredArr.size()), MOCK_MAX_DISCOVERED_NODES);
+    out.discoveredNodeCount = std::min(static_cast<uint8_t>(discoveredArr.size()), MOCK_MAX_DISCOVERED_NODES);
     for (uint8_t i = 0; i < out.discoveredNodeCount; ++i) {
       parseDiscoveredNode(discoveredArr[i], out.discoveredNodes[i]);
     }
@@ -189,6 +188,14 @@ void MockSession::parseMessage(JsonObjectConst obj, MockMessage& out) {
 void MockSession::parseDiscoveredNode(JsonObjectConst obj, MockDiscoveredNode& out) {
   auto pk = obj["public_key"] | "";
   strncpy(out.publicKey, pk, sizeof(out.publicKey) - 1);
+
+  auto name = obj["name"] | "";
+  strncpy(out.name, name, sizeof(out.name) - 1);
+
+  out.type = obj["type"] | 0;
+  out.lastSeen = obj["last_seen"] | 0U;
+  out.pathLength = obj["path_length"] | 0;
+  out.snr = obj["snr"] | 0;
 }
 
 #endif  // SIMULATOR

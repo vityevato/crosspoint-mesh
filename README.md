@@ -215,7 +215,7 @@ Mock hotkeys for injecting BLE events:
 | Key | Action |
 | --- | --- |
 | 1 | Inject BLE disconnect |
-| 2 | Inject contact (discovered node) |
+| 2 | Inject new node (PKT_NEW_ADVERT)   |
 | 3 | Inject channel created |
 | 4 | Inject channel message |
 | 5 | Inject direct message |

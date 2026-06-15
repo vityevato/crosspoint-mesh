@@ -29,12 +29,15 @@ class MeshBleClientCallbacks : public NimBLEClientCallbacks {
     if (connInfo.isEncrypted()) {
       LOG_INF("MESH", "BLE pairing complete (encrypted=%d bonded=%d)", connInfo.isEncrypted(), connInfo.isBonded());
     } else {
-      LOG_ERR("MESH", "BLE pairing failed — not encrypted");
+      LOG_ERR("MESH", "BLE pairing failed — not encrypted (authenticated=%d keySize=%d)", connInfo.isAuthenticated(),
+              connInfo.getSecKeySize());
     }
   }
 
   void onDisconnect(NimBLEClient* pClient, int reason) override {
-    LOG_INF("MESH", "BLE disconnected, reason=%d", reason);
+    // reason=520 = BLE_HS_ECONNTERM(0x08) = HCI Connection Timeout (supervision timeout).
+    // Most common cause: stale bond or pairing race on ESP32-C3 controller.
+    LOG_INF("MESH", "BLE disconnected, reason=%d (0x%04X)", reason, reason);
   }
 };
 
@@ -54,6 +57,13 @@ bool MeshCoreClient::init() {
   NimBLEDevice::init("CrossPoint");
   NimBLEDevice::setMTU(512);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+
+  // Clear any stale bonds from a previous session.
+  // If the companion lost its bond (reset / fw update), NimBLE tries the old
+  // LTK on reconnection, encryption fails, and the link drops with HCI timeout
+  // (reason=520 / BLE_HS_ECONNTERM + BLE_ERR_CONN_TIMEOUT).  Starting fresh
+  // forces a full pairing cycle (passkey entry), which is the safe default.
+  NimBLEDevice::deleteAllBonds();
 
   // BLE security: companion firmware requires encrypted MITM-authenticated link
   // (ESP_GATT_PERM_READ_ENC_MITM / ESP_GATT_PERM_WRITE_ENC_MITM on NUS chars).
@@ -258,21 +268,31 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
 #endif
 
   NimBLEAddress addr(std::string(bleAddress), addressType);
+
   if (!bleClient->connect(addr)) {
     LOG_ERR("MESH", "BLE connect failed");
     failConnect(false);
     return;
   }
 
+  LOG_INF("MESH", "BLE link established, waiting 150ms before pairing");
+
+  // Small gap between HCI connect and pairing initiation.  Some ESP32-C3 BLE
+  // controller revisions drop the link (reason=520 / HCI timeout) if pairing
+  // starts too fast — the controller's LL state machine may still be settling.
+  vTaskDelay(pdMS_TO_TICKS(150));
+
   // Establish encrypted link BEFORE any GATT operations.
   // Companion firmware requires MITM-authenticated encryption on all NUS
   // characteristics; without this, subscribe/write are silently rejected.
+  LOG_INF("MESH", "Starting secure connection (pairing) with PIN %lu", (unsigned long)connectPin);
   if (!bleClient->secureConnection()) {
     LOG_ERR("MESH", "BLE pairing/encryption failed");
     failConnect(true);
     return;
   }
-  LOG_INF("MESH", "BLE link encrypted");
+  NimBLEConnInfo connInfo = bleClient->getConnInfo();
+  LOG_INF("MESH", "BLE link encrypted (bonded=%d timeout=%d)", connInfo.isBonded(), connInfo.getConnTimeout());
 
   // Discover NUS service
   NimBLERemoteService* svc = bleClient->getService(NUS_SERVICE_UUID);

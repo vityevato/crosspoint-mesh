@@ -6,6 +6,8 @@
 
 #include <cstdio>
 
+#include "utils/MeshCoreDisplayUtils.h"
+
 /**
  * Formats the MeshCore connection status subtitle into a buffer.
  *
@@ -23,7 +25,7 @@ inline void formatMeshCoreSubtitle(const MeshCoreClient& client, char* buf, size
       battPct = static_cast<int>(comp.batteryMv - 3200) / 10;
       if (battPct > 100) battPct = 100;
     }
-    snprintf(buf, bufSize, "%d%% - %s", battPct, comp.name);
+    snprintf(buf, bufSize, "%d%% %s %s", battPct, meshcore::DotSeparator, comp.name);
   } else {
     snprintf(buf, bufSize, "%s", tr(STR_MESHCORE_DISCONNECTED));
   }

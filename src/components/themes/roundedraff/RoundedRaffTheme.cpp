@@ -402,9 +402,11 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
   constexpr int innerEdgePadding = 16;
   const int maxLabelWidth = groupWidth - innerEdgePadding * 2;
   const std::string backLabel = backDisabled ? "" : renderer.truncatedText(kGuideFontId, btn1, maxLabelWidth);
-  const std::string selectText = (btn2 && btn2[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn2, maxLabelWidth) : "";
+  const std::string selectText =
+      (btn2 && btn2[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn2, maxLabelWidth) : "";
   const std::string upText = (btn3 && btn3[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn3, maxLabelWidth) : "";
-  const std::string downText = (btn4 && btn4[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn4, maxLabelWidth) : "";
+  const std::string downText =
+      (btn4 && btn4[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn4, maxLabelWidth) : "";
 
   // Ensure button hints always "win" visually even if other elements accidentally render into this area.
   renderer.fillRect(leftGroupX, hintY, groupWidth, hintHeight, false);
