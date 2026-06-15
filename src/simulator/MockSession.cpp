@@ -135,6 +135,16 @@ bool MockSession::parseCompanion(JsonObjectConst obj, MockCompanion& out) {
     }
   }
 
+  // Parse discovered_nodes array
+  JsonArrayConst discoveredArr = obj["discovered_nodes"];
+  if (!discoveredArr.isNull()) {
+    out.discoveredNodeCount =
+        std::min(static_cast<uint8_t>(discoveredArr.size()), MOCK_MAX_DISCOVERED_NODES);
+    for (uint8_t i = 0; i < out.discoveredNodeCount; ++i) {
+      parseDiscoveredNode(discoveredArr[i], out.discoveredNodes[i]);
+    }
+  }
+
   return true;  // validation done by caller via isValid()
 }
 
@@ -174,6 +184,11 @@ void MockSession::parseMessage(JsonObjectConst obj, MockMessage& out) {
 
   out.direction = obj["direction"] | 0;
   out.timestamp = obj["timestamp"] | 0U;
+}
+
+void MockSession::parseDiscoveredNode(JsonObjectConst obj, MockDiscoveredNode& out) {
+  auto pk = obj["public_key"] | "";
+  strncpy(out.publicKey, pk, sizeof(out.publicKey) - 1);
 }
 
 #endif  // SIMULATOR

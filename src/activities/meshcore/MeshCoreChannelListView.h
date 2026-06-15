@@ -15,7 +15,7 @@
  */
 class MeshCoreChannelListView {
  public:
-  static void render(GfxRenderer& renderer, const Rect& contentRect, const MeshCoreChannel* channels,
+  static void render(const GfxRenderer& renderer, const Rect& contentRect, const MeshCoreChannel* channels,
                      uint8_t channelCount, int selectedIndex) {
     bool hasChannels = false;
     for (uint8_t i = 0; i < channelCount; ++i) {

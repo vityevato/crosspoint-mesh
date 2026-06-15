@@ -54,6 +54,7 @@ static constexpr uint8_t MOCK_MAX_COMPANIONS = 4;
 static constexpr uint8_t MOCK_MAX_CONTACTS = 20;
 static constexpr uint8_t MOCK_MAX_CHANNELS = 8;
 static constexpr uint8_t MOCK_MAX_MESSAGES = 50;
+static constexpr uint8_t MOCK_MAX_DISCOVERED_NODES = 8;
 static constexpr uint16_t MOCK_MAX_TEXT_LEN = 184;  // matches MAX_MSG_TEXT_LEN
 
 struct MockMessage {
@@ -69,6 +70,10 @@ struct MockContact {
   uint32_t lastSeen = 0;
   uint8_t pathLength = 0;
   int8_t snr = 0;
+};
+
+struct MockDiscoveredNode {
+  char publicKey[65] = {};  // hex, 64 chars + null (just a pubkey for adverts)
 };
 
 struct MockChannel {
@@ -104,6 +109,9 @@ struct MockCompanion {
 
   MockChannel channels[MOCK_MAX_CHANNELS] = {};
   uint8_t channelCount = 0;
+
+  MockDiscoveredNode discoveredNodes[MOCK_MAX_DISCOVERED_NODES] = {};
+  uint8_t discoveredNodeCount = 0;
 
   // Returns false if name or bleAddress is empty
   bool isValid() const { return name[0] != '\0' && bleAddress[0] != '\0'; }
@@ -239,8 +247,9 @@ class NimBLERemoteCharacteristic {
   bool writeValue(const uint8_t* data, size_t len, bool) {
     if (len == 0 || !mockCompanion) return false;
     uint8_t cmd = data[0];
-    if (cmd == 0x01) {  // CMD_APP_START → PKT_SELF_INFO
+    if (cmd == 0x01) {  // CMD_APP_START → PKT_SELF_INFO + discovered node adverts
       injectSelfInfo();
+      injectAdvertList();
       return true;
     }
     if (cmd == 0x16) {  // CMD_DEVICE_QUERY → PKT_DEVICE_INFO
@@ -599,6 +608,23 @@ class NimBLERemoteCharacteristic {
     // buf[2..5] = 0;  // ack_tag
     // buf[6..9] = 0;  // est_timeout
     cb(this, buf, 10, true);
+  }
+
+  // Build and inject PKT_ADVERTISEMENT (0x80) for each discovered node.
+  // Format: [0x80][32-byte binary pubkey] = 33 bytes per packet.
+  // These populate the Hub's discoveredNodes array via advertCb.
+  void injectAdvertList() {
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion || mockCompanion->discoveredNodeCount == 0) return;
+
+    uint8_t buf[33];
+    buf[0] = 0x80;  // PKT_ADVERTISEMENT
+    for (uint8_t i = 0; i < mockCompanion->discoveredNodeCount; ++i) {
+      hexToBytes(mockCompanion->discoveredNodes[i].publicKey, buf + 1, 32);
+      cb(this, buf, sizeof(buf), true);
+    }
+    LOG_INF("MOCK", "injected %d PKT_ADVERTISEMENT(s) for discovered nodes",
+            mockCompanion->discoveredNodeCount);
   }
 
   // Convert hex string (max 64 chars) to binary bytes.

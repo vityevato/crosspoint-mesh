@@ -25,6 +25,10 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
       - [3.6.7 KOReader Sync Quick Setup](#367-koreader-sync-quick-setup)
     - [3.7 Sleep Screen](#37-sleep-screen)
     - [3.8 Custom Fonts (SD Card)](#38-custom-fonts-sd-card)
+    - [3.9 MeshCore Hub](#39-meshcore-hub)
+      - [3.9.1 Contacts Tab](#391-contacts-tab)
+      - [3.9.2 Channels Tab](#392-channels-tab)
+      - [3.9.3 Menu Tab](#393-menu-tab)
   - [4. Reading Mode](#4-reading-mode)
       - [Page Turning](#page-turning)
       - [Chapter Navigation](#chapter-navigation)
@@ -486,6 +490,53 @@ There are three ways to install fonts:
 Once installed, custom fonts appear in **Settings → Reader → Font Family** alongside the built-in fonts.
 
 See [docs/sd-card-fonts.md](./docs/sd-card-fonts.md) for full installation details and SD card folder structure.
+
+### 3.9 MeshCore Hub
+
+The MeshCore Hub provides access to the [MeshCore](https://meshcore.co.uk/)
+decentralised mesh network. It uses BLE to connect to a MeshCore companion
+device (T-Beam, etc.) and presents a three-tab interface:
+
+**Navigation**:
+- **Confirm** (when tab bar is highlighted) — cycle to the next tab (Contacts → Channels → Menu → Contacts…).
+- **Up/Down** — move the selection up and down between the tab bar and list items.
+- **Confirm** (on a list item) — open the selected contact, channel, or menu action.
+- **Back** — return to Home (or move focus back to the tab bar if a list item is selected).
+
+#### 3.9.1 Contacts Tab
+
+Lists saved peer contacts with their names and unread message counts.
+
+- **Confirm** on a contact opens the direct message thread.
+- Unread counts are shown next to contacts with new messages.
+
+#### 3.9.2 Channels Tab
+
+Lists LoRa channels configured on the companion (up to 8).
+
+- **Confirm** on a channel opens the channel thread.
+- **Page Forward** (Volume Down) adds a new channel (name + secret).
+- **Page Back** (Volume Up) deletes the selected channel.
+
+#### 3.9.3 Menu Tab
+
+Groups secondary actions that are used less frequently:
+
+| Item | Action |
+| --- | --- |
+| **Discovery Nodes** | Opens the list of nearby mesh nodes discovered via network adverts. Confirm on a node adds it to saved contacts. |
+| **Send Advert** | Sends a single-hop mesh advertisement via the companion. Nearby nodes can discover your presence. |
+| **Send Flood Advert** | Sends a mesh-wide flood advertisement. Propagates through the entire mesh network. |
+| **Status** | Shows companion device info: battery level, storage, firmware version, radio configuration. |
+| **Disconnect** | Shows a confirmation prompt, then disconnects from the companion. |
+
+> [!NOTE]
+> **Send Advert**, **Send Flood Advert**, and **Disconnect** require the
+> companion to be connected. When disconnected, these items appear dimmed
+> and pressing Confirm shows "Not connected".
+>
+> After sending an advert, the subtitle area shows a brief status message
+> ("Advert sent" or "Advert failed") that auto-clears after 5 seconds.
 
 ---
 

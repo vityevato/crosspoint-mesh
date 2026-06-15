@@ -52,6 +52,7 @@ class MockSession {
   static void parseContact(JsonObjectConst obj, MockContact& out);
   static void parseChannel(JsonObjectConst obj, MockChannel& out);
   static void parseMessage(JsonObjectConst obj, MockMessage& out);
+  static void parseDiscoveredNode(JsonObjectConst obj, MockDiscoveredNode& out);
 };
 
 #endif  // SIMULATOR

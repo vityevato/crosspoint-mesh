@@ -15,7 +15,7 @@
  */
 class MeshCoreContactListView {
  public:
-  static void render(GfxRenderer& renderer, const Rect& contentRect, const MeshCoreContact* contacts,
+  static void render(const GfxRenderer& renderer, const Rect& contentRect, const MeshCoreContact* contacts,
                      uint8_t contactCount, int selectedIndex) {
     if (contactCount == 0) {
       GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_NO_CONTACTS));

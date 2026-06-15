@@ -1,7 +1,7 @@
 #pragma once
 
 // Keyboard mock hotkey handler for MeshCore BLE simulation.
-// Uses SDL2 keyboard state to detect digit key presses (1-6).
+// Uses SDL2 keyboard state to detect digit key presses (1-8).
 // Dispatches only when MockSession::isMockActive().
 // Keys inject events as if they arrived via Bluetooth.
 
@@ -234,6 +234,24 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     }
     bleClient->injectPacket(buf, sizeof(buf));
     LOG_INF("MOCK", "[%s] key 6: status refresh", activityName);
+    return true;
+  }
+
+  if (wasKeyPressedThisFrame(SDL_SCANCODE_7)) {
+    // Inject PKT_OK (0x00) to simulate advert success
+    if (!bleClient || !bleClient->isConnected()) return false;
+    uint8_t buf[] = {0x00};  // PKT_OK
+    bleClient->injectPacket(buf, sizeof(buf));
+    LOG_INF("MOCK", "[%s] key 7: inject advert success", activityName);
+    return true;
+  }
+
+  if (wasKeyPressedThisFrame(SDL_SCANCODE_8)) {
+    // Inject PKT_OK (0x00) to simulate flood advert success
+    if (!bleClient || !bleClient->isConnected()) return false;
+    uint8_t buf[] = {0x00};  // PKT_OK
+    bleClient->injectPacket(buf, sizeof(buf));
+    LOG_INF("MOCK", "[%s] key 8: inject flood advert success", activityName);
     return true;
   }
 

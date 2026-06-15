@@ -180,8 +180,10 @@ pio run -e simulator
 - File I/O sandboxed under `./fs_/` relative to the binary's working directory
 - Clear stale caches after layout changes: `rm -rf ./fs_/.crosspoint/`
 
-**MeshCore on simulator**: MeshCore activities (hub, discover, scan, status,
-thread) compile and render on the simulator. When `fs_/meshcore_mock.json`
+**MeshCore on simulator**: MeshCore activities (hub, discover, scan, thread)
+compile and render on the simulator. The hub's Menu tab provides access to
+Discovery Nodes, Status, and Disconnect as subscreens within the hub.
+When `fs_/meshcore_mock.json`
 is present, the mock layer (see `src/simulator/`) activates — BLE operations
 return data from JSON instead of no-ops. Without the JSON file, all BLE
 operations remain no-ops (simulator has no real BLE hardware). All UI

@@ -1,9 +1,8 @@
 #pragma once
 
+#include <I18n.h>
 #include <MeshCore/MeshCoreClient.h>
 #include <MeshCore/MeshCoreTypes.h>
-
-#include <I18n.h>
 
 #include <cstdio>
 

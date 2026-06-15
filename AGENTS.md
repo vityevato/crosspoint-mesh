@@ -110,7 +110,7 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   │   ├── network/         # WiFi selection, web server activity
 │   │   ├── boot_sleep/      # Boot and deep sleep transitions
 │   │   ├── browser/         # OPDS book browser
-│   │   ├── meshcore/        # MeshCore BLE activities (hub, discover, scan, chat)
+│   │   ├── meshcore/        # MeshCore BLE activities (hub, discover, scan, chat, thread)
 │   │   └── util/            # Keyboard entry, full-screen messages
 │   ├── components/          # UI theme system, icons, themes
 │   │   ├── UITheme.h/cpp    # GUI singleton — orientation-aware rendering
@@ -445,6 +445,44 @@ Failures on low/medium/high defects block merge.
   over `GfxRenderer::drawCenteredText()` — it respects screen safe-area.
 - Use `renderer.wrappedText()` for multi-line text wrapping when a
   label:value pair or description may exceed one line.
+
+**Status message overlay (toast notifications)**:
+- Use `StatusMessageOverlay` (`src/activities/meshcore/StatusMessageOverlay.h`)
+  whenever an activity needs ephemeral status messages (toasts) that
+  temporarily replace the header subtitle, then auto-revert.
+- The class is header-only, zero-heap, and framework-agnostic (clock
+  injected via `setClock(&millis)`, subtitle via `setSubtitleProvider(fn, ctx)`).
+
+  Setup in `onEnter()`:
+  ```cpp
+  _toast.setClock(&millis);
+  _toast.setSubtitleProvider([](const void* ctx, char* buf, size_t n) {
+    formatMeshCoreSubtitle(*static_cast<const MeshCoreClient*>(ctx), buf, n);
+  }, &client);
+  ```
+
+  Poll in `loop()`:
+  ```cpp
+  if (_toast.poll()) requestUpdate();
+  ```
+
+  Render in `render()`:
+  ```cpp
+  char sub[64];
+  _toast.getSubtitle(sub, sizeof(sub));
+  GUI.drawHeader(…, sub);
+  ```
+
+  Fire a toast anywhere:
+  ```cpp
+  _toast.show(tr(STR_SAVED), 3000);  // 3-second flash, then auto-revert
+  _toast.show(tr(STR_SENDING), 0);   // persistent (stays until clear() or replaced)
+  requestUpdate();
+  ```
+
+- Key API: `show(msg, timeoutMs)` (timeoutMs=0 for persistent),
+  `getSubtitle(buf, n)` (returns toast or standard subtitle),
+  `poll()` (returns true on timeout expiry), `clear()`, `isActive()`.
 
 **Logical button mapping**:
 - Always use `MappedInputManager::Button::*` enums, never raw

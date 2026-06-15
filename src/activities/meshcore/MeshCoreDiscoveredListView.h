@@ -16,9 +16,8 @@
  */
 class MeshCoreDiscoveredListView {
  public:
-  static void render(GfxRenderer& renderer, const Rect& contentRect, const MeshCoreContact* nodes,
-                     uint8_t nodeCount, const MeshCoreContact* savedContacts, uint8_t savedCount,
-                     int selectedIndex) {
+  static void render(GfxRenderer& renderer, const Rect& contentRect, const MeshCoreContact* nodes, uint8_t nodeCount,
+                     const MeshCoreContact* savedContacts, uint8_t savedCount, int selectedIndex) {
     if (nodeCount == 0) {
       GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_NO_DEVICES));
       return;

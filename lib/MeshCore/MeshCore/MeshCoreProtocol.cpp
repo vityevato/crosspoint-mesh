@@ -112,6 +112,16 @@ size_t buildGetMessage(uint8_t* out, size_t maxLen) {
   return 1;
 }
 
+size_t buildSendSelfAdvert(uint8_t* out, size_t maxLen, bool flood) {
+  if (maxLen < 2) {
+    LOG_ERR("MESH", "buildSendSelfAdvert: buffer too small");
+    return 0;
+  }
+  out[0] = CMD_SEND_SELF_ADVERT;
+  out[1] = flood ? 1 : 0;  // 0 = zero-hop, 1 = flood through mesh
+  return 2;
+}
+
 size_t buildGetBattery(uint8_t* out, size_t maxLen) {
   if (maxLen < 1) {
     LOG_ERR("MESH", "buildGetBattery: buffer too small");

@@ -6,35 +6,31 @@
 #include <cstdio>
 #include <string>
 
-#include "MeshCore/MeshCoreClient.h"
 #include "MeshCore/MeshCoreTypes.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 /**
- * Renders the Status tab content within MeshCoreHubActivity.
- * Shows a disconnect action row followed by companion device info fields.
+ * Renders companion status info within MeshCoreHubActivity.
+ * Shows 6 info fields: Name, Model, Firmware, Battery, Storage, Radio
+ * as a centered popup overlay (renderAsPopup).
+ * When no companion data is available, shows a "No data" help message.
  */
 class MeshCoreStatusView {
  public:
-  static void render(GfxRenderer& renderer, const Rect& contentRect, MeshCoreClient& client, int selectedIndex) {
-    if (client.getState() != BleConnectionState::CONNECTED) {
-      GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_DISCONNECTED));
+  /**
+   * Renders companion status info as a centered popup overlay, styled like
+   * GUI.drawPopup but supporting multi-line wrapped text.
+   * Draws a white framed rounded rect with a black interior and white text.
+   */
+  static void renderAsPopup(GfxRenderer& renderer, const MeshCoreCompanion& comp) {
+    if (comp.name[0] == '\0') {
+      GUI.drawHelpText(renderer, Rect(0, renderer.getScreenHeight() / 3, renderer.getScreenWidth(), 0),
+                       tr(STR_MESHCORE_STATUS_NO_DATA));
       return;
     }
 
-    const auto& comp = client.getCompanion();
-    const auto& m = UITheme::getInstance().getMetrics();
-    const int lineH = renderer.getLineHeight(UI_10_FONT_ID) + 4;
-
-    // Disconnect row — rendered via GUI.drawList for consistent list-item styling.
-    // Rect is 2× listRowHeight so that pageItems > 1, avoiding a drawList edge
-    // case with selectedIndex = -1 when the tab bar has focus.
-    Rect disconnectRect(contentRect.x, contentRect.y + m.topPadding, contentRect.width, m.listRowHeight * 2);
-    GUI.drawList(renderer, disconnectRect, 1, (selectedIndex == 1) ? 0 : -1,
-                 [](int) { return std::string(tr(STR_MESHCORE_DISCONNECT)); });
-
-    // Prepare info field values
+    // Prepare info field values (same formatting as render())
     char battBuf[16];
     snprintf(battBuf, sizeof(battBuf), "%d.%02d V", comp.batteryMv / 1000, (comp.batteryMv % 1000) / 10);
     char storageBuf[32];
@@ -44,38 +40,60 @@ class MeshCoreStatusView {
     snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw, comp.radioSf,
              comp.radioCr);
 
-    const char* labels[] = {"Name",    "Model",   "Firmware", "Battery",
-                            "Storage", "Radio"};
-    const char* values[] = {comp.name, comp.model, comp.version, battBuf,
-                            storageBuf, radioBuf};
+    const char* labels[] = {"Name", "Model", "Firmware", "Battery", "Storage", "Radio"};
+    const char* values[] = {comp.name, comp.model, comp.version, battBuf, storageBuf, radioBuf};
     constexpr int fieldCount = 6;
 
-    // Inverted info block: black rounded rect with white text
-    constexpr int kInnerPadding = 8;
-    constexpr int kCornerRadius = 8;
-    const int blockMargin = m.contentSidePadding;
-    const int blockX = contentRect.x + blockMargin;
-    const int blockW = contentRect.width - 2 * blockMargin;
-    const int maxWidth = blockW - 2 * kInnerPadding;
-    const int textX = blockX + kInnerPadding;
-
-    // Estimate height: all values are short, assume 1 line each
-    const int blockY = disconnectRect.y + m.listRowHeight + m.contentSidePadding / 2;
-    const int blockH = fieldCount * lineH + 2 * kInnerPadding;
-
-    // Draw black rounded background
-    renderer.fillRoundedRect(blockX, blockY, blockW, blockH, kCornerRadius, Color::Black);
-
-    // Draw info fields in white on the inverted background
-    int y = blockY + kInnerPadding;
+    // Build display lines: "label: value"
+    char lines[6][128];
     for (int i = 0; i < fieldCount; i++) {
-      char buf[256];
-      snprintf(buf, sizeof(buf), "%s: %s", labels[i], values[i]);
-      auto lines = renderer.wrappedText(UI_10_FONT_ID, buf, maxWidth, 10);
-      for (const auto& line : lines) {
-        renderer.drawText(UI_10_FONT_ID, textX, y, line.c_str(), false);
-        y += lineH;
-      }
+      snprintf(lines[i], sizeof(lines[i]), "%s: %s", labels[i], values[i]);
+    }
+
+    const auto& popupMetrics = UITheme::getInstance().getMetrics();
+    const int fontId = UI_10_FONT_ID;
+    const int lineH = renderer.getLineHeight(fontId);
+    const int rowH = lineH + 2;
+
+    // Measure the widest line to size the popup
+    int maxLineW = 0;
+    for (int i = 0; i < fieldCount; i++) {
+      int w = renderer.getTextWidth(fontId, lines[i]);
+      if (w > maxLineW) maxLineW = w;
+    }
+
+    // Popup layout — same visual conventions as GUI.drawPopup
+    const int pageW = renderer.getScreenWidth();
+    const int pageH = renderer.getScreenHeight();
+    const int innerPadX = popupMetrics.popupMarginX;
+    const int innerPadY = popupMetrics.popupMarginY;
+    const int frameTh = popupMetrics.popupFrameThickness;
+    const int popupW = maxLineW + innerPadX * 2 + frameTh * 2;
+    const int popupH = fieldCount * rowH + innerPadY * 2 + frameTh * 2;
+    const int popupX = (pageW - popupW) / 2;
+    const int popupY = static_cast<int>(pageH * popupMetrics.popupTopOffsetRatio);
+
+    const int innerX = popupX + frameTh;
+    const int innerY = popupY + frameTh;
+    const int innerW = popupW - frameTh * 2;
+    const int innerH = popupH - frameTh * 2;
+    const int textX = innerX + innerPadX;
+    const int textY0 = innerY + innerPadY;
+
+    // Draw frame (white) and interior (black) with optional rounded corners
+    if (popupMetrics.popupCornerRadius > 0) {
+      renderer.fillRoundedRect(popupX, popupY, popupW, popupH,
+                               popupMetrics.popupCornerRadius + frameTh, Color::White);
+      renderer.fillRoundedRect(innerX, innerY, innerW, innerH,
+                               popupMetrics.popupCornerRadius, Color::Black);
+    } else {
+      renderer.fillRect(popupX, popupY, popupW, popupH, true);
+      renderer.fillRect(innerX, innerY, innerW, innerH, false);
+    }
+
+    // Draw text — color matches the interior (theme-dependent via popupTextInverted)
+    for (int i = 0; i < fieldCount; i++) {
+      renderer.drawText(fontId, textX, textY0 + i * rowH, lines[i], popupMetrics.popupTextInverted);
     }
   }
 };

@@ -43,21 +43,22 @@ single device. Community-built, fully hackable, free forever.
 - **MeshCore Client**: Built-in BLE client for the [MeshCore](https://meshcore.co.uk/) decentralized
   mesh network — communicate without internet access, even in remote areas.
 
+  - **Three-tab hub**: **Contacts**, **Channels**, and **Menu** — primary functions
+    are front and centre; secondary actions are grouped under Menu.
   - **BLE companion connection** — scan for and pair with MeshCore companion devices (T-Beam,
     etc.) via encrypted BLE with PIN authentication
   - **Auto-reconnect** — automatically reconnects to the last paired companion when in range
   - **Channels** — join and send messages on public channels, hashtag channels, and encrypted
     private channels (up to 8)
-  - **Contacts & discovered nodes** — view saved contacts, browse mesh nodes discovered via
-    network advertisements, and add them as contacts
-  - **Direct messages** — send private messages to individual contacts with paginated
-    conversation history
-  - **Companion status** — view companion device info: battery level, storage, firmware version,
-    radio configuration (frequency, bandwidth, spreading factor)
+  - **Contacts & direct messages** — view saved contacts with unread counts,
+    send private messages with paginated conversation history
+  - **Menu tab** — Discovery Nodes (browse nearby mesh nodes and add as contacts),
+    Send Advert / Send Flood Advert (broadcast presence on the mesh),
+    Status (companion device info), Disconnect
   - **SD persistence** — messages, contacts, and unread counts survive reboots via SD card
     storage
   - **Desktop simulator** — test all MeshCore UI without hardware using mock data
-    (`fs_/meshcore_mock.json`) and hotkeys 1-6
+    (`fs_/meshcore_mock.json`) and hotkeys 1-8
 
 ### Coming soon:
 
@@ -219,6 +220,8 @@ Mock hotkeys for injecting BLE events:
 | 4 | Inject channel message |
 | 5 | Inject direct message |
 | 6 | Inject companion status update |
+| 7 | Inject advert success (PKT_OK) |
+| 8 | Inject flood advert success (PKT_OK) |
 
 See [CLAUDE.md](./CLAUDE.md) for detailed simulator architecture
 and the mock session lifecycle.

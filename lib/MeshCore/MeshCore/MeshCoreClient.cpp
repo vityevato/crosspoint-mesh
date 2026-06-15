@@ -369,6 +369,15 @@ bool MeshCoreClient::requestMessages() {
   return len > 0 && enqueueCmd(buf, len, 0);  // Accept any response type
 }
 
+bool MeshCoreClient::sendSelfAdvert(bool flood) {
+  uint8_t buf[2];
+  size_t len = MeshProto::buildSendSelfAdvert(buf, sizeof(buf), flood);
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
+  LOG_DBG("MESH", "sendSelfAdvert(flood=%d): %s (queue=%d/%d)", (int)flood, ok ? "queued" : "FAILED", cmdCount,
+          CMD_QUEUE_SIZE);
+  return ok;
+}
+
 bool MeshCoreClient::sendChannelMessage(uint8_t channelIdx, const char* text) {
   uint8_t buf[CMD_BUF_SIZE];
   uint32_t ts = static_cast<uint32_t>(millis() / 1000);

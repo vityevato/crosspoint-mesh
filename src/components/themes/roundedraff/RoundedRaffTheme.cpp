@@ -399,11 +399,12 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
   const bool backDisabled = (btn1 == nullptr || btn1[0] == '\0');
   const int leftGroupX = sidePadding;
   const int rightGroupX = leftGroupX + groupWidth + groupGap;
-  const std::string backLabel = backDisabled ? "" : std::string(btn1);
-  // Callers should provide the button labels. If a label is not specified, it should render empty.
-  const std::string selectText = (btn2 && btn2[0] != '\0') ? std::string(btn2) : "";
-  const std::string upText = (btn3 && btn3[0] != '\0') ? std::string(btn3) : "";
-  const std::string downText = (btn4 && btn4[0] != '\0') ? std::string(btn4) : "";
+  constexpr int innerEdgePadding = 16;
+  const int maxLabelWidth = groupWidth - innerEdgePadding * 2;
+  const std::string backLabel = backDisabled ? "" : renderer.truncatedText(kGuideFontId, btn1, maxLabelWidth);
+  const std::string selectText = (btn2 && btn2[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn2, maxLabelWidth) : "";
+  const std::string upText = (btn3 && btn3[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn3, maxLabelWidth) : "";
+  const std::string downText = (btn4 && btn4[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn4, maxLabelWidth) : "";
 
   // Ensure button hints always "win" visually even if other elements accidentally render into this area.
   renderer.fillRect(leftGroupX, hintY, groupWidth, hintHeight, false);
@@ -412,7 +413,6 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
   renderer.drawRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, 2, kBottomRadius, true);
   const int selectWidth = renderer.getTextWidth(kGuideFontId, selectText.c_str(), EpdFontFamily::REGULAR);
   const int downWidth = renderer.getTextWidth(kGuideFontId, downText.c_str(), EpdFontFamily::REGULAR);
-  constexpr int innerEdgePadding = 16;
 
   const int backX = leftGroupX + innerEdgePadding;
   const int selectX = leftGroupX + groupWidth - innerEdgePadding - selectWidth;

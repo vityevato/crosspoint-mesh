@@ -13,6 +13,7 @@ static constexpr uint8_t CMD_APP_START = 0x01;
 static constexpr uint8_t CMD_SEND_DM = 0x02;
 static constexpr uint8_t CMD_SEND_CHAN_MSG = 0x03;
 static constexpr uint8_t CMD_GET_CONTACTS = 0x04;
+static constexpr uint8_t CMD_SEND_SELF_ADVERT = 0x07;
 static constexpr uint8_t CMD_GET_MESSAGE = 0x0A;
 static constexpr uint8_t CMD_GET_BATTERY = 0x14;
 static constexpr uint8_t CMD_DEVICE_QUERY = 0x16;
@@ -66,6 +67,9 @@ size_t buildSendChannelMsg(uint8_t* out, size_t maxLen, uint8_t channelIdx, uint
 
 // CMD_SEND_DM: 0x02 <txt_type=0> <attempt=0> <ts[4]> <pubkey_prefix[6]> <text>
 size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, uint32_t timestamp, const char* text);
+
+// CMD_SEND_SELF_ADVERT: 0x07 [flood:1 byte] — 0 = zero-hop, 1 = flood
+size_t buildSendSelfAdvert(uint8_t* out, size_t maxLen, bool flood);
 
 // CMD_GET_MESSAGE: 0x0A
 size_t buildGetMessage(uint8_t* out, size_t maxLen);

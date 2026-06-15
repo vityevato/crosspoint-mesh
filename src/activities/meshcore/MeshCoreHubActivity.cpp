@@ -14,7 +14,7 @@
 #include "MeshCoreChannelListView.h"
 #include "MeshCoreContactListView.h"
 #include "MeshCoreDiscoverActivity.h"
-#include "MeshCoreDiscoveredListView.h"
+#include "MeshCoreMenuView.h"
 #include "MeshCoreScanActivity.h"
 #include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
@@ -120,6 +120,10 @@ void MeshCoreHubActivity::onEnter() {
     return;
   }
 
+  // Wire up the toast overlay: status messages override the standard subtitle
+  _toast.setClock(&millis);
+  _toast.setSubtitleProvider(provideSubtitle, this);
+
   // Auto-reconnect to known companion address
   if (addr[0] != '\0') {
     autoReconnecting = true;
@@ -179,6 +183,26 @@ void MeshCoreHubActivity::loop() {
     requestUpdate();
   }
 
+  // Poll advert completion
+  if (_advertInFlight) {
+    if (!client.isCommandPending()) {
+      // Command completed — success
+      _advertInFlight = false;
+      _toast.show(_advertIsFlood ? tr(STR_MESHCORE_FLOOD_ADVERT_SENT) : tr(STR_MESHCORE_ADVERT_SENT), 5000);
+      requestUpdate();
+    } else if (millis() - _advertSentTime > 6000) {
+      // Timeout (longer than client's 5s CMD_TIMEOUT_MS to avoid race)
+      _advertInFlight = false;
+      _toast.show(_advertIsFlood ? tr(STR_MESHCORE_FLOOD_ADVERT_FAILED) : tr(STR_MESHCORE_ADVERT_FAILED), 5000);
+      requestUpdate();
+    }
+  }
+
+  // Auto-clear expired toast messages
+  if (_toast.poll()) {
+    requestUpdate();
+  }
+
   // Handle async auto-reconnect result
   if (autoReconnecting) {
     auto bleState = client.getState();
@@ -207,6 +231,24 @@ void MeshCoreHubActivity::loop() {
     pendingAutoScan = false;
     reconnectOnDisconnect = false;
     launchScanActivity();
+    return;
+  }
+
+  // Handle Back from status subscreen or disconnect popup
+  if (showingStatus) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      showingStatus = false;
+      requestUpdate();
+    }
+    return;
+  }
+  if (showingDisconnectPopup) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      showingDisconnectPopup = false;
+      requestUpdate();    } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      showingDisconnectPopup = false;
+      client.disconnect();
+      requestUpdate();    }
     return;
   }
 
@@ -268,13 +310,59 @@ void MeshCoreHubActivity::loop() {
             openContactThread(savedContacts[itemIdx]);
           }
           break;
-        case Tab::DISCOVERED:
-          openDiscover();
+        case Tab::MENU: {
+          if (itemIdx >= 0 && itemIdx < 5) {
+            bool connected = (client.getState() == BleConnectionState::CONNECTED);
+            switch (itemIdx) {
+              case 0:  // Discovery Nodes
+                openDiscover();
+                return;
+              case 3:  // Status
+                if (client.getState() == BleConnectionState::CONNECTED) {
+                  lastCompanion = client.getCompanion();
+                }
+                showingStatus = true;
+                requestUpdate();
+                return;
+              case 4:  // Disconnect
+                if (connected) {
+                  showingDisconnectPopup = true;
+                  requestUpdate();
+                }
+                // Dimmed when disconnected — no-op
+                return;
+              case 1:  // Send Advert
+                if (connected) {
+                  if (client.sendSelfAdvert(false)) {
+                    _advertInFlight = true;
+                    _advertIsFlood = false;
+                    _advertSentTime = millis();
+                    _toast.show(tr(STR_MESHCORE_SENDING), 0);
+                  }
+                } else {
+                  _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
+                }
+                requestUpdate();
+                return;
+              case 2:  // Send Flood Advert
+                if (connected) {
+                  if (client.sendSelfAdvert(true)) {
+                    _advertInFlight = true;
+                    _advertIsFlood = true;
+                    _advertSentTime = millis();
+                    _toast.show(tr(STR_MESHCORE_SENDING), 0);
+                  }
+                } else {
+                  _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
+                }
+                requestUpdate();
+                return;
+              default:
+                break;
+            }
+          }
           break;
-        case Tab::STATUS:
-          client.disconnect();
-          // State change will be handled by handleStateChange on next poll()
-          break;
+        }
         default:
           break;
       }
@@ -310,13 +398,16 @@ int MeshCoreHubActivity::getListCountForCurrentTab() const {
     }
     case Tab::CONTACTS:
       return savedContactCount;
-    case Tab::DISCOVERED:
-      return discoveredNodeCount;
-    case Tab::STATUS:
-      return (client.getState() == BleConnectionState::CONNECTED) ? 1 : 0;
+    case Tab::MENU:
+      return 5;  // Always 5 menu items
     default:
       return 0;
   }
+}
+
+void MeshCoreHubActivity::provideSubtitle(const void* ctx, char* buf, size_t bufSize) {
+  const auto* self = static_cast<const MeshCoreHubActivity*>(ctx);
+  formatMeshCoreSubtitle(self->client, buf, bufSize);
 }
 
 // --- Rendering ---
@@ -328,17 +419,54 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
+  // Status info as a popup overlay (delegates to MeshCoreStatusView)
+  if (showingStatus) {
+    char headerSubtitle[64];
+    _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
+    GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
+                   headerSubtitle);
+
+    const auto& comp = (client.getState() == BleConnectionState::CONNECTED)
+                           ? client.getCompanion()
+                           : lastCompanion;
+    MeshCoreStatusView::renderAsPopup(renderer, comp);
+
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+    renderer.displayBuffer();
+    return;
+  }
+
+  // Disconnect confirmation popup (full-screen overlay)
+  if (showingDisconnectPopup) {
+    char headerSubtitle[64];
+    _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
+    GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
+                   headerSubtitle);
+
+    char popupMsg[128];
+    const char* name = client.getCompanion().name;
+    if (name[0] == '\0') name = lastCompanion.name;
+    snprintf(popupMsg, sizeof(popupMsg), "%s %s?", tr(STR_MESHCORE_DISCONNECT_CONFIRM), name);
+    GUI.drawPopup(renderer, popupMsg);
+
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_MESHCORE_DISCONNECT), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+    renderer.displayBuffer();
+    return;
+  }
+
   char headerSubtitle[64];
-  formatMeshCoreSubtitle(client, headerSubtitle, sizeof(headerSubtitle));
+  _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
                  headerSubtitle);
 
   // Tab bar — Settings-style: highlight tab bar when selectedIndex == 0
   int tabBarTop = metrics.topPadding + metrics.headerHeight;
   constexpr int tabCount = static_cast<int>(Tab::TAB_COUNT);
-  const char* tabNames[tabCount] = {
-      tr(STR_MESHCORE_CHANNEL_LIST), tr(STR_MESHCORE_CONTACTS), tr(STR_MESHCORE_DISCOVERED),
-      tr(STR_MESHCORE_STATUS)};
+  const char* tabNames[tabCount] = {tr(STR_MESHCORE_CONTACTS), tr(STR_MESHCORE_CHANNEL_LIST), tr(STR_MESHCORE_MENU)};
   std::vector<TabInfo> tabs;
   tabs.reserve(tabCount);
   for (int i = 0; i < tabCount; ++i) {
@@ -347,22 +475,19 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, selectedIndex == 0);
 
   // Content area
-  int contentTop = tabBarTop + metrics.tabBarHeight;
+  int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
   int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
   Rect contentRect(0, contentTop, pageWidth, contentHeight);
 
   switch (currentTab) {
-    case Tab::CHANNELS:
-      renderChannelList(contentRect);
-      break;
     case Tab::CONTACTS:
       renderContactList(contentRect);
       break;
-    case Tab::DISCOVERED:
-      renderDiscoveredList(contentRect);
+    case Tab::CHANNELS:
+      renderChannelList(contentRect);
       break;
-    case Tab::STATUS:
-      renderStatus(contentRect);
+    case Tab::MENU:
+      renderMenu(contentRect);
       break;
     default:
       break;
@@ -375,8 +500,8 @@ void MeshCoreHubActivity::render(RenderLock&&) {
     btn2 = tabNames[nextTab];
   } else if (currentTab == Tab::CHANNELS || currentTab == Tab::CONTACTS) {
     btn2 = tr(STR_OPEN);
-  } else if (currentTab == Tab::STATUS) {
-    btn2 = tr(STR_MESHCORE_DISCONNECT);
+  } else if (currentTab == Tab::MENU) {
+    btn2 = tr(STR_SELECT);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -392,13 +517,9 @@ void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
   MeshCoreContactListView::render(renderer, contentRect, savedContacts, savedContactCount, selectedIndex);
 }
 
-void MeshCoreHubActivity::renderDiscoveredList(const Rect& contentRect) {
-  MeshCoreDiscoveredListView::render(renderer, contentRect, discoveredNodes, discoveredNodeCount, savedContacts,
-                                     savedContactCount, selectedIndex);
-}
-
-void MeshCoreHubActivity::renderStatus(const Rect& contentRect) {
-  MeshCoreStatusView::render(renderer, contentRect, client, selectedIndex);
+void MeshCoreHubActivity::renderMenu(const Rect& contentRect) {
+  bool isConnected = (client.getState() == BleConnectionState::CONNECTED);
+  MeshCoreMenuView::render(renderer, contentRect, selectedIndex, isConnected);
 }
 
 // --- Event handlers ---
@@ -419,6 +540,9 @@ void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
         channels[i].unreadCount = channelUnread[i];
       }
     }
+    // Cache companion data for disconnected status view
+    lastCompanion = client.getCompanion();
+
     reconnectOnDisconnect = true;
   } else if (state == BleConnectionState::DISCONNECTED) {
     // Unexpected disconnect while previously connected — auto-scan
