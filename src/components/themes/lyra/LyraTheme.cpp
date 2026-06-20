@@ -317,6 +317,96 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
+void LyraTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages, int pageOffset,
+                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
+                             const std::function<std::string(int)>& meta,
+                             const std::function<bool(int)>& isOutgoing) const {
+  constexpr int maxLines = 100;
+  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
+  const int maxTextWidth = rect.width - 2 * LyraMetrics::values.contentSidePadding;
+
+  // Scrollbar: track line + filled thumb
+  if (totalMessages > itemCount) {
+    const int scrollAreaHeight = rect.height;
+    const int scrollBarHeight = (scrollAreaHeight * itemCount) / totalMessages;
+    const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * pageOffset) / (totalMessages - itemCount);
+    const int scrollBarX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
+    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
+    renderer.fillRect(scrollBarX - LyraMetrics::values.scrollBarWidth, scrollBarY, LyraMetrics::values.scrollBarWidth,
+                      scrollBarHeight, true);
+  }
+
+  int y = rect.y + 4;
+
+  for (int i = 0; i < itemCount; ++i) {
+    if (y > rect.y + rect.height) break;
+
+    const bool outgoing = isOutgoing(i);
+    std::string senderStr = sender(i);
+    std::string textStr = text(i);
+    std::string metaStr = meta(i);
+
+    // Sender line
+    if (!senderStr.empty()) {
+      int senderX;
+      if (outgoing) {
+        int senderW = renderer.getTextWidth(UI_10_FONT_ID, senderStr.c_str(), EpdFontFamily::BOLD);
+        senderX = rect.x + rect.width - LyraMetrics::values.contentSidePadding - senderW;
+      } else {
+        senderX = rect.x + LyraMetrics::values.contentSidePadding;
+      }
+      renderer.drawText(UI_10_FONT_ID, senderX, y, senderStr.c_str(), true, EpdFontFamily::BOLD);
+      if (!outgoing) {
+        int sw = renderer.getTextWidth(UI_10_FONT_ID, senderStr.c_str(), EpdFontFamily::BOLD);
+        for (int py = y; py < y + lineH; py++)
+          for (int px = senderX; px < senderX + sw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += lineH;
+    }
+
+    // Text body
+    if (!textStr.empty()) {
+      auto lines = renderer.wrappedText(UI_10_FONT_ID, textStr.c_str(), maxTextWidth, maxLines);
+      for (const auto& line : lines) {
+        if (y > rect.y + rect.height) break;
+        if (outgoing) {
+          int textW = renderer.getTextWidth(UI_10_FONT_ID, line.c_str());
+          renderer.drawText(UI_10_FONT_ID, rect.x + rect.width - LyraMetrics::values.contentSidePadding - textW, y, line.c_str(), true);
+        } else {
+          renderer.drawText(UI_10_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding, y, line.c_str(), true);
+        }
+        y += lineH;
+      }
+    }
+
+    // Meta line
+    if (!metaStr.empty()) {
+      if (y > rect.y + rect.height) break;
+      int metaX;
+      if (outgoing) {
+        int metaW = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
+        metaX = rect.x + rect.width - LyraMetrics::values.contentSidePadding - metaW;
+      } else {
+        metaX = rect.x + LyraMetrics::values.contentSidePadding;
+      }
+      renderer.drawText(SMALL_FONT_ID, metaX, y, metaStr.c_str(), true);
+      {
+        int mw = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
+        for (int py = y; py < y + smallLineH; py++)
+          for (int px = metaX; px < metaX + mw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += smallLineH;
+    }
+
+    if (y < rect.y + rect.height) {
+      y += LyraMetrics::values.verticalSpacing;
+    }
+  }
+}
+
 void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                 const char* btn4) const {
   const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();

@@ -94,6 +94,10 @@ class LyraTheme : public BaseTheme {
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;
+  void drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages, int pageOffset,
+                    const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
+                    const std::function<std::string(int)>& meta,
+                    const std::function<bool(int)>& isOutgoing) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   bool showsFileIcons() const override { return true; }
 };

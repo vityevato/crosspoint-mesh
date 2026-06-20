@@ -11,6 +11,11 @@
 #include <cstring>
 #include <string>
 
+// Forward-declared free function (defined in MockSession.cpp) to avoid
+// circular include between NimBLEDevice.h ↔ MockSession.h.
+class NimBLERemoteCharacteristic;
+void mockHandleAddUpdateContact(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len);
+
 // Forward declarations with enough surface for MeshCoreClient
 class NimBLEUUID {
  public:
@@ -217,7 +222,7 @@ class NimBLEClient;
 
 // --- Pending echo auto-response state (issue 5-AFK) ---
 // These must be before NimBLERemoteCharacteristic because writeValue() uses them.
-enum class PendingEchoType : uint8_t { NONE = 0, CHANNEL = 1, DM = 2 };
+enum class PendingEchoType : uint8_t { NONE = 0, CHANNEL = 1, DM = 2, ADD_CONTACT_OK = 3 };
 
 struct PendingEcho {
   PendingEchoType type = PendingEchoType::NONE;
@@ -227,7 +232,7 @@ struct PendingEcho {
   char text[MOCK_MAX_TEXT_LEN] = {};
 };
 
-static PendingEcho sPendingEcho;
+inline PendingEcho sPendingEcho;
 
 class NimBLERemoteCharacteristic {
  public:
@@ -318,6 +323,10 @@ class NimBLERemoteCharacteristic {
       }
       return true;
     }
+    if (cmd == 0x09) {  // CMD_ADD_UPDATE_CONTACT → mode-driven response
+      mockHandleAddUpdateContact(this, data, len);
+      return true;
+    }
     // All other commands: ACK write, no response
     return true;
   }
@@ -340,6 +349,22 @@ class NimBLERemoteCharacteristic {
   NimBLERemoteCharacteristic* notifySource = nullptr;
   const MockCompanion* mockCompanion = nullptr;
   bool messagesSent = false;  // track whether CMD_GET_MESSAGE already responded
+
+  // Build and inject PKT_OK (0x00, 1 byte) via notify callback.
+  void injectPktOk() {
+    auto cb = effectiveNotifyCb();
+    if (!cb) return;
+    uint8_t ok = 0x00;
+    cb(this, &ok, 1, true);
+  }
+
+  // Build and inject PKT_ERROR (0x01, 1 byte) via notify callback.
+  void injectPktError() {
+    auto cb = effectiveNotifyCb();
+    if (!cb) return;
+    uint8_t err = 0x01;
+    cb(this, &err, 1, true);
+  }
 
   // Build and inject PKT_SELF_INFO (0x05) via notify callback.
   // Format: [0x05][3 skip][32 pubkey][12 skip][10 radio][name...]
@@ -865,6 +890,11 @@ inline void pollMock(NimBLEClient* client, uint32_t nowMs) {
     off += textLen;
     client->injectPacket(buf, off);
     LOG_INF("MOCK", "echo DM msg: %.40s", echoText);
+  } else if (sPendingEcho.type == PendingEchoType::ADD_CONTACT_OK) {
+    // Delayed PKT_OK for CMD_ADD_UPDATE_CONTACT (DELAY_OK mode)
+    uint8_t ok = 0x00;
+    client->injectPacket(&ok, 1);
+    LOG_INF("MOCK", "echo delayed PKT_OK for contact save");
   }
 
   sPendingEcho.type = PendingEchoType::NONE;

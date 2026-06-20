@@ -215,6 +215,10 @@ class BaseTheme {
   virtual void drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const char* label, const bool isSelected,
                                const char* secondaryLabel = nullptr, KeyboardKeyType keyType = KeyboardKeyType::Normal,
                                bool inactiveSelection = false) const;
+  virtual void drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages, int pageOffset,
+                            const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
+                            const std::function<std::string(int)>& meta,
+                            const std::function<bool(int)>& isOutgoing) const;
   virtual bool showsFileIcons() const { return false; }
 
   // Shared constants and helpers for battery drawing (used by all themes)

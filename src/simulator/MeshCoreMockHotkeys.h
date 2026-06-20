@@ -81,7 +81,7 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
 
     buf[off++] = 0;            // type = COMPANION
     buf[off++] = 0;            // flags
-    buf[off++] = 0;            // out_path_len
+    buf[off++] = n % 3;        // out_path_len — cycle 0,1,2
     memset(buf + off, 0, 64);  // out_path
     off += 64;
 
@@ -94,7 +94,7 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     memcpy(buf + off, nameBuf, nameLen);
     off += 32;
 
-    uint32_t ts = 1640995200 + n;  // deterministic timestamp, varies per inject
+    uint32_t ts = static_cast<uint32_t>(time(nullptr));  // current timestamp
     memcpy(buf + off, &ts, 4);
     off += 4;  // last_advert_timestamp
     memset(buf + off, 0, 4);

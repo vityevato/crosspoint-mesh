@@ -354,6 +354,7 @@ void MeshCoreClient::disconnect() {
   cmdHead = 0;
   cmdTail = 0;
   cmdPending = false;
+  cmdExpectedResponse = 0;
   rxHead = 0;
   rxTail = 0;
 
@@ -366,6 +367,15 @@ bool MeshCoreClient::requestContacts() {
   uint8_t buf[1];
   size_t len = MeshProto::buildGetContacts(buf, sizeof(buf));
   return len > 0 && enqueueCmd(buf, len, MeshProto::PKT_CONTACT_START);
+}
+
+bool MeshCoreClient::addUpdateContact(const MeshCoreContact& contact) {
+  uint8_t buf[CMD_BUF_SIZE];
+  size_t len = MeshProto::buildAddUpdateContact(buf, sizeof(buf), contact);
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
+  LOG_DBG("MESH", "addUpdateContact(%s): %s (queue=%d/%d)", contact.name, ok ? "queued" : "FAILED", cmdCount,
+          CMD_QUEUE_SIZE);
+  return ok;
 }
 
 bool MeshCoreClient::requestChannel(uint8_t idx) {
@@ -480,6 +490,7 @@ void MeshCoreClient::poll() {
     NimBLEDevice::deleteClient(bleClient);
     bleClient = nullptr;
     cmdPending = false;
+    lastCmdSuccess = false;
     cmdCount = 0;
     setState(BleConnectionState::DISCONNECTED);
     return;
@@ -500,6 +511,7 @@ void MeshCoreClient::poll() {
   // Check command timeout
   if (cmdPending && (millis() - cmdSentTime) > MeshProto::CMD_TIMEOUT_MS) {
     LOG_ERR("MESH", "Command timeout");
+    lastCmdSuccess = false;
     cmdPending = false;
     sendNextCmd();
   }
@@ -557,6 +569,7 @@ bool MeshCoreClient::sendNextCmd() {
   }
 
   cmdPending = true;
+  cmdExpectedResponse = entry.expectedResponse;
   cmdSentTime = millis();
   cmdHead = (cmdHead + 1) % CMD_QUEUE_SIZE;
   cmdCount--;
@@ -567,8 +580,13 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
   if (len == 0) return;
   uint8_t pktType = data[0];
 
-  // Clear pending flag for expected responses
-  cmdPending = false;
+  // Only clear pending flag if this packet matches the expected response.
+  // Push notifications (PKT_MSGS_WAITING, PKT_NEW_ADVERT, etc.) must NOT
+  // advance the command queue — they are processed but keep cmdPending intact.
+  if (cmdExpectedResponse == 0 || pktType == cmdExpectedResponse) {
+    cmdPending = false;
+    lastCmdSuccess = (pktType != MeshProto::PKT_ERROR);
+  }
 
   switch (pktType) {
     case MeshProto::PKT_SELF_INFO:
@@ -711,6 +729,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
 
     case MeshProto::PKT_ERROR:
       LOG_ERR("MESH", "Error response from companion");
+      cmdPending = false;
       break;
 
     default:

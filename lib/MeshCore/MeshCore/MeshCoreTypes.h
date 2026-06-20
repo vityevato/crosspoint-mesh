@@ -56,14 +56,24 @@ struct MeshCoreContact {
   bool isSaved = false;                       ///< Whether the contact is saved in the address book
   uint16_t unreadCount = 0;                   ///< Number of unread messages
 
-  // Return 6-byte hex prefix for display
-  void getPublicKeyPrefix(char out[13]) const {
+  static constexpr uint8_t PUBLIC_KEY_DISPLAY_LEN = 11;  // "AABB..CCDD\0"
+
+  // Return compact 4-byte hex representation for UI display: "AABB..CCDD"
+  void getPublicKeyLabel(char out[PUBLIC_KEY_DISPLAY_LEN]) const {
     static constexpr char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 6; ++i) {
+    // First 2 bytes
+    for (int i = 0; i < 2; ++i) {
       out[i * 2] = hex[publicKey[i] >> 4];
       out[i * 2 + 1] = hex[publicKey[i] & 0x0F];
     }
-    out[12] = '\0';
+    out[4] = '.';
+    out[5] = '.';
+    // Last 2 bytes
+    for (int i = 2; i < 4; ++i) {
+      out[6 + (i - 2) * 2] = hex[publicKey[i] >> 4];
+      out[7 + (i - 2) * 2] = hex[publicKey[i] & 0x0F];
+    }
+    out[10] = '\0';
   }
 };
 

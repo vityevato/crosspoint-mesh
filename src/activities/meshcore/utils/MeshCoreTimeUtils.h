@@ -24,16 +24,13 @@ inline bool formatMeshCoreTimestamp(uint32_t timestamp, char* buf, size_t bufSiz
   struct tm timeinfo;
   if (!gmtime_r(&t, &timeinfo)) return false;
 
-  static constexpr const char* MONTHS[12] = {
-      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  static constexpr const char* MONTHS[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
   int month = timeinfo.tm_mon;  // 0-11
   if (month < 0 || month > 11) month = 0;
 
-  snprintf(buf, bufSize, "%d/%s %02d:%02d",
-           timeinfo.tm_mday, MONTHS[month],
-           timeinfo.tm_hour, timeinfo.tm_min);
+  snprintf(buf, bufSize, "%d/%s %02d:%02d", timeinfo.tm_mday, MONTHS[month], timeinfo.tm_hour, timeinfo.tm_min);
 
   return true;
 }

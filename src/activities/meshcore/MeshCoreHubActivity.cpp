@@ -4,6 +4,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <WiFi.h>
+#include <time.h>
 
 #include <cstring>
 #include <string>
@@ -635,15 +636,19 @@ void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
 
 void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
   // Update existing or add new discovered node
+  // PKT_ADVERTISEMENT has no timestamp — use current time as lastSeen
+  MeshCoreContact updated = node;
+  updated.lastSeen = static_cast<uint32_t>(time(nullptr));
+
   for (uint8_t i = 0; i < discoveredNodeCount; ++i) {
-    if (memcmp(discoveredNodes[i].publicKey, node.publicKey, 32) == 0) {
-      discoveredNodes[i] = node;
+    if (memcmp(discoveredNodes[i].publicKey, updated.publicKey, 32) == 0) {
+      discoveredNodes[i] = updated;
       requestUpdate();
       return;
     }
   }
   if (discoveredNodeCount < MAX_VISIBLE_CONTACTS) {
-    discoveredNodes[discoveredNodeCount] = node;
+    discoveredNodes[discoveredNodeCount] = updated;
     discoveredNodeCount++;
     requestUpdate();
   }

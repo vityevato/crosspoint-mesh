@@ -5,4 +5,19 @@ namespace meshcore {
 // Separator with middle dot for use in lists and status lines
 static constexpr const char* DotSeparator = "·";
 
+/**
+ * Formats a path length (hop count) into a readable string.
+ *
+ * @param pathLength  Number of hops to the node
+ * @param buf         Destination buffer (must be >= 12 chars)
+ * @param bufSize     Size of destination buffer
+ */
+inline void formatMeshCoreHopCount(uint8_t pathLength, char* buf, size_t bufSize) {
+  if (pathLength == 0) {
+    snprintf(buf, bufSize, "direct");
+  } else {
+    snprintf(buf, bufSize, "%d hops", pathLength);
+  }
+}
+
 }  // namespace meshcore

@@ -58,9 +58,12 @@ class MeshCoreClient {
   bool sendDirectMessage(const uint8_t* pubkey32, const char* text);
   bool setChannel(uint8_t idx, const char* name, const uint8_t* secret16);
   bool deleteChannel(uint8_t idx);
+  bool addUpdateContact(const MeshCoreContact& contact);
   bool sendSelfAdvert(bool flood);
 
   bool isCommandPending() const { return cmdPending; }
+  /// Result of the last completed command. Reset on disconnect.
+  bool getLastCommandResult() const { return lastCmdSuccess; }
 
   // Callbacks (set before connect)
   void setStateCallback(StateCallback cb, void* ctx);
@@ -118,7 +121,9 @@ class MeshCoreClient {
   uint8_t cmdTail = 0;
   uint8_t cmdCount = 0;
   bool cmdPending = false;
+  uint8_t cmdExpectedResponse = 0;
   uint32_t cmdSentTime = 0;
+  bool lastCmdSuccess = false;
 
   // True while runInitSequence() owns rxBuf; poll() must not consume responses.
   volatile bool inInitSequence = false;

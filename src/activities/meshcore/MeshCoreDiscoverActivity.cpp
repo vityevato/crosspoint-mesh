@@ -28,8 +28,14 @@ MeshCoreDiscoverActivity::MeshCoreDiscoverActivity(GfxRenderer& renderer, Mapped
       savedContacts(savedContacts),
       savedContactCount(savedContactCount) {}
 
+void MeshCoreDiscoverActivity::provideSubtitle(const void* ctx, char* buf, size_t bufSize) {
+  formatMeshCoreSubtitle(*static_cast<const MeshCoreClient*>(ctx), buf, bufSize);
+}
+
 void MeshCoreDiscoverActivity::onEnter() {
   Activity::onEnter();
+  _toast.setClock(&millis);
+  _toast.setSubtitleProvider(provideSubtitle, &client);
   requestUpdate();
 }
 
@@ -37,6 +43,20 @@ void MeshCoreDiscoverActivity::onExit() { Activity::onExit(); }
 
 void MeshCoreDiscoverActivity::loop() {
   client.poll();
+
+  if (_toast.poll()) requestUpdate();
+
+  // Async BLE command state machine: check if the command completed.
+  if (_pendingOp != PendingOp::IDLE && !client.isCommandPending()) {
+    completeContactSave(client.getLastCommandResult());
+  }
+
+  // Secondary timeout guard: if command somehow got stuck (cmdPending
+  // never cleared), abandon after 10 s to avoid indefinite toast.
+  if (_pendingOp != PendingOp::IDLE && (millis() - _pendingStartMs) > 10000) {
+    LOG_ERR("MESH", "Contact BLE timeout (no response after 10 s)");
+    completeContactSave(false);
+  }
 
 #ifdef SIMULATOR
   if (handleMockKey("Discover", client.getBleClient())) {
@@ -52,8 +72,12 @@ void MeshCoreDiscoverActivity::loop() {
   }
 
   if (discoveredNodeCount > 0) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      addSelectedToContacts();
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm) && _pendingOp == PendingOp::IDLE) {
+      if (isAlreadySaved(discoveredNodes[selectedIndex])) {
+        removeSelectedFromContacts();
+      } else {
+        addSelectedToContacts();
+      }
       return;
     }
 
@@ -76,14 +100,88 @@ void MeshCoreDiscoverActivity::addSelectedToContacts() {
 
   if (savedContactCount >= 20) {
     LOG_ERR("MESH", "Contact list full");
+    _toast.show(tr(STR_MESHCORE_CONTACT_LIST_FULL), 3000);
+    requestUpdate();
     return;
   }
 
-  savedContacts[savedContactCount] = node;
-  savedContacts[savedContactCount].isSaved = true;
-  savedContactCount++;
-  store.saveContacts(savedContacts, savedContactCount);
-  LOG_INF("MESH", "Added contact: %s", node.name);
+  // Fire async BLE command. UI stays responsive; loop() polls for result.
+  if (!client.addUpdateContact(node)) {
+    LOG_ERR("MESH", "Failed to queue contact sync: %s", node.name);
+    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+    requestUpdate();
+    return;
+  }
+
+  _pendingContact = node;
+  _pendingOp = PendingOp::SAVING;
+  _pendingStartMs = millis();
+  _toast.show(tr(STR_MESHCORE_SAVING), 0);  // persistent until result arrives
+  requestUpdate();
+}
+
+void MeshCoreDiscoverActivity::removeSelectedFromContacts() {
+  if (selectedIndex >= discoveredNodeCount) return;
+
+  const auto& node = discoveredNodes[selectedIndex];
+  // Find the index in savedContacts
+  for (uint8_t i = 0; i < savedContactCount; ++i) {
+    if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
+      // Build a contact with isSaved=false to tell companion to delete
+      MeshCoreContact deleteContact = {};
+      memcpy(deleteContact.publicKey, node.publicKey, 32);
+      memcpy(deleteContact.name, node.name, sizeof(deleteContact.name));
+      deleteContact.isSaved = false;
+
+      if (!client.addUpdateContact(deleteContact)) {
+        LOG_ERR("MESH", "Failed to queue contact delete: %s", node.name);
+        _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+        requestUpdate();
+        return;
+      }
+
+      _pendingContact = deleteContact;
+      _pendingDeleteIndex = i;
+      _pendingOp = PendingOp::DELETING;
+      _pendingStartMs = millis();
+      _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
+      LOG_INF("MESH", "Deleting contact from companion: %s", node.name);
+      requestUpdate();
+      return;
+    }
+  }
+}
+
+void MeshCoreDiscoverActivity::completeContactSave(bool success) {
+  PendingOp op = _pendingOp;
+  _pendingOp = PendingOp::IDLE;
+
+  if (op == PendingOp::SAVING) {
+    if (success) {
+      savedContacts[savedContactCount] = _pendingContact;
+      savedContacts[savedContactCount].isSaved = true;
+      savedContactCount++;
+      store.saveContacts(savedContacts, savedContactCount);
+      _toast.show(tr(STR_MESHCORE_CONTACT_ADDED), 3000);
+      LOG_INF("MESH", "Added contact: %s", _pendingContact.name);
+    } else {
+      _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+    }
+  } else if (op == PendingOp::DELETING) {
+    if (success) {
+      // Shift remaining contacts down
+      for (uint8_t j = _pendingDeleteIndex; j < savedContactCount - 1; ++j) {
+        savedContacts[j] = savedContacts[j + 1];
+      }
+      savedContactCount--;
+      store.saveContacts(savedContacts, savedContactCount);
+      _toast.show(tr(STR_MESHCORE_CONTACT_REMOVED), 3000);
+      LOG_INF("MESH", "Removed contact: %s", _pendingContact.name);
+    } else {
+      _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+    }
+  }
+
   requestUpdate();
 }
 
@@ -94,6 +192,10 @@ bool MeshCoreDiscoverActivity::isAlreadySaved(const MeshCoreContact& node) const
   return false;
 }
 
+bool MeshCoreDiscoverActivity::isSavingInProgress(const MeshCoreContact& node) const {
+  return _pendingOp != PendingOp::IDLE && memcmp(_pendingContact.publicKey, node.publicKey, 32) == 0;
+}
+
 void MeshCoreDiscoverActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
@@ -102,7 +204,7 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   char headerSubtitle[64];
-  formatMeshCoreSubtitle(client, headerSubtitle, sizeof(headerSubtitle));
+  _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE_DISCOVERED),
                  headerSubtitle);
 
@@ -122,28 +224,39 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
         [nodes](int index) { return std::string(nodes[index].name); },
         [nodes](int index) {
           char buf[48];
-          char prefix[13];
+          char keyLabel[MeshCoreContact::PUBLIC_KEY_DISPLAY_LEN];
           char ts[16] = "---";
-          nodes[index].getPublicKeyPrefix(prefix);
+          nodes[index].getPublicKeyLabel(keyLabel);
           if (nodes[index].lastSeen != 0) {
             formatMeshCoreTimestamp(nodes[index].lastSeen, ts, sizeof(ts));
           }
-          snprintf(buf, sizeof(buf), "%s %s %dhop  %s", prefix, meshcore::DotSeparator, nodes[index].pathLength, ts);
+          char hopBuf[12];
+          meshcore::formatMeshCoreHopCount(nodes[index].pathLength, hopBuf, sizeof(hopBuf));
+          snprintf(buf, sizeof(buf), "%s %s %s %s %s", keyLabel, meshcore::DotSeparator, ts, meshcore::DotSeparator,
+                   hopBuf);
           return std::string(buf);
         },
         nullptr, nullptr, false,
-        [nodes, saved, savedCount](int index) {
+        [this, nodes, saved, savedCount](int index) {
           // Dim already-saved contacts
           for (uint8_t i = 0; i < savedCount; ++i) {
             if (memcmp(saved[i].publicKey, nodes[index].publicKey, 32) == 0) return true;
           }
+          // Dim contact currently being saved (immediate feedback)
+          if (isSavingInProgress(nodes[index])) return true;
           return false;
         });
   }
 
-  const char* btn2 =
-      (discoveredNodeCount > 0 && !isAlreadySaved(discoveredNodes[selectedIndex])) ? tr(STR_MESHCORE_ADD_CONTACT) : "";
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, "", tr(STR_DIR_DOWN));
+  const char* btn2 = "";
+  if (discoveredNodeCount > 0 && _pendingOp == PendingOp::IDLE) {
+    if (isAlreadySaved(discoveredNodes[selectedIndex])) {
+      btn2 = tr(STR_MESHCORE_UNLIST);
+    } else {
+      btn2 = tr(STR_MESHCORE_ADD);
+    }
+  }
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

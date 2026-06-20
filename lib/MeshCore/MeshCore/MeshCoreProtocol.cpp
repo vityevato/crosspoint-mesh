@@ -131,6 +131,34 @@ size_t buildGetBattery(uint8_t* out, size_t maxLen) {
   return 1;
 }
 
+size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact& contact) {
+  // Format: 0x09 <pubkey[32]> <type> <flags> <out_path_len> <out_path[64]> <name[32]> <ts[4]>
+  static constexpr size_t NEEDED = 1 + 32 + 1 + 1 + 1 + 64 + 32 + 4;
+  if (maxLen < NEEDED) {
+    LOG_ERR("MESH", "buildAddUpdateContact: buffer too small");
+    return 0;
+  }
+  size_t off = 0;
+  out[off++] = CMD_ADD_UPDATE_CONTACT;
+  memcpy(out + off, contact.publicKey, 32);
+  off += 32;
+  out[off++] = static_cast<uint8_t>(contact.type);
+  out[off++] = contact.isSaved ? 1 : 0;  // flags (bit 0 = saved)
+  out[off++] = contact.pathLength;       // out_path_len (may be 0)
+  memset(out + off, 0, 64);              // out_path — not tracked locally
+  off += 64;
+  // Name: up to 31 chars + null
+  size_t nameLen = strlen(contact.name);
+  if (nameLen > 31) nameLen = 31;
+  memset(out + off, 0, 32);
+  memcpy(out + off, contact.name, nameLen);
+  off += 32;
+  uint32_t ts = contact.lastSeen;
+  memcpy(out + off, &ts, 4);
+  off += 4;
+  return off;
+}
+
 // --- Packet parsers ---
 
 bool parseSelfInfo(const uint8_t* data, size_t len, MeshCoreCompanion& out) {

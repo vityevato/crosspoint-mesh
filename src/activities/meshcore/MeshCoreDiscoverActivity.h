@@ -6,6 +6,7 @@
 
 #include <cstdint>
 
+#include "StatusMessageOverlay.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
@@ -36,11 +37,27 @@ class MeshCoreDiscoverActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
 
+  StatusMessageOverlay _toast;
+
   MeshCoreContact* discoveredNodes;
   uint8_t& discoveredNodeCount;
   MeshCoreContact* savedContacts;
   uint8_t& savedContactCount;
 
+  // Async BLE command state machine. PENDING = command fired, waiting
+  // for companion PKT_OK; loop() polls client.getLastCommandResult().
+  enum class PendingOp : uint8_t { IDLE, SAVING, DELETING };
+  PendingOp _pendingOp = PendingOp::IDLE;
+  MeshCoreContact _pendingContact = {};
+  /// Index into savedContacts[] for a delete operation.
+  uint8_t _pendingDeleteIndex = 0;
+  uint32_t _pendingStartMs = 0;
+
   void addSelectedToContacts();
+  void removeSelectedFromContacts();
+  void completeContactSave(bool success);
   bool isAlreadySaved(const MeshCoreContact& node) const;
+  bool isSavingInProgress(const MeshCoreContact& node) const;
+
+  static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);
 };

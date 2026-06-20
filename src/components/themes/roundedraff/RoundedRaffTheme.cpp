@@ -381,6 +381,100 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
   drawScrollBar(renderer, rect, itemCount, pageStartIndex, pageItems);
 }
 
+void RoundedRaffTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages,
+                                    int pageOffset, const std::function<std::string(int)>& sender,
+                                    const std::function<std::string(int)>& text,
+                                    const std::function<std::string(int)>& meta,
+                                    const std::function<bool(int)>& isOutgoing) const {
+  constexpr int maxLines = 100;
+  const int lineH = renderer.getLineHeight(kTitleFontId);
+  const int smallLineH = renderer.getLineHeight(kSubtitleFontId);
+  const int maxTextWidth = rect.width - 2 * RoundedRaffMetrics::values.contentSidePadding;
+
+  // Scrollbar: filled thumb only (no track line), min 10px height
+  if (totalMessages > itemCount) {
+    const int barW = RoundedRaffMetrics::values.scrollBarWidth;
+    const int barX = rect.x + rect.width - RoundedRaffMetrics::values.scrollBarRightOffset - barW;
+    const int barY = rect.y;
+    const int barH = rect.height;
+    const int thumbH = std::max(10, (barH * itemCount) / totalMessages);
+    const int maxStart = std::max(1, totalMessages - itemCount);
+    const int maxTravel = std::max(1, barH - thumbH);
+    const int clampedStart = std::clamp(pageOffset, 0, maxStart);
+    const int thumbY = barY + (clampedStart * maxTravel) / maxStart;
+    renderer.fillRect(barX, thumbY, barW, thumbH);
+  }
+
+  int y = rect.y + 4;
+
+  for (int i = 0; i < itemCount; ++i) {
+    if (y > rect.y + rect.height) break;
+
+    const bool outgoing = isOutgoing(i);
+    std::string senderStr = sender(i);
+    std::string textStr = text(i);
+    std::string metaStr = meta(i);
+
+    // Sender line
+    if (!senderStr.empty()) {
+      int senderX;
+      if (outgoing) {
+        int senderW = renderer.getTextWidth(kTitleFontId, senderStr.c_str(), EpdFontFamily::BOLD);
+        senderX = rect.x + rect.width - RoundedRaffMetrics::values.contentSidePadding - senderW;
+      } else {
+        senderX = rect.x + RoundedRaffMetrics::values.contentSidePadding;
+      }
+      renderer.drawText(kTitleFontId, senderX, y, senderStr.c_str(), true, EpdFontFamily::BOLD);
+      if (!outgoing) {
+        int sw = renderer.getTextWidth(kTitleFontId, senderStr.c_str(), EpdFontFamily::BOLD);
+        for (int py = y; py < y + lineH; py++)
+          for (int px = senderX; px < senderX + sw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += lineH;
+    }
+
+    // Text body
+    if (!textStr.empty()) {
+      auto lines = renderer.wrappedText(kTitleFontId, textStr.c_str(), maxTextWidth, maxLines);
+      for (const auto& line : lines) {
+        if (y > rect.y + rect.height) break;
+        if (outgoing) {
+          int textW = renderer.getTextWidth(kTitleFontId, line.c_str());
+          renderer.drawText(kTitleFontId, rect.x + rect.width - RoundedRaffMetrics::values.contentSidePadding - textW, y, line.c_str(), true);
+        } else {
+          renderer.drawText(kTitleFontId, rect.x + RoundedRaffMetrics::values.contentSidePadding, y, line.c_str(), true);
+        }
+        y += lineH;
+      }
+    }
+
+    // Meta line
+    if (!metaStr.empty()) {
+      if (y > rect.y + rect.height) break;
+      int metaX;
+      if (outgoing) {
+        int metaW = renderer.getTextWidth(kSubtitleFontId, metaStr.c_str());
+        metaX = rect.x + rect.width - RoundedRaffMetrics::values.contentSidePadding - metaW;
+      } else {
+        metaX = rect.x + RoundedRaffMetrics::values.contentSidePadding;
+      }
+      renderer.drawText(kSubtitleFontId, metaX, y, metaStr.c_str(), true);
+      {
+        int mw = renderer.getTextWidth(kSubtitleFontId, metaStr.c_str());
+        for (int py = y; py < y + smallLineH; py++)
+          for (int px = metaX; px < metaX + mw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += smallLineH;
+    }
+
+    if (y < rect.y + rect.height) {
+      y += RoundedRaffMetrics::values.verticalSpacing;
+    }
+  }
+}
+
 void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                        const char* btn4) const {
   const GfxRenderer::Orientation origOrientation = renderer.getOrientation();

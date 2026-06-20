@@ -330,6 +330,106 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
+void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages, int pageOffset,
+                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
+                             const std::function<std::string(int)>& meta,
+                             const std::function<bool(int)>& isOutgoing) const {
+  constexpr int maxLines = 100;
+  constexpr int arrowSize = 6;
+  constexpr int indicatorWidth = 20;
+  constexpr int margin = 15;
+
+  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
+  const int maxTextWidth = rect.width - 2 * BaseMetrics::values.contentSidePadding;
+
+  // Scrollbar indicators
+  if (totalMessages > itemCount) {
+    const int centerX = rect.x + rect.width - indicatorWidth / 2 - margin;
+    for (int i = 0; i < arrowSize; ++i) {
+      const int lineWidth = 1 + i * 2;
+      const int startX = centerX - i;
+      renderer.drawLine(startX, rect.y + i, startX + lineWidth - 1, rect.y + i);
+    }
+    for (int i = 0; i < arrowSize; ++i) {
+      const int lineWidth = 1 + (arrowSize - 1 - i) * 2;
+      const int startX = centerX - (arrowSize - 1 - i);
+      renderer.drawLine(startX, rect.y + rect.height - arrowSize + i, startX + lineWidth - 1,
+                        rect.y + rect.height - arrowSize + i);
+    }
+  }
+
+  int y = rect.y + 4;
+
+  for (int i = 0; i < itemCount; ++i) {
+    if (y > rect.y + rect.height) break;
+
+    const bool outgoing = isOutgoing(i);
+    std::string senderStr = sender(i);
+    std::string textStr = text(i);
+    std::string metaStr = meta(i);
+
+    // Sender line
+    if (!senderStr.empty()) {
+      int senderX;
+      if (outgoing) {
+        int senderW = renderer.getTextWidth(UI_10_FONT_ID, senderStr.c_str(), EpdFontFamily::BOLD);
+        senderX = rect.x + rect.width - BaseMetrics::values.contentSidePadding - senderW;
+      } else {
+        senderX = rect.x + BaseMetrics::values.contentSidePadding;
+      }
+      renderer.drawText(UI_10_FONT_ID, senderX, y, senderStr.c_str(), true, EpdFontFamily::BOLD);
+      if (!outgoing) {
+        int sw = renderer.getTextWidth(UI_10_FONT_ID, senderStr.c_str(), EpdFontFamily::BOLD);
+        for (int py = y; py < y + lineH; py++)
+          for (int px = senderX; px < senderX + sw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += lineH;
+    }
+
+    // Text body
+    if (!textStr.empty()) {
+      auto lines = renderer.wrappedText(UI_10_FONT_ID, textStr.c_str(), maxTextWidth, maxLines);
+      for (const auto& line : lines) {
+        if (y > rect.y + rect.height) break;
+        if (outgoing) {
+          int textW = renderer.getTextWidth(UI_10_FONT_ID, line.c_str());
+          renderer.drawText(UI_10_FONT_ID, rect.x + rect.width - BaseMetrics::values.contentSidePadding - textW, y, line.c_str(), true);
+        } else {
+          renderer.drawText(UI_10_FONT_ID, rect.x + BaseMetrics::values.contentSidePadding, y, line.c_str(), true);
+        }
+        y += lineH;
+      }
+    }
+
+    // Meta line
+    if (!metaStr.empty()) {
+      if (y > rect.y + rect.height) break;
+      int metaX;
+      if (outgoing) {
+        int metaW = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
+        metaX = rect.x + rect.width - BaseMetrics::values.contentSidePadding - metaW;
+      } else {
+        metaX = rect.x + BaseMetrics::values.contentSidePadding;
+      }
+      renderer.drawText(SMALL_FONT_ID, metaX, y, metaStr.c_str(), true);
+      {
+        int mw = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
+        for (int py = y; py < y + smallLineH; py++)
+          for (int px = metaX; px < metaX + mw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += smallLineH;
+    }
+
+    // Spacing between message blocks
+    if (y < rect.y + rect.height) {
+      y += BaseMetrics::values.verticalSpacing;
+    }
+  }
+}
+
 void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle) const {
   // Hide last battery draw
   constexpr int maxBatteryWidth = 80;

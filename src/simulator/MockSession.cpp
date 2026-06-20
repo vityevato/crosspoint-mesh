@@ -15,6 +15,48 @@ MockCompanion* MockSession::companions = nullptr;
 uint8_t MockSession::companionCount = 0;
 uint16_t MockSession::injectContactCounter = 0;
 uint8_t MockSession::injectChannelIdx = 8;
+// Free function (declared in NimBLEDevice.h) to handle CMD_ADD_UPDATE_CONTACT.
+// Defined here to access MockSession without circular include.
+void mockHandleAddUpdateContact(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len) {
+  if (!txChar || len < 136) return;
+
+  // Auto-cycle through responses on each call: OK → ERROR → TIMEOUT → DELAY_OK → …
+  static uint8_t modeCounter = 0;
+  uint8_t mode = modeCounter;
+  modeCounter = (modeCounter + 1) % 4;
+
+  char nameBuf[33] = {};
+  size_t nameOff = 1 + 32 + 1 + 1 + 1 + 64;
+  if (nameOff + 32 <= len) {
+    memcpy(nameBuf, data + nameOff, 32);
+    nameBuf[32] = '\0';
+  }
+
+  switch (mode) {
+    case 0:  // OK
+      LOG_INF("MOCK", "CMD_ADD_UPDATE_CONTACT \"%s\" → OK", nameBuf);
+      {
+        uint8_t ok = 0x00;
+        txChar->injectRawPacket(&ok, 1);
+      }
+      break;
+    case 1:  // ERROR
+      LOG_INF("MOCK", "CMD_ADD_UPDATE_CONTACT \"%s\" → ERROR", nameBuf);
+      {
+        uint8_t err = 0x01;
+        txChar->injectRawPacket(&err, 1);
+      }
+      break;
+    case 2:  // TIMEOUT
+      LOG_INF("MOCK", "CMD_ADD_UPDATE_CONTACT \"%s\" → (no response / timeout)", nameBuf);
+      break;
+    case 3:  // DELAY_OK
+      sPendingEcho.type = PendingEchoType::ADD_CONTACT_OK;
+      sPendingEcho.requestTimeMs = millis();
+      LOG_INF("MOCK", "CMD_ADD_UPDATE_CONTACT \"%s\" → OK (delayed 1.5 s)", nameBuf);
+      break;
+  }
+}
 
 bool MockSession::loadMockConfig(const char* jsonPath) {
   // Clean up any previously loaded config
