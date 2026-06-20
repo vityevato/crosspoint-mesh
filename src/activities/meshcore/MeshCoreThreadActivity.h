@@ -14,19 +14,20 @@
 struct Rect;
 
 /**
- * MeshCoreThreadActivity shows a paginated message thread for either a
+ * MeshCoreThreadActivity shows a pixel-paginated message thread for either a
  * LoRa channel (group chat) or a direct message conversation with a
  * contact, with a two-tab UI:
- *  - MESSAGES — paginated message list with send capability.
+ *  - MESSAGES — pixel-scrolled message list with send capability.
  *  - MENU — context-sensitive actions that differ for channels vs DMs.
  *
  * Two constructors:
  *  - Channel thread: takes a channel index and name.
  *  - Direct message thread: takes a MeshCoreContact (stores pubkey).
  *
- * Messages are loaded from MeshCoreMessageStore in pages. The activity
- * auto-refreshes when the store grows (new messages from hub callbacks)
- * and automatically scrolls to the newest page.
+ * All messages are loaded into a std::vector on entry. Navigation advances
+ * by exactly one viewport height (contentHeight pixels). A pixel-perfect
+ * scrollbar shows the position within the total content. The activity
+ * auto-refreshes when the store grows (new messages from hub callbacks).
  *
  * Tab navigation follows the same Settings-style pattern as the hub:
  *   selectedIndex == 0 → tab bar is highlighted, Confirm cycles tabs.
@@ -60,10 +61,13 @@ class MeshCoreThreadActivity final : public Activity {
   char threadName[64] = {};
   uint8_t contactPubkey[32] = {};
 
-  MeshCoreMessage messages[MSGS_PER_PAGE] = {};
-  uint8_t msgCount = 0;
+  // All messages loaded into RAM (max MAX_MSGS_PER_THREAD = 200)
+  std::vector<MeshCoreMessage> messages;
+  std::vector<uint16_t> msgHeights;
   uint16_t totalMessages = 0;
-  uint16_t pageOffset = 0;
+  uint16_t totalPixels = 0;
+  uint16_t scrollOffsetPx = 0;
+  uint16_t contentWidth = 0;
 
   // Tab state
   Tab currentTab = Tab::MESSAGES;
@@ -84,9 +88,24 @@ class MeshCoreThreadActivity final : public Activity {
   StatusMessageOverlay _toast;
 
   void loadPage();
+  void recomputeHeights();
+  uint32_t firstVisibleGlobalId() const;
+  int contentHeight() const;
+  void scrollDown();
+  void scrollUp();
+  void scrollDownByMessage();
+  void scrollUpByMessage();
+  void scrollToEnd();
+  void saveScrollPosition();
   void sendMessage();
-  void nextPage();
-  void prevPage();
+
+  /// Result of resolving scrollOffsetPx into the first visible message index.
+  struct VisibleState {
+    int startIdx;       ///< First message with any part visible
+    uint16_t acc;        ///< Sum of msgHeights[0..startIdx-1]
+    int partialOffset;    ///< Pixels of startIdx scrolled off the top
+  };
+  [[nodiscard]] VisibleState getVisibleState() const;
   void switchTab(Tab tab);
   int getListCountForCurrentTab() const;
 

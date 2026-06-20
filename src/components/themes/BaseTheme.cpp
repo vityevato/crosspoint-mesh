@@ -330,38 +330,65 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
-void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages, int pageOffset,
-                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
-                             const std::function<std::string(int)>& meta,
-                             const std::function<bool(int)>& isOutgoing) const {
+uint16_t BaseTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender,
+                                          const char* text, const char* meta) const {
   constexpr int maxLines = 100;
-  constexpr int arrowSize = 6;
-  constexpr int indicatorWidth = 20;
-  constexpr int margin = 15;
-
   const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
   const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
   const int maxTextWidth = rect.width - 2 * BaseMetrics::values.contentSidePadding;
 
-  // Scrollbar indicators
-  if (totalMessages > itemCount) {
-    const int centerX = rect.x + rect.width - indicatorWidth / 2 - margin;
-    for (int i = 0; i < arrowSize; ++i) {
-      const int lineWidth = 1 + i * 2;
-      const int startX = centerX - i;
-      renderer.drawLine(startX, rect.y + i, startX + lineWidth - 1, rect.y + i);
-    }
-    for (int i = 0; i < arrowSize; ++i) {
-      const int lineWidth = 1 + (arrowSize - 1 - i) * 2;
-      const int startX = centerX - (arrowSize - 1 - i);
-      renderer.drawLine(startX, rect.y + rect.height - arrowSize + i, startX + lineWidth - 1,
-                        rect.y + rect.height - arrowSize + i);
-    }
+  uint16_t height = 0;
+  if (sender && sender[0]) {
+    height += lineH;
+  }
+  if (text && text[0]) {
+    auto lines = renderer.wrappedText(UI_10_FONT_ID, text, maxTextWidth, maxLines);
+    height += static_cast<uint16_t>(lines.size()) * lineH;
+  }
+  if (meta && meta[0]) {
+    height += smallLineH;
+  }
+  height += BaseMetrics::values.verticalSpacing;
+  return height;
+}
+
+void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages,
+                             const uint16_t* msgHeights, uint16_t totalPixels, uint16_t scrollOffsetPx,
+                             const std::function<std::string(int)>& sender,
+                             const std::function<std::string(int)>& text,
+                             const std::function<std::string(int)>& meta,
+                             const std::function<bool(int)>& isOutgoing) const {
+  constexpr int maxLines = 100;
+  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
+  const int maxTextWidth = rect.width - 2 * BaseMetrics::values.contentSidePadding;
+
+  // Pixel-perfect scrollbar
+  if (totalPixels > rect.height) {
+    const int trackH = rect.height;
+    const int thumbH = std::max(10, trackH * trackH / totalPixels);
+    const int maxTravel = std::max(1, totalPixels - trackH);
+    const int thumbY = rect.y + (trackH - thumbH) * scrollOffsetPx / maxTravel;
+    const int barX = rect.x + rect.width - BaseMetrics::values.scrollBarRightOffset - BaseMetrics::values.scrollBarWidth;
+    renderer.fillRect(barX, thumbY, BaseMetrics::values.scrollBarWidth, thumbH, true);
   }
 
-  int y = rect.y + 4;
+  // Find first message to render based on scrollOffsetPx
+  int startIdx = 0;
+  uint16_t acc = 0;
+  while (startIdx < totalMessages && acc + msgHeights[startIdx] <= scrollOffsetPx) {
+    acc += msgHeights[startIdx];
+    startIdx++;
+  }
+  if (startIdx >= totalMessages) {
+    startIdx = totalMessages - 1;
+    acc = totalPixels - msgHeights[startIdx];
+  }
+  int partialOffset = scrollOffsetPx - acc;
 
-  for (int i = 0; i < itemCount; ++i) {
+  int y = rect.y + 4 - partialOffset;
+
+  for (int i = startIdx; i < totalMessages; ++i) {
     if (y > rect.y + rect.height) break;
 
     const bool outgoing = isOutgoing(i);
@@ -427,6 +454,17 @@ void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int itemCou
     if (y < rect.y + rect.height) {
       y += BaseMetrics::values.verticalSpacing;
     }
+  }
+
+  // Clear areas above and below the content rect — messages may overflow bounds
+  const int screenW = renderer.getScreenWidth();
+  const int screenH = renderer.getScreenHeight();
+  if (rect.y > 0) {
+    renderer.fillRect(0, 0, screenW, rect.y, false);
+  }
+  const int belowY = rect.y + rect.height;
+  if (belowY < screenH) {
+    renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
   }
 }
 

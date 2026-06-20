@@ -93,7 +93,10 @@ class RoundedRaffTheme : public BaseTheme {
                 const std::function<UIIcon(int index)>& rowIcon = nullptr,
                 const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
                 const std::function<bool(int index)>& rowDimmed = nullptr) const override;
-  void drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages, int pageOffset,
+  uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
+                                const char* meta) const override;
+  void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
+                    uint16_t totalPixels, uint16_t scrollOffsetPx,
                     const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
                     const std::function<std::string(int)>& meta,
                     const std::function<bool(int)>& isOutgoing) const override;

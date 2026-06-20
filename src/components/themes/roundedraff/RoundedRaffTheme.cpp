@@ -381,8 +381,31 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
   drawScrollBar(renderer, rect, itemCount, pageStartIndex, pageItems);
 }
 
-void RoundedRaffTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int itemCount, int totalMessages,
-                                    int pageOffset, const std::function<std::string(int)>& sender,
+uint16_t RoundedRaffTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender,
+                                                 const char* text, const char* meta) const {
+  constexpr int maxLines = 100;
+  const int lineH = renderer.getLineHeight(kTitleFontId);
+  const int smallLineH = renderer.getLineHeight(kSubtitleFontId);
+  const int maxTextWidth = rect.width - 2 * RoundedRaffMetrics::values.contentSidePadding;
+
+  uint16_t height = 0;
+  if (sender && sender[0]) {
+    height += lineH;
+  }
+  if (text && text[0]) {
+    auto lines = renderer.wrappedText(kTitleFontId, text, maxTextWidth, maxLines);
+    height += static_cast<uint16_t>(lines.size()) * lineH;
+  }
+  if (meta && meta[0]) {
+    height += smallLineH;
+  }
+  height += RoundedRaffMetrics::values.verticalSpacing;
+  return height;
+}
+
+void RoundedRaffTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages,
+                                    const uint16_t* msgHeights, uint16_t totalPixels, uint16_t scrollOffsetPx,
+                                    const std::function<std::string(int)>& sender,
                                     const std::function<std::string(int)>& text,
                                     const std::function<std::string(int)>& meta,
                                     const std::function<bool(int)>& isOutgoing) const {
@@ -391,23 +414,33 @@ void RoundedRaffTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int 
   const int smallLineH = renderer.getLineHeight(kSubtitleFontId);
   const int maxTextWidth = rect.width - 2 * RoundedRaffMetrics::values.contentSidePadding;
 
-  // Scrollbar: filled thumb only (no track line), min 10px height
-  if (totalMessages > itemCount) {
+  // Pixel-perfect scrollbar: filled thumb only (no track line), min 10px height
+  if (totalPixels > rect.height) {
+    const int trackH = rect.height;
+    const int thumbH = std::max(10, trackH * trackH / totalPixels);
+    const int maxTravel = std::max(1, totalPixels - trackH);
+    const int thumbY = rect.y + (trackH - thumbH) * scrollOffsetPx / maxTravel;
     const int barW = RoundedRaffMetrics::values.scrollBarWidth;
     const int barX = rect.x + rect.width - RoundedRaffMetrics::values.scrollBarRightOffset - barW;
-    const int barY = rect.y;
-    const int barH = rect.height;
-    const int thumbH = std::max(10, (barH * itemCount) / totalMessages);
-    const int maxStart = std::max(1, totalMessages - itemCount);
-    const int maxTravel = std::max(1, barH - thumbH);
-    const int clampedStart = std::clamp(pageOffset, 0, maxStart);
-    const int thumbY = barY + (clampedStart * maxTravel) / maxStart;
     renderer.fillRect(barX, thumbY, barW, thumbH);
   }
 
-  int y = rect.y + 4;
+  // Find first message to render based on scrollOffsetPx
+  int startIdx = 0;
+  uint16_t acc = 0;
+  while (startIdx < totalMessages && acc + msgHeights[startIdx] <= scrollOffsetPx) {
+    acc += msgHeights[startIdx];
+    startIdx++;
+  }
+  if (startIdx >= totalMessages) {
+    startIdx = totalMessages - 1;
+    acc = totalPixels - msgHeights[startIdx];
+  }
+  int partialOffset = scrollOffsetPx - acc;
 
-  for (int i = 0; i < itemCount; ++i) {
+  int y = rect.y + 4 - partialOffset;
+
+  for (int i = startIdx; i < totalMessages; ++i) {
     if (y > rect.y + rect.height) break;
 
     const bool outgoing = isOutgoing(i);
@@ -472,6 +505,17 @@ void RoundedRaffTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int 
     if (y < rect.y + rect.height) {
       y += RoundedRaffMetrics::values.verticalSpacing;
     }
+  }
+
+  // Clear areas above and below the content rect — messages may overflow bounds
+  const int screenW = renderer.getScreenWidth();
+  const int screenH = renderer.getScreenHeight();
+  if (rect.y > 0) {
+    renderer.fillRect(0, 0, screenW, rect.y, false);
+  }
+  const int belowY = rect.y + rect.height;
+  if (belowY < screenH) {
+    renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
   }
 }
 

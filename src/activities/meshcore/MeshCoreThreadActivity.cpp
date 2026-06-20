@@ -44,10 +44,42 @@ void MeshCoreThreadActivity::onEnter() {
   Activity::onEnter();
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
+  contentWidth = renderer.getScreenWidth();
   loadPage();
+
+  // Restore saved scroll position from last session
+  if (totalMessages > 0) {
+    uint32_t savedId = isChannel ? store.loadThreadPosition(channelIdx)
+                                  : store.loadDirectPosition(contactPubkey);
+    if (savedId > 0) {
+      // Find first message with globalId >= savedId
+      int startIdx = 0;
+      for (int i = 0; i < totalMessages; i++) {
+        if (messages[i].globalId >= savedId) { startIdx = i; break; }
+      }
+      // Convert to pixel offset
+      scrollOffsetPx = 0;
+      for (int i = 0; i < startIdx; i++) scrollOffsetPx += msgHeights[i];
+      int ch = contentHeight();
+      if (scrollOffsetPx + ch > totalPixels) {
+        scrollOffsetPx = (totalPixels > ch) ? totalPixels - ch : 0;
+      }
+    }
+    // else: savedId == 0 or not found — stay at scrollToEnd from loadPage
+  }
 }
 
-void MeshCoreThreadActivity::onExit() { Activity::onExit(); }
+void MeshCoreThreadActivity::onExit() {
+  uint32_t id = firstVisibleGlobalId();
+  if (id > 0) {
+    if (isChannel) {
+      store.saveThreadPosition(channelIdx, id);
+    } else {
+      store.saveDirectPosition(contactPubkey, id);
+    }
+  }
+  Activity::onExit();
+}
 
 void MeshCoreThreadActivity::loadPage() {
   if (isChannel) {
@@ -56,17 +88,207 @@ void MeshCoreThreadActivity::loadPage() {
     totalMessages = store.getDirectMessageCount(contactPubkey);
   }
 
-  // Start at most recent page
-  if (pageOffset == 0 && totalMessages > MSGS_PER_PAGE) {
-    pageOffset = totalMessages - MSGS_PER_PAGE;
+  messages.resize(totalMessages);
+  msgHeights.resize(totalMessages);
+
+  if (totalMessages > 0) {
+    uint8_t loaded = 0;
+    if (isChannel) {
+      store.loadChannelMessages(channelIdx, 0, messages.data(), static_cast<uint8_t>(totalMessages), loaded);
+    } else {
+      store.loadDirectMessages(contactPubkey, 0, messages.data(), static_cast<uint8_t>(totalMessages), loaded);
+    }
+    if (loaded < totalMessages) {
+      messages.resize(loaded);
+      totalMessages = loaded;
+      msgHeights.resize(loaded);
+    }
+    recomputeHeights();
+  } else {
+    totalPixels = 0;
   }
 
-  if (isChannel) {
-    store.loadChannelMessages(channelIdx, pageOffset, messages, MSGS_PER_PAGE, msgCount);
+  scrollToEnd();
+  requestUpdate();
+}
+
+uint32_t MeshCoreThreadActivity::firstVisibleGlobalId() const {
+  if (messages.empty()) return 0;
+  uint16_t acc = 0;
+  for (int i = 0; i < totalMessages; i++) {
+    if (acc + msgHeights[i] > scrollOffsetPx) {
+      return messages[i].globalId;
+    }
+    acc += msgHeights[i];
+  }
+  return messages.back().globalId;
+}
+
+void MeshCoreThreadActivity::recomputeHeights() {
+  totalPixels = 0;
+  Rect measRect(0, 0, contentWidth, 0);
+  for (int i = 0; i < totalMessages; i++) {
+    const auto& msg = messages[i];
+
+    std::string senderStr;
+    if (isChannel && msg.direction != MsgDirection::SENT) {
+      senderStr = msg.senderName[0] ? msg.senderName : "Unknown";
+    }
+
+    char metaBuf[64] = {};
+    if (msg.timestamp > 0) {
+      char tsBuf[16];
+      formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
+      char hopBuf[12];
+      meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
+      snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
+    }
+
+    msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf);
+    totalPixels += msgHeights[i];
+  }
+}
+
+int MeshCoreThreadActivity::contentHeight() const {
+  const auto pageHeight = renderer.getScreenHeight();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  int tabBarTop = metrics.topPadding + metrics.headerHeight;
+  int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
+  return pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+}
+
+void MeshCoreThreadActivity::scrollDown() {
+  int ch = contentHeight();
+  if (totalPixels <= ch) return;
+  uint16_t maxOffset = totalPixels - ch;
+  if (scrollOffsetPx + ch < maxOffset) {
+    scrollOffsetPx += ch;
   } else {
-    store.loadDirectMessages(contactPubkey, pageOffset, messages, MSGS_PER_PAGE, msgCount);
+    scrollOffsetPx = maxOffset;
+  }
+  if (isChannel) {
+    store.saveThreadPosition(channelIdx, firstVisibleGlobalId());
+  } else {
+    store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
   }
   requestUpdate();
+}
+
+void MeshCoreThreadActivity::scrollUp() {
+  int ch = contentHeight();
+  if (scrollOffsetPx >= ch) {
+    scrollOffsetPx -= ch;
+  } else {
+    scrollOffsetPx = 0;
+  }
+  if (isChannel) {
+    store.saveThreadPosition(channelIdx, firstVisibleGlobalId());
+  } else {
+    store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
+  }
+  requestUpdate();
+}
+
+auto MeshCoreThreadActivity::getVisibleState() const -> VisibleState {
+  VisibleState vs = {};
+  while (vs.startIdx < totalMessages && vs.acc + msgHeights[vs.startIdx] <= scrollOffsetPx) {
+    vs.acc += msgHeights[vs.startIdx];
+    vs.startIdx++;
+  }
+  if (vs.startIdx >= totalMessages) {
+    vs.startIdx = totalMessages - 1;
+    vs.acc = totalPixels - msgHeights[vs.startIdx];
+  }
+  vs.partialOffset = static_cast<int>(scrollOffsetPx - vs.acc);
+  return vs;
+}
+
+void MeshCoreThreadActivity::saveScrollPosition() {
+  if (isChannel) {
+    store.saveThreadPosition(channelIdx, firstVisibleGlobalId());
+  } else {
+    store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
+  }
+}
+
+void MeshCoreThreadActivity::scrollDownByMessage() {
+  if (totalMessages == 0) return;
+  int ch = contentHeight();
+  if (totalPixels <= ch) return;
+
+  VisibleState vs = getVisibleState();
+
+  // Find the last (bottom-most) message with any part visible
+  int yRel = 4 - vs.partialOffset;
+  int lastIdx = vs.startIdx;
+  for (int i = vs.startIdx; i < totalMessages; i++) {
+    if (yRel + static_cast<int>(msgHeights[i]) <= ch) {
+      lastIdx = i;
+      yRel += msgHeights[i];
+    } else if (yRel < ch) {
+      lastIdx = i;  // partially visible at the bottom
+      break;
+    } else {
+      break;
+    }
+  }
+
+  // Sum of msgHeights from startIdx to lastIdx inclusive
+  uint16_t sumSlice = 0;
+  for (int i = vs.startIdx; i <= lastIdx; i++) sumSlice += msgHeights[i];
+  int bottomRel = static_cast<int>(sumSlice) - vs.partialOffset + 4;
+
+  if (bottomRel > ch) {
+    // Step 1: bottom message is partially cut off — scroll to reveal it fully
+    scrollOffsetPx += (bottomRel - ch);
+  } else if (lastIdx + 1 < totalMessages) {
+    // Step 2: bottom message fully visible — advance to next message
+    scrollOffsetPx += msgHeights[lastIdx];
+  } else {
+    scrollToEnd();
+    return;
+  }
+
+  // Clamp to valid range
+  uint16_t maxOffset = totalPixels > ch ? totalPixels - ch : 0;
+  if (scrollOffsetPx > maxOffset) scrollOffsetPx = maxOffset;
+
+  saveScrollPosition();
+  requestUpdate();
+}
+
+void MeshCoreThreadActivity::scrollUpByMessage() {
+  if (totalMessages == 0) return;
+
+  VisibleState vs = getVisibleState();
+
+  if (vs.partialOffset > 0) {
+    // Step 1: align partially-visible message to top
+    scrollOffsetPx = vs.acc;
+  } else {
+    // Step 2: go to previous message
+    if (vs.startIdx > 0) {
+      scrollOffsetPx = vs.acc - msgHeights[vs.startIdx - 1];
+    } else {
+      scrollOffsetPx = 0;
+    }
+  }
+
+  saveScrollPosition();
+  requestUpdate();
+}
+
+void MeshCoreThreadActivity::scrollToEnd() {
+  if (totalPixels == 0) {
+    scrollOffsetPx = 0;
+    return;
+  }
+  int ch = contentHeight();
+  if (totalPixels > ch) {
+    scrollOffsetPx = totalPixels - ch;
+  } else {
+    scrollOffsetPx = 0;
+  }
 }
 
 void MeshCoreThreadActivity::loop() {
@@ -103,7 +325,7 @@ void MeshCoreThreadActivity::loop() {
   pollMock(client.getBleClient(), millis());
 #endif
 
-  // Detect new messages and auto-scroll if on last page
+  // Detect new messages and auto-scroll if at end
   uint16_t currentTotal;
   if (isChannel) {
     currentTotal = store.getChannelMessageCount(channelIdx);
@@ -111,17 +333,50 @@ void MeshCoreThreadActivity::loop() {
     currentTotal = store.getDirectMessageCount(contactPubkey);
   }
   if (currentTotal > totalMessages) {
-    bool onLastPage = (pageOffset + MSGS_PER_PAGE >= totalMessages);
+    // A — new messages arrived
+    bool wasAtEnd = (scrollOffsetPx + contentHeight() >= totalPixels || totalPixels == 0);
+    uint16_t oldCount = totalMessages;
+    uint16_t newCount = currentTotal - oldCount;
     totalMessages = currentTotal;
-    if (onLastPage) {
-      pageOffset = (totalMessages > MSGS_PER_PAGE) ? totalMessages - MSGS_PER_PAGE : 0;
-      if (isChannel) {
-        store.loadChannelMessages(channelIdx, pageOffset, messages, MSGS_PER_PAGE, msgCount);
-      } else {
-        store.loadDirectMessages(contactPubkey, pageOffset, messages, MSGS_PER_PAGE, msgCount);
-      }
-      requestUpdate();
+    messages.resize(totalMessages);
+    msgHeights.resize(totalMessages);
+
+    uint8_t loaded = 0;
+    if (isChannel) {
+      store.loadChannelMessages(channelIdx, oldCount, messages.data() + oldCount, static_cast<uint8_t>(newCount), loaded);
+    } else {
+      store.loadDirectMessages(contactPubkey, oldCount, messages.data() + oldCount, static_cast<uint8_t>(newCount), loaded);
     }
+
+    // Compute heights for new messages only
+    Rect measRect(0, 0, contentWidth, 0);
+    for (int i = oldCount; i < oldCount + loaded; i++) {
+      const auto& msg = messages[i];
+      std::string senderStr;
+      if (isChannel && msg.direction != MsgDirection::SENT) {
+        senderStr = msg.senderName[0] ? msg.senderName : "Unknown";
+      }
+      char metaBuf[64] = {};
+      if (msg.timestamp > 0) {
+        char tsBuf[16];
+        formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
+        char hopBuf[12];
+        meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
+        snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
+      }
+      msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf);
+      totalPixels += msgHeights[i];
+    }
+
+    // Only auto-scroll if user was already at the end
+    if (wasAtEnd) {
+      scrollToEnd();
+    }
+    requestUpdate();
+
+  } else if (currentTotal < messages.size()) {
+    // B — truncate happened, reload everything from store
+    loadPage();
   }
 
   // --- Status subscreen ---
@@ -238,20 +493,38 @@ void MeshCoreThreadActivity::loop() {
   int navCount = listCount + 1;  // +1 for tab bar row
 
   if (currentTab == Tab::MESSAGES) {
-    // Messages tab: on tab bar, Down/Up enters content; inside, pages
-    buttonNavigator.onNextRelease([this] {
+    // Side buttons (Up/Down): message-by-message scrolling
+    //   Down on tab bar → enter content; in content → scroll to next message
+    //   Up in content → scroll to previous message; on tab bar → no-op
+    buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this] {
       if (selectedIndex == 0) {
-        selectedIndex = 1;  // Enter content area
+        selectedIndex = 1;
         requestUpdate();
       } else {
-        nextPage();
+        scrollDownByMessage();
       }
     });
-    buttonNavigator.onPreviousRelease([this] {
+    buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this] {
       if (selectedIndex == 1) {
-        prevPage();
+        scrollUpByMessage();
       }
-      // On tab bar (index 0), Up does nothing — Back exits activity
+    });
+
+    // Front buttons (Right/Left): page-by-page (screenful) scrolling
+    //   Right on tab bar → enter content; in content → page down
+    //   Left in content → page up; on tab bar → no-op
+    buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this] {
+      if (selectedIndex == 0) {
+        selectedIndex = 1;
+        requestUpdate();
+      } else {
+        scrollDown();
+      }
+    });
+    buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this] {
+      if (selectedIndex == 1) {
+        scrollUp();
+      }
     });
   } else {
     // Menu tab: Up/Down navigates the list
@@ -327,31 +600,18 @@ void MeshCoreThreadActivity::sendMessage() {
                              } else {
                                store.appendDirectMessage(contactPubkey, msg);
                              }
-                             pageOffset = 0;  // Jump to latest
+                             // Reload all messages, scroll to end, save position
                              loadPage();
+                             if (isChannel) {
+                               store.saveThreadPosition(channelIdx, firstVisibleGlobalId());
+                             } else {
+                               store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
+                             }
                            } else {
                              LOG_ERR("MESH", "Failed to queue message");
                              requestUpdate();
                            }
                          });
-}
-
-// --- Page navigation ---
-
-void MeshCoreThreadActivity::nextPage() {
-  if (pageOffset + MSGS_PER_PAGE < totalMessages) {
-    pageOffset += MSGS_PER_PAGE;
-    loadPage();
-  }
-}
-
-void MeshCoreThreadActivity::prevPage() {
-  if (pageOffset >= MSGS_PER_PAGE) {
-    pageOffset -= MSGS_PER_PAGE;
-  } else {
-    pageOffset = 0;
-  }
-  loadPage();
 }
 
 // --- Rendering ---
@@ -382,33 +642,26 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
   // --- Normal tabbed layout ---
   char headerSubtitle[64];
   _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
-  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
 
-  // Tab bar
   int tabBarTop = metrics.topPadding + metrics.headerHeight;
   constexpr int tabCount = static_cast<int>(Tab::TAB_COUNT);
   const char* tabNames[tabCount] = {tr(STR_MESHCORE_DIRECT_MESSAGES), tr(STR_MESHCORE_MENU)};
-  std::vector<TabInfo> tabs;
-  tabs.reserve(tabCount);
-  for (int i = 0; i < tabCount; ++i) {
-    tabs.push_back({tabNames[i], currentTab == static_cast<Tab>(i)});
-  }
-  GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, selectedIndex == 0);
 
-  // Content area
+  // Content area (drawn FIRST so header/tab-bar can overwrite any overflow)
   int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
-  int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
+  int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
   Rect contentRect(0, contentTop, pageWidth, contentHeight);
 
   switch (currentTab) {
     case Tab::MESSAGES:
-      if (msgCount == 0) {
+      if (messages.empty()) {
         GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_NO_MESSAGES));
       } else {
         GUI.drawMessages(
-            renderer, contentRect, msgCount, totalMessages, pageOffset,
+            renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
             /*sender*/
             [this](int i) -> std::string {
+              if (i < 0 || i >= totalMessages) return {};
               if (messages[i].direction == MsgDirection::SENT || !isChannel) {
                 return "";
               }
@@ -417,9 +670,13 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
               return buf;
             },
             /*text*/
-            [this](int i) -> std::string { return messages[i].text; },
+            [this](int i) -> std::string {
+              if (i < 0 || i >= totalMessages) return {};
+              return messages[i].text;
+            },
             /*meta*/
             [this](int i) -> std::string {
+              if (i < 0 || i >= totalMessages) return {};
               char buf[64];
               uint32_t ts = messages[i].timestamp;
               if (ts > 0) {
@@ -434,7 +691,10 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
               return buf;
             },
             /*isOutgoing*/
-            [this](int i) -> bool { return messages[i].direction == MsgDirection::SENT; });
+            [this](int i) -> bool {
+              if (i < 0 || i >= totalMessages) return false;
+              return messages[i].direction == MsgDirection::SENT;
+            });
       }
       break;
     case Tab::MENU:
@@ -443,6 +703,17 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
     default:
       break;
   }
+
+  // Header (drawn after content to clean up any overflow)
+  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
+
+  // Tab bar
+  std::vector<TabInfo> tabs;
+  tabs.reserve(tabCount);
+  for (int i = 0; i < tabCount; ++i) {
+    tabs.push_back({tabNames[i], currentTab == static_cast<Tab>(i)});
+  }
+  GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, selectedIndex == 0);
 
   // Button hints
   const char* btn2 = "";

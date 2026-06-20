@@ -96,10 +96,12 @@ bool MeshCoreMessageStore::appendMessage(const char* filePath, const MeshCoreMes
     file.read(&version, 1);
     uint16_t count = 0;
     file.read(reinterpret_cast<uint8_t*>(&count), 2);
+    uint32_t nextGlobalId = 1;
+    file.read(reinterpret_cast<uint8_t*>(&nextGlobalId), 4);
 
     if (count >= MAX_MSGS_PER_THREAD) {
       file.close();
-      if (!truncateOldMessages(filePath, count)) {
+      if (!truncateOldMessages(filePath, count, nextGlobalId)) {
         LOG_ERR("MESH", "Failed to truncate old messages");
         return false;
       }
@@ -110,6 +112,7 @@ bool MeshCoreMessageStore::appendMessage(const char* filePath, const MeshCoreMes
       }
       file.read(&version, 1);
       file.read(reinterpret_cast<uint8_t*>(&count), 2);
+      file.read(reinterpret_cast<uint8_t*>(&nextGlobalId), 4);
     }
 
     // Read existing messages
@@ -122,39 +125,48 @@ bool MeshCoreMessageStore::appendMessage(const char* filePath, const MeshCoreMes
     file.read(buf, dataSize);
     file.close();
 
-    // Write back: header + existing messages + new message
+    // Write back: header + existing messages + new message with globalId
     if (!Storage.openFileForWrite("MESH", filePath, file)) {
       free(buf);
       LOG_ERR("MESH", "Failed to open msg file for write: %s", filePath);
       return false;
     }
+    version = MESHCORE_MSG_FILE_VERSION;
     file.write(&version, 1);
     uint16_t newCount = count + 1;
     file.write(reinterpret_cast<const uint8_t*>(&newCount), 2);
+    uint32_t nextId = nextGlobalId + 1;  // value AFTER this new message
+    file.write(reinterpret_cast<const uint8_t*>(&nextId), 4);
     file.write(buf, dataSize);
     free(buf);
     buf = nullptr;
-    file.write(reinterpret_cast<const uint8_t*>(&msg), sizeof(MeshCoreMessage));
+    MeshCoreMessage msgWithId = msg;
+    msgWithId.globalId = nextGlobalId;
+    file.write(reinterpret_cast<const uint8_t*>(&msgWithId), sizeof(MeshCoreMessage));
   } else {
     if (!Storage.openFileForWrite("MESH", filePath, file)) {
       LOG_ERR("MESH", "Failed to create msg file: %s", filePath);
       return false;
     }
 
-    // Write header: version + count
+    // Write header: version + count + nextGlobalId
     uint8_t version = MESHCORE_MSG_FILE_VERSION;
     file.write(&version, 1);
     uint16_t count = 1;
     file.write(reinterpret_cast<const uint8_t*>(&count), 2);
+    uint32_t nextId = 2;  // Next ID after this first message
+    file.write(reinterpret_cast<const uint8_t*>(&nextId), 4);
 
-    // Write message
-    file.write(reinterpret_cast<const uint8_t*>(&msg), sizeof(MeshCoreMessage));
+    // Write message with globalId = 1
+    MeshCoreMessage msgWithId = msg;
+    msgWithId.globalId = 1;
+    file.write(reinterpret_cast<const uint8_t*>(&msgWithId), sizeof(MeshCoreMessage));
   }
 
   return true;
 }
 
-bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t currentCount) {
+bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t currentCount, uint32_t nextGlobalId) {
   uint16_t keepCount = currentCount / 2;
   uint16_t skipCount = currentCount - keepCount;
   LOG_INF("MESH", "Truncating: drop %d oldest, keep %d newest", skipCount, keepCount);
@@ -173,8 +185,8 @@ bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t cu
     return false;
   }
 
-  // Seek past header (3 bytes) + skipped messages
-  uint32_t dataOffset = 3 + static_cast<uint32_t>(skipCount) * sizeof(MeshCoreMessage);
+  // Seek past header (7 bytes: version:1 + count:2 + nextGlobalId:4) + skipped messages
+  uint32_t dataOffset = 7 + static_cast<uint32_t>(skipCount) * sizeof(MeshCoreMessage);
   src.seek(dataOffset);
   int bytesRead = src.read(buf, static_cast<size_t>(keepCount) * sizeof(MeshCoreMessage));
   src.close();
@@ -185,7 +197,7 @@ bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t cu
     return false;
   }
 
-  // Overwrite the file with header + kept messages
+  // Overwrite the file with header (preserving nextGlobalId) + kept messages
   HalFile dst;
   if (!Storage.openFileForWrite("MESH", filePath, dst)) {
     free(buf);
@@ -195,6 +207,7 @@ bool MeshCoreMessageStore::truncateOldMessages(const char* filePath, uint16_t cu
   uint8_t version = MESHCORE_MSG_FILE_VERSION;
   dst.write(&version, 1);
   dst.write(reinterpret_cast<const uint8_t*>(&keepCount), 2);
+  dst.write(reinterpret_cast<const uint8_t*>(&nextGlobalId), 4);
   dst.write(buf, static_cast<size_t>(keepCount) * sizeof(MeshCoreMessage));
 
   free(buf);
@@ -242,8 +255,8 @@ bool MeshCoreMessageStore::loadMessages(const char* filePath, uint16_t offset, M
     return true;  // No messages at this offset
   }
 
-  // Seek to offset position (header = 3 bytes)
-  uint32_t seekPos = 3 + static_cast<uint32_t>(offset) * sizeof(MeshCoreMessage);
+  // Seek to offset position (header = 7 bytes: version:1 + count:2 + nextGlobalId:4)
+  uint32_t seekPos = 7 + static_cast<uint32_t>(offset) * sizeof(MeshCoreMessage);
   file.seek(seekPos);
 
   uint8_t toRead = count;
@@ -319,6 +332,58 @@ bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint16_t 
   char filePath[80];
   snprintf(filePath, sizeof(filePath), "%s/msgs.bin", dirPath);
   return loadMessages(filePath, offset, out, count, loaded);
+}
+
+// --- Thread scroll position ---
+
+bool MeshCoreMessageStore::saveThreadPosition(uint8_t channelIdx, uint32_t globalId) {
+  if (companionDir[0] == '\0') return false;
+  char dirPath[64];
+  buildChannelPath(channelIdx, dirPath, sizeof(dirPath));
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/position.bin", dirPath);
+  HalFile file;
+  if (!Storage.openFileForWrite("MESH", filePath, file)) return false;
+  file.write(reinterpret_cast<const uint8_t*>(&globalId), sizeof(globalId));
+  return true;
+}
+
+uint32_t MeshCoreMessageStore::loadThreadPosition(uint8_t channelIdx) {
+  if (companionDir[0] == '\0') return 0;
+  char dirPath[64];
+  buildChannelPath(channelIdx, dirPath, sizeof(dirPath));
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/position.bin", dirPath);
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) return 0;
+  uint32_t globalId = 0;
+  int bytesRead = file.read(reinterpret_cast<uint8_t*>(&globalId), sizeof(globalId));
+  return (bytesRead == sizeof(globalId)) ? globalId : 0;
+}
+
+bool MeshCoreMessageStore::saveDirectPosition(const uint8_t* pubkey32, uint32_t globalId) {
+  if (companionDir[0] == '\0') return false;
+  char dirPath[64];
+  buildContactPath(pubkey32, dirPath, sizeof(dirPath));
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/position.bin", dirPath);
+  HalFile file;
+  if (!Storage.openFileForWrite("MESH", filePath, file)) return false;
+  file.write(reinterpret_cast<const uint8_t*>(&globalId), sizeof(globalId));
+  return true;
+}
+
+uint32_t MeshCoreMessageStore::loadDirectPosition(const uint8_t* pubkey32) {
+  if (companionDir[0] == '\0') return 0;
+  char dirPath[64];
+  buildContactPath(pubkey32, dirPath, sizeof(dirPath));
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/position.bin", dirPath);
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) return 0;
+  uint32_t globalId = 0;
+  int bytesRead = file.read(reinterpret_cast<uint8_t*>(&globalId), sizeof(globalId));
+  return (bytesRead == sizeof(globalId)) ? globalId : 0;
 }
 
 // --- Contacts ---
