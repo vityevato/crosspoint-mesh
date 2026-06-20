@@ -67,7 +67,8 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .textFieldNormalThickness = 1,
                                  .textFieldCursorThickness = 3,
                                  .textFieldLineEndOffset = 0,
-                                 .subtitleBottomMargin = 4};
+                                 .subtitleBottomMargin = 4,
+                                 .bottomSubtitleHeight = 0};
 }
 
 class LyraTheme : public BaseTheme {
@@ -97,9 +98,8 @@ class LyraTheme : public BaseTheme {
   uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
                                 const char* meta) const override;
   void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
-                    uint16_t totalPixels, uint16_t scrollOffsetPx,
-                    const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
-                    const std::function<std::string(int)>& meta,
+                    uint16_t totalPixels, uint16_t scrollOffsetPx, const std::function<std::string(int)>& sender,
+                    const std::function<std::string(int)>& text, const std::function<std::string(int)>& meta,
                     const std::function<bool(int)>& isOutgoing) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   bool showsFileIcons() const override { return true; }

@@ -200,7 +200,8 @@ void MeshCoreScanActivity::render(RenderLock&&) {
                  headerSubtitle);
 
   const int contentTop = metrics.topPadding + metrics.headerHeight;
-  const int contentHeight = renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
+  const int contentHeight = renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.topPadding -
+                            metrics.bottomSubtitleHeight;
 
   const auto* results = client.getScanResults();
   uint8_t resultCount = client.getScanResultCount();

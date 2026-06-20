@@ -97,6 +97,7 @@ struct ThemeMetrics {
   int textFieldLineEndOffset;
 
   int subtitleBottomMargin;
+  int bottomSubtitleHeight;
 };
 
 enum UIIcon { None = 0, Folder, Text, Image, Book, File, Recent, Settings, Transfer, Library, Wifi, Hotspot, Bookmark };
@@ -168,7 +169,8 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .textFieldNormalThickness = 1,
                                  .textFieldCursorThickness = 3,
                                  .textFieldLineEndOffset = 0,
-                                 .subtitleBottomMargin = 4};
+                                 .subtitleBottomMargin = 4,
+                                 .bottomSubtitleHeight = 15};
 }
 
 class BaseTheme {
@@ -215,15 +217,15 @@ class BaseTheme {
   virtual void drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const char* label, const bool isSelected,
                                const char* secondaryLabel = nullptr, KeyboardKeyType keyType = KeyboardKeyType::Normal,
                                bool inactiveSelection = false) const;
-  virtual uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender,
-                                        const char* text, const char* meta) const;
+  virtual uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
+                                        const char* meta) const;
   /// Draw a scrollable list of messages within @p rect.
   ///
   /// After drawing the messages, also clears (fills white) the areas above
   /// and below @p rect — the messages loop may overflow the content bounds
   /// and this ensures no stray pixels remain outside the intended area.
-  virtual void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages,
-                            const uint16_t* msgHeights, uint16_t totalPixels, uint16_t scrollOffsetPx,
+  virtual void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
+                            uint16_t totalPixels, uint16_t scrollOffsetPx,
                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
                             const std::function<std::string(int)>& meta,
                             const std::function<bool(int)>& isOutgoing) const;

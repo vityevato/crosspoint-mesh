@@ -67,7 +67,8 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .textFieldNormalThickness = 2,
                                  .textFieldCursorThickness = 3,
                                  .textFieldLineEndOffset = -1,
-                                 .subtitleBottomMargin = 4};
+                                 .subtitleBottomMargin = 4,
+                                 .bottomSubtitleHeight = 0};
 }
 
 class RoundedRaffTheme : public BaseTheme {
@@ -96,9 +97,8 @@ class RoundedRaffTheme : public BaseTheme {
   uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
                                 const char* meta) const override;
   void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
-                    uint16_t totalPixels, uint16_t scrollOffsetPx,
-                    const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
-                    const std::function<std::string(int)>& meta,
+                    uint16_t totalPixels, uint16_t scrollOffsetPx, const std::function<std::string(int)>& sender,
+                    const std::function<std::string(int)>& text, const std::function<std::string(int)>& meta,
                     const std::function<bool(int)>& isOutgoing) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                        const char* btn4) const override;

@@ -477,7 +477,8 @@ void MeshCoreHubActivity::render(RenderLock&&) {
 
   // Content area
   int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
-  int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
+  int contentHeight =
+      pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding - metrics.bottomSubtitleHeight;
   Rect contentRect(0, contentTop, pageWidth, contentHeight);
 
   switch (currentTab) {

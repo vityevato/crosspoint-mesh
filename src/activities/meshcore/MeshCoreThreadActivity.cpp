@@ -14,10 +14,10 @@
 #include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
 #include "activities/util/KeyboardEntryActivity.h"
-#include "utils/MeshCoreDisplayUtils.h"
-#include "utils/MeshCoreTimeUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "utils/MeshCoreDisplayUtils.h"
+#include "utils/MeshCoreTimeUtils.h"
 
 // Channel thread constructor
 MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -49,13 +49,15 @@ void MeshCoreThreadActivity::onEnter() {
 
   // Restore saved scroll position from last session
   if (totalMessages > 0) {
-    uint32_t savedId = isChannel ? store.loadThreadPosition(channelIdx)
-                                  : store.loadDirectPosition(contactPubkey);
+    uint32_t savedId = isChannel ? store.loadThreadPosition(channelIdx) : store.loadDirectPosition(contactPubkey);
     if (savedId > 0) {
       // Find first message with globalId >= savedId
       int startIdx = 0;
       for (int i = 0; i < totalMessages; i++) {
-        if (messages[i].globalId >= savedId) { startIdx = i; break; }
+        if (messages[i].globalId >= savedId) {
+          startIdx = i;
+          break;
+        }
       }
       // Convert to pixel offset
       scrollOffsetPx = 0;
@@ -154,7 +156,8 @@ int MeshCoreThreadActivity::contentHeight() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   int tabBarTop = metrics.topPadding + metrics.headerHeight;
   int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
-  return pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  return pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing - metrics.subtitleBottomMargin -
+         metrics.bottomSubtitleHeight;
 }
 
 void MeshCoreThreadActivity::scrollDown() {
@@ -343,9 +346,11 @@ void MeshCoreThreadActivity::loop() {
 
     uint8_t loaded = 0;
     if (isChannel) {
-      store.loadChannelMessages(channelIdx, oldCount, messages.data() + oldCount, static_cast<uint8_t>(newCount), loaded);
+      store.loadChannelMessages(channelIdx, oldCount, messages.data() + oldCount, static_cast<uint8_t>(newCount),
+                                loaded);
     } else {
-      store.loadDirectMessages(contactPubkey, oldCount, messages.data() + oldCount, static_cast<uint8_t>(newCount), loaded);
+      store.loadDirectMessages(contactPubkey, oldCount, messages.data() + oldCount, static_cast<uint8_t>(newCount),
+                               loaded);
     }
 
     // Compute heights for new messages only
@@ -649,8 +654,8 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
 
   // Content area (drawn FIRST so header/tab-bar can overwrite any overflow)
   int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
-  int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
-  Rect contentRect(0, contentTop, pageWidth, contentHeight);
+  int ch = contentHeight();
+  Rect contentRect(0, contentTop, pageWidth, ch);
 
   switch (currentTab) {
     case Tab::MESSAGES:

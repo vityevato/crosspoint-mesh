@@ -209,7 +209,8 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
                  headerSubtitle);
 
   int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding;
+  int contentHeight =
+      pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding - metrics.bottomSubtitleHeight;
   Rect contentRect(0, contentTop, pageWidth, contentHeight);
 
   if (discoveredNodeCount == 0) {
