@@ -7,6 +7,7 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -330,20 +331,75 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
-uint16_t BaseTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender,
-                                          const char* text, const char* meta) const {
+std::vector<std::string> BaseTheme::wrapMessageBody(const GfxRenderer& renderer, int fontId, const char* text,
+                                                    int maxWidth, int maxLines) {
+  std::vector<std::string> result;
+  if (!text || !*text) return result;
+
+  // Fast path: no newlines → delegate directly to wrappedText (no extra copy)
+  bool hasNewline = false;
+  for (const char* p = text; *p; ++p) {
+    if (*p == '\n') {
+      hasNewline = true;
+      break;
+    }
+  }
+  if (!hasNewline) {
+    return renderer.wrappedText(fontId, text, maxWidth, maxLines);
+  }
+
+  // Slow path: split on \n and word-wrap each segment
+  const char* segStart = text;
+  const char* p = text;
+  while (*p && static_cast<int>(result.size()) < maxLines) {
+    if (*p == '\n') {
+      // Handle \r\n: adjust end to exclude preceding \r
+      const char* segEnd = (p > segStart && *(p - 1) == '\r') ? p - 1 : p;
+      size_t segLen = segEnd - segStart;
+      if (segLen == 0) {
+        result.emplace_back();  // empty line marker
+      } else {
+        std::string segment(segStart, segLen);
+        auto wrapped =
+            renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
+        for (auto& line : wrapped) {
+          result.push_back(std::move(line));
+          if (static_cast<int>(result.size()) >= maxLines) break;
+        }
+      }
+      segStart = p + 1;  // skip past \n
+    }
+    ++p;
+  }
+
+  // Trailing segment after the last \n (or whole text if no \n ended the loop)
+  if (segStart < p && static_cast<int>(result.size()) < maxLines) {
+    size_t segLen = p - segStart;
+    std::string segment(segStart, segLen);
+    auto wrapped = renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
+    for (auto& line : wrapped) {
+      result.push_back(std::move(line));
+    }
+  }
+
+  return result;
+}
+
+uint16_t BaseTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
+                                         const char* meta, bool useReaderFontSettings) const {
   constexpr int maxLines = 100;
-  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(UI_10_FONT_ID);
+  const int bodyLineH = renderer.getLineHeight(bodyFontId);
   const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
   const int maxTextWidth = rect.width - 2 * BaseMetrics::values.contentSidePadding;
 
   uint16_t height = 0;
   if (sender && sender[0]) {
-    height += lineH;
+    height += bodyLineH;
   }
   if (text && text[0]) {
-    auto lines = renderer.wrappedText(UI_10_FONT_ID, text, maxTextWidth, maxLines);
-    height += static_cast<uint16_t>(lines.size()) * lineH;
+    auto lines = wrapMessageBody(renderer, bodyFontId, text, maxTextWidth, maxLines);
+    height += static_cast<uint16_t>(lines.size()) * bodyLineH;
   }
   if (meta && meta[0]) {
     height += smallLineH;
@@ -352,14 +408,14 @@ uint16_t BaseTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect,
   return height;
 }
 
-void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages,
-                             const uint16_t* msgHeights, uint16_t totalPixels, uint16_t scrollOffsetPx,
-                             const std::function<std::string(int)>& sender,
-                             const std::function<std::string(int)>& text,
-                             const std::function<std::string(int)>& meta,
-                             const std::function<bool(int)>& isOutgoing) const {
+void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
+                             uint16_t totalPixels, uint16_t scrollOffsetPx,
+                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
+                             const std::function<std::string(int)>& meta, const std::function<bool(int)>& isOutgoing,
+                             bool useReaderFontSettings) const {
   constexpr int maxLines = 100;
-  const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(UI_10_FONT_ID);
+  const int bodyLineH = renderer.getLineHeight(bodyFontId);
   const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
   const int maxTextWidth = rect.width - 2 * BaseMetrics::values.contentSidePadding;
 
@@ -369,7 +425,8 @@ void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMe
     const int thumbH = std::max(10, trackH * trackH / totalPixels);
     const int maxTravel = std::max(1, totalPixels - trackH);
     const int thumbY = rect.y + (trackH - thumbH) * scrollOffsetPx / maxTravel;
-    const int barX = rect.x + rect.width - BaseMetrics::values.scrollBarRightOffset - BaseMetrics::values.scrollBarWidth;
+    const int barX =
+        rect.x + rect.width - BaseMetrics::values.scrollBarRightOffset - BaseMetrics::values.scrollBarWidth;
     renderer.fillRect(barX, thumbY, BaseMetrics::values.scrollBarWidth, thumbH, true);
   }
 
@@ -388,8 +445,10 @@ void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMe
 
   int y = rect.y + 4 - partialOffset;
 
+  bool rendered = false;
   for (int i = startIdx; i < totalMessages; ++i) {
     if (y > rect.y + rect.height) break;
+    rendered = true;
 
     const bool outgoing = isOutgoing(i);
     std::string senderStr = sender(i);
@@ -400,33 +459,38 @@ void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMe
     if (!senderStr.empty()) {
       int senderX;
       if (outgoing) {
-        int senderW = renderer.getTextWidth(UI_10_FONT_ID, senderStr.c_str(), EpdFontFamily::BOLD);
+        int senderW = renderer.getTextWidth(bodyFontId, senderStr.c_str());
         senderX = rect.x + rect.width - BaseMetrics::values.contentSidePadding - senderW;
       } else {
         senderX = rect.x + BaseMetrics::values.contentSidePadding;
       }
-      renderer.drawText(UI_10_FONT_ID, senderX, y, senderStr.c_str(), true, EpdFontFamily::BOLD);
-      if (!outgoing) {
-        int sw = renderer.getTextWidth(UI_10_FONT_ID, senderStr.c_str(), EpdFontFamily::BOLD);
-        for (int py = y; py < y + lineH; py++)
+      renderer.drawText(bodyFontId, senderX, y, senderStr.c_str(), true);
+      if (!outgoing && y >= rect.y) {
+        int sw = renderer.getTextWidth(bodyFontId, senderStr.c_str());
+        for (int py = y; py < y + bodyLineH; py++)
           for (int px = senderX; px < senderX + sw; px++)
             if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
       }
-      y += lineH;
+      y += bodyLineH;
     }
 
     // Text body
     if (!textStr.empty()) {
-      auto lines = renderer.wrappedText(UI_10_FONT_ID, textStr.c_str(), maxTextWidth, maxLines);
+      auto lines = wrapMessageBody(renderer, bodyFontId, textStr.c_str(), maxTextWidth, maxLines);
       for (const auto& line : lines) {
         if (y > rect.y + rect.height) break;
-        if (outgoing) {
-          int textW = renderer.getTextWidth(UI_10_FONT_ID, line.c_str());
-          renderer.drawText(UI_10_FONT_ID, rect.x + rect.width - BaseMetrics::values.contentSidePadding - textW, y, line.c_str(), true);
-        } else {
-          renderer.drawText(UI_10_FONT_ID, rect.x + BaseMetrics::values.contentSidePadding, y, line.c_str(), true);
+        if (line.empty()) {
+          y += bodyLineH;  // blank line from empty segment
+          continue;
         }
-        y += lineH;
+        if (outgoing) {
+          int textW = renderer.getTextWidth(bodyFontId, line.c_str());
+          renderer.drawText(bodyFontId, rect.x + rect.width - BaseMetrics::values.contentSidePadding - textW, y,
+                            line.c_str(), true);
+        } else {
+          renderer.drawText(bodyFontId, rect.x + BaseMetrics::values.contentSidePadding, y, line.c_str(), true);
+        }
+        y += bodyLineH;
       }
     }
 
@@ -441,7 +505,7 @@ void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMe
         metaX = rect.x + BaseMetrics::values.contentSidePadding;
       }
       renderer.drawText(SMALL_FONT_ID, metaX, y, metaStr.c_str(), true);
-      {
+      if (y >= rect.y) {
         int mw = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
         for (int py = y; py < y + smallLineH; py++)
           for (int px = metaX; px < metaX + mw; px++)
@@ -457,14 +521,16 @@ void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMe
   }
 
   // Clear areas above and below the content rect — messages may overflow bounds
-  const int screenW = renderer.getScreenWidth();
-  const int screenH = renderer.getScreenHeight();
-  if (rect.y > 0) {
-    renderer.fillRect(0, 0, screenW, rect.y, false);
-  }
-  const int belowY = rect.y + rect.height;
-  if (belowY < screenH) {
-    renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
+  if (rendered) {
+    const int screenW = renderer.getScreenWidth();
+    const int screenH = renderer.getScreenHeight();
+    if (rect.y > 0) {
+      renderer.fillRect(0, 0, screenW, rect.y, false);
+    }
+    const int belowY = rect.y + rect.height;
+    if (belowY < screenH) {
+      renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
+    }
   }
 }
 

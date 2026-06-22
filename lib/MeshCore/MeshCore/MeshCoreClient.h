@@ -153,9 +153,12 @@ class MeshCoreClient {
   // Notification receive ring-buffer.
   // Multiple BLE notifications can arrive during e-ink refresh (100-200 ms);
   // a single-slot buffer would silently overwrite earlier entries.
-  // 8 slots × 256 bytes = 2 KB — sufficient to hold a full contact list burst.
+  // After init, the device can burst out a full contact list (one PKT_CONTACT
+  // per contact) plus channels and messages before poll() drains them.
+  // 32 slots × 256 bytes = 8 KB — handles realistic contact list bursts
+  // (tested device sent 15+ packets before the next poll() call).
   static constexpr size_t RX_BUF_SIZE = 256;
-  static constexpr uint8_t RX_QUEUE_SIZE = 8;
+  static constexpr uint8_t RX_QUEUE_SIZE = 32;
   struct RxEntry {
     uint8_t data[RX_BUF_SIZE];
     uint16_t len;

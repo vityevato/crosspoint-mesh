@@ -218,19 +218,27 @@ class BaseTheme {
                                const char* secondaryLabel = nullptr, KeyboardKeyType keyType = KeyboardKeyType::Normal,
                                bool inactiveSelection = false) const;
   virtual uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
-                                        const char* meta) const;
+                                        const char* meta, bool useReaderFontSettings = false) const;
   /// Draw a scrollable list of messages within @p rect.
   ///
   /// After drawing the messages, also clears (fills white) the areas above
   /// and below @p rect — the messages loop may overflow the content bounds
   /// and this ensures no stray pixels remain outside the intended area.
+  /// @param useReaderFontSettings If true, use SETTINGS.getReaderFontId() for message body text.
   virtual void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
                             uint16_t totalPixels, uint16_t scrollOffsetPx,
                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
-                            const std::function<std::string(int)>& meta,
-                            const std::function<bool(int)>& isOutgoing) const;
+                            const std::function<std::string(int)>& meta, const std::function<bool(int)>& isOutgoing,
+                            bool useReaderFontSettings = false) const;
   virtual bool showsFileIcons() const { return false; }
 
+ protected:
+  /// Word-wrap message body text, respecting \n as hard line breaks.
+  /// Normalizes \r\n → \n. Preserves empty lines from consecutive newlines.
+  static std::vector<std::string> wrapMessageBody(const GfxRenderer& renderer, int fontId, const char* text,
+                                                  int maxWidth, int maxLines);
+
+ public:
   // Shared constants and helpers for battery drawing (used by all themes)
   static constexpr int batteryPercentSpacing = 4;
   static void drawBatteryOutline(const GfxRenderer& renderer, int x, int y, int battWidth, int rectHeight);

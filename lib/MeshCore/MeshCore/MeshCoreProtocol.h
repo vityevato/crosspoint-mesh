@@ -45,6 +45,38 @@ static constexpr uint8_t PKT_NEW_ADVERT = 0x8A;  // PUSH_CODE_NEW_ADVERT: full c
 // Command timeout
 static constexpr uint32_t CMD_TIMEOUT_MS = 5000;
 
+// --- Wire ↔ internal type conversion ---
+// MeshCore firmware uses: 1=CLIENT, 2=REPEATER, 3=ROOM, 4=SENSOR on the wire.
+// Our MeshNodeType enum uses: 0=COMPANION, 1=REPEATER, 2=ROOM_SERVER, 3=SENSOR.
+inline uint8_t nodeTypeToWire(MeshNodeType t) {
+  switch (t) {
+    case MeshNodeType::COMPANION:
+      return 1;  // CLIENT
+    case MeshNodeType::REPEATER:
+      return 2;
+    case MeshNodeType::ROOM_SERVER:
+      return 3;  // ROOM
+    case MeshNodeType::SENSOR:
+      return 4;
+    default:
+      return 0;
+  }
+}
+inline MeshNodeType nodeTypeFromWire(uint8_t wire) {
+  switch (wire) {
+    case 1:
+      return MeshNodeType::COMPANION;  // CLIENT
+    case 2:
+      return MeshNodeType::REPEATER;
+    case 3:
+      return MeshNodeType::ROOM_SERVER;  // ROOM
+    case 4:
+      return MeshNodeType::SENSOR;
+    default:
+      return MeshNodeType::UNKNOWN;
+  }
+}
+
 // --- Command builders ---
 // All return the number of bytes written to `out`.
 

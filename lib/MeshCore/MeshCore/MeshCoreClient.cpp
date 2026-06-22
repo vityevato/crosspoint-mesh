@@ -347,6 +347,15 @@ void MeshCoreClient::disconnect() {
     }
     NimBLEDevice::deleteClient(bleClient);
     bleClient = nullptr;
+
+    // NimBLEDevice::deleteClient() defers deletion when the client is in
+    // CONNECTED/DISCONNECTING state (sets deleteOnDisconnect flag, returns
+    // without nulling the m_pClients slot).  Yield long enough for the
+    // NimBLE host task to process the disconnect event and complete the
+    // deferred delete, freeing the slot.  Without this, the next
+    // deinit(true) stops the host before the slot is cleared, and
+    // createClient() fails permanently (NIMBLE_MAX_CONNECTIONS=1).
+    vTaskDelay(pdMS_TO_TICKS(500));
   }
   rxChar = nullptr;
   txChar = nullptr;
@@ -806,6 +815,12 @@ bool MeshCoreClient::runInitSequence() {
     pinCb(companion.blePin, pinCbCtx);
   }
 
+  // Release the ring-buffer to poll() BEFORE queuing commands that will
+  // generate bursts of responses (contacts, channels, messages).
+  // Otherwise notifyCallback fills the ring-buffer while poll() is blocked,
+  // and packets are dropped before they can be consumed.
+  inInitSequence = false;
+
   // Queue battery FIRST so it doesn't get stuck behind slow channel requests.
   // Battery data updates the header subtitle on every screen.
   if (!requestBattery()) {
@@ -821,7 +836,6 @@ bool MeshCoreClient::runInitSequence() {
   // Also request pending messages
   requestMessages();
 
-  inInitSequence = false;
   return true;
 }
 

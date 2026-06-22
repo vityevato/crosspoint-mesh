@@ -466,7 +466,9 @@ class NimBLERemoteCharacteristic {
     buf[off++] = 0x03;  // PKT_CONTACT
     hexToBytes(c.publicKey, buf + off, 32);
     off += 32;
-    buf[off++] = c.type;        // type
+    // MockContact.type is 0-based (0=COMPANION, 1=REPEATER, 2=ROOM_SERVER).
+    // MeshCore wire protocol uses 1-based (1=CLIENT, 2=REPEATER, 3=ROOM).
+    buf[off++] = c.type + 1;    // type (0-based → wire)
     buf[off++] = 0;             // flags
     buf[off++] = c.pathLength;  // out_path_len
     memset(buf + off, 0, 64);   // out_path (64 zero bytes)

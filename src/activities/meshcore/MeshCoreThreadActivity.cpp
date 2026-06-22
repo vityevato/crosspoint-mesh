@@ -10,6 +10,8 @@
 #include <cstring>
 #include <string>
 
+#include "CrossPointSettings.h"
+#include "FontCacheManager.h"
 #include "MeshCoreBatteryPoller.h"
 #include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
@@ -146,7 +148,7 @@ void MeshCoreThreadActivity::recomputeHeights() {
       snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
     }
 
-    msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf);
+    msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf, true);
     totalPixels += msgHeights[i];
   }
 }
@@ -369,7 +371,8 @@ void MeshCoreThreadActivity::loop() {
         meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
         snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
       }
-      msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf);
+      msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf,
+                                               false);  // FIXME: test crash — was true
       totalPixels += msgHeights[i];
     }
 
@@ -699,7 +702,8 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
             [this](int i) -> bool {
               if (i < 0 || i >= totalMessages) return false;
               return messages[i].direction == MsgDirection::SENT;
-            });
+            },
+            /*useReaderFontSettings*/ true);
       }
       break;
     case Tab::MENU:

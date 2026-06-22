@@ -102,8 +102,8 @@ class MeshCoreThreadActivity final : public Activity {
   /// Result of resolving scrollOffsetPx into the first visible message index.
   struct VisibleState {
     int startIdx;       ///< First message with any part visible
-    uint16_t acc;        ///< Sum of msgHeights[0..startIdx-1]
-    int partialOffset;    ///< Pixels of startIdx scrolled off the top
+    uint16_t acc;       ///< Sum of msgHeights[0..startIdx-1]
+    int partialOffset;  ///< Pixels of startIdx scrolled off the top
   };
   [[nodiscard]] VisibleState getVisibleState() const;
   void switchTab(Tab tab);

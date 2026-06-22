@@ -142,10 +142,10 @@ size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact&
   out[off++] = CMD_ADD_UPDATE_CONTACT;
   memcpy(out + off, contact.publicKey, 32);
   off += 32;
-  out[off++] = static_cast<uint8_t>(contact.type);
-  out[off++] = contact.isSaved ? 1 : 0;  // flags (bit 0 = saved)
-  out[off++] = contact.pathLength;       // out_path_len (may be 0)
-  memset(out + off, 0, 64);              // out_path — not tracked locally
+  out[off++] = nodeTypeToWire(contact.type);  // internal enum → wire (1=CLIENT, 2=REPEATER, …)
+  out[off++] = contact.isSaved ? 1 : 0;       // flags (bit 0 = saved)
+  out[off++] = contact.pathLength;            // out_path_len (may be 0)
+  memset(out + off, 0, 64);                   // out_path — not tracked locally
   off += 64;
   // Name: up to 31 chars + null
   size_t nameLen = strlen(contact.name);
@@ -319,20 +319,8 @@ bool parseContact(const uint8_t* data, size_t len, MeshCoreContact& out) {
 
   memcpy(&out.lastSeen, data + off, 4);
 
-  switch (nodeType) {
-    case 0:
-      out.type = MeshNodeType::COMPANION;
-      break;
-    case 1:
-      out.type = MeshNodeType::REPEATER;
-      break;
-    case 2:
-      out.type = MeshNodeType::ROOM_SERVER;
-      break;
-    default:
-      out.type = MeshNodeType::UNKNOWN;
-      break;
-  }
+  // MeshCore firmware wire types: 1=CLIENT, 2=REPEATER, 3=ROOM, 4=SENSOR.
+  out.type = nodeTypeFromWire(nodeType);
 
   return true;
 }

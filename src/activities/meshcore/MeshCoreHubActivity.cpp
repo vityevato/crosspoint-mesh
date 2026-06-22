@@ -24,6 +24,8 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+#include "FontCacheManager.h"
+
 #ifdef SIMULATOR
 #include <MeshCoreMockHotkeys.h>
 #include <MockSession.h>
@@ -124,6 +126,28 @@ void MeshCoreHubActivity::onEnter() {
   // Wire up the toast overlay: status messages override the standard subtitle
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
+
+  // Prewarm reader font with character set of the selected UI language
+  // while heap is clean — before BLE/mesh operations fragment it.
+  // Includes Latin + digits for mesh messages from any language.
+  {
+    auto* fcm = renderer.getFontCacheManager();
+    if (fcm) {
+      const char* langChars = I18N.getCharacterSet(I18N.getLanguage());
+      std::string prewarmText;
+      prewarmText.reserve(256);
+      prewarmText = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      if (langChars && langChars[0]) {
+        prewarmText += ' ';
+        prewarmText += langChars;
+      }
+      LOG_DBG("MSG", "Hub prewarm: lang=%d chars=%d", (int)I18N.getLanguage(), (int)prewarmText.size());
+      int readerFontId = SETTINGS.getReaderFontId();
+      fcm->clearCache();
+      fcm->prewarmCache(readerFontId, prewarmText.c_str(),
+                        1 << static_cast<uint8_t>(EpdFontFamily::REGULAR));
+    }
+  }
 
   // Auto-reconnect to known companion address
   if (addr[0] != '\0') {
@@ -586,14 +610,19 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
 
 void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
   if (isEnd) {
-    LOG_DBG("MESH", "Contact list complete");
+    LOG_DBG("MESH", "Contact list end (%d total)", savedContactCount);
     requestUpdate();
     return;
   }
   // PKT_CONTACT_START sends an empty contact — skip it
-  if (c.name[0] == '\0' && c.publicKey[0] == 0) return;
+  if (c.name[0] == '\0' && c.publicKey[0] == 0) {
+    LOG_DBG("MESH", "Contact list start (sentinel)");
+    return;
+  }
 
-  // Only show clients (COMPANION), not repeaters or sensors
+  LOG_DBG("MESH", "Contact: %s type=%d saved=%d", c.name, (int)c.type, c.isSaved);
+
+  // Only show MeshCore clients (companion apps), not repeaters or room servers
   if (c.type != MeshNodeType::COMPANION) return;
 
   if (c.isSaved) {
