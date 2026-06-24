@@ -15,6 +15,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "utils/MeshCoreHeapLog.h"
 
 MeshCoreScanActivity::MeshCoreScanActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                            MeshCoreClient& client)
@@ -22,6 +23,7 @@ MeshCoreScanActivity::MeshCoreScanActivity(GfxRenderer& renderer, MappedInputMan
 
 void MeshCoreScanActivity::onEnter() {
   Activity::onEnter();
+  MESHCORE_LOG_HEAP("Scan onEnter:start");
 
   // Check heap
   if (ESP.getFreeHeap() < 30000) {
@@ -246,5 +248,6 @@ void MeshCoreScanActivity::render(RenderLock&&) {
 
 void MeshCoreScanActivity::onExit() {
   // BLE lifecycle is owned by MeshCoreHubActivity.
+  MESHCORE_LOG_HEAP("Scan onExit");
   Activity::onExit();
 }

@@ -441,4 +441,52 @@ bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]) {
   return true;
 }
 
+bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, uint8_t maxHashes, uint8_t& outHashCount,
+                         uint32_t& outPayloadHash) {
+  outHashCount = 0;
+  outPayloadHash = 0;
+
+  // 0x88 LOG_RX_DATA frame: [0x88][snr*4:int8][rssi:int8][raw LoRa packet...]
+  if (len < 3 + 2 || frame[0] != PUSH_LOG_RX_DATA) return false;
+  const uint8_t* pkt = frame + 3;
+  size_t pktLen = len - 3;
+
+  // Raw packet header: route(2 bits) | type(4 bits) | version(2 bits)
+  size_t off = 0;
+  uint8_t header = pkt[off++];
+  uint8_t route = header & RAW_ROUTE_MASK;
+  uint8_t ptype = (header >> RAW_PTYPE_SHIFT) & RAW_PTYPE_MASK;
+  if (ptype != RAW_PAYLOAD_GRP_TXT) return false;  // only channel/group text messages
+
+  // Transport-coded routes carry two uint16 transport codes before the path.
+  if (route == RAW_ROUTE_TRANSPORT_FLOOD || route == RAW_ROUTE_TRANSPORT_DIRECT) {
+    off += 4;
+  }
+  if (off >= pktLen) return false;
+
+  uint8_t pathLen = pkt[off++];
+  uint8_t hashSize = (pathLen >> 6) + 1;  // top 2 bits: 1..4 byte hashes
+  uint8_t hashCount = pathLen & 0x3F;     // bottom 6 bits: hop count
+  size_t pathBytes = static_cast<size_t>(hashCount) * hashSize;
+  if (off + pathBytes > pktLen) return false;
+
+  // Each path element identifies a forwarding repeater by its routing hash
+  // (first byte of the element, which is the first byte of its public key).
+  for (uint8_t i = 0; i < hashCount && outHashCount < maxHashes; ++i) {
+    outHashes[outHashCount++] = pkt[off + static_cast<size_t>(i) * hashSize];
+  }
+  off += pathBytes;
+
+  // FNV-1a hash of the (encrypted) payload — identical across every re-flood of
+  // the same message, so it lets the caller correlate copies of one message.
+  uint32_t h = 2166136261u;
+  for (size_t i = off; i < pktLen; ++i) {
+    h ^= pkt[i];
+    h *= 16777619u;
+  }
+  // Avoid colliding with the "unlocked" sentinel value of 0.
+  outPayloadHash = h ? h : 1u;
+  return true;
+}
+
 }  // namespace MeshProto

@@ -8,6 +8,7 @@
 #endif
 
 #include <cstring>
+#include <iterator>
 #include <string>
 
 #include "CrossPointSettings.h"
@@ -19,6 +20,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "utils/MeshCoreDisplayUtils.h"
+#include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreTimeUtils.h"
 
 // Channel thread constructor
@@ -44,10 +46,12 @@ MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInpu
 
 void MeshCoreThreadActivity::onEnter() {
   Activity::onEnter();
+  MESHCORE_LOG_HEAP("Thread onEnter:start");
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
   contentWidth = renderer.getScreenWidth();
   loadPage();
+  MESHCORE_LOG_HEAP("Thread onEnter:after loadPage");
 
   // Restore saved scroll position from last session
   if (totalMessages > 0) {
@@ -74,6 +78,7 @@ void MeshCoreThreadActivity::onEnter() {
 }
 
 void MeshCoreThreadActivity::onExit() {
+  MESHCORE_LOG_HEAP("Thread onExit");
   uint32_t id = firstVisibleGlobalId();
   if (id > 0) {
     if (isChannel) {
@@ -148,7 +153,7 @@ void MeshCoreThreadActivity::recomputeHeights() {
       snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
     }
 
-    msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf, true);
+    msgHeights[i] = measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf, false);
     totalPixels += msgHeights[i];
   }
 }
@@ -371,8 +376,7 @@ void MeshCoreThreadActivity::loop() {
         meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
         snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
       }
-      msgHeights[i] = GUI.measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf,
-                                               false);  // FIXME: test crash — was true
+      msgHeights[i] = measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, metaBuf, true);
       totalPixels += msgHeights[i];
     }
 
@@ -665,45 +669,22 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
       if (messages.empty()) {
         GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_NO_MESSAGES));
       } else {
-        GUI.drawMessages(
-            renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
-            /*sender*/
-            [this](int i) -> std::string {
-              if (i < 0 || i >= totalMessages) return {};
-              if (messages[i].direction == MsgDirection::SENT || !isChannel) {
-                return "";
-              }
-              char buf[64];
-              snprintf(buf, sizeof(buf), "%s", messages[i].senderName[0] ? messages[i].senderName : "Unknown");
-              return buf;
-            },
-            /*text*/
-            [this](int i) -> std::string {
-              if (i < 0 || i >= totalMessages) return {};
-              return messages[i].text;
-            },
-            /*meta*/
-            [this](int i) -> std::string {
-              if (i < 0 || i >= totalMessages) return {};
-              char buf[64];
-              uint32_t ts = messages[i].timestamp;
-              if (ts > 0) {
-                char tsBuf[16];
-                formatMeshCoreTimestamp(ts, tsBuf, sizeof(tsBuf));
-                char hopBuf[12];
-                meshcore::formatMeshCoreHopCount(messages[i].pathLength, hopBuf, sizeof(hopBuf));
-                snprintf(buf, sizeof(buf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
-              } else {
-                buf[0] = '\0';
-              }
-              return buf;
-            },
-            /*isOutgoing*/
-            [this](int i) -> bool {
-              if (i < 0 || i >= totalMessages) return false;
-              return messages[i].direction == MsgDirection::SENT;
-            },
-            /*useReaderFontSettings*/ true);
+        // Two-pass font prewarming: scan → prewarm → render
+        auto* fcm = renderer.getFontCacheManager();
+        bool useReaderFontSettings = true;
+        if (fcm) {
+          MESHCORE_LOG_HEAP("Thread prewarm:before");
+          auto scope = fcm->createPrewarmScope();
+          drawMessages(renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
+                       useReaderFontSettings, /*scanOnly=*/true);
+          scope.endScanAndPrewarm();
+          MESHCORE_LOG_HEAP("Thread prewarm:after");
+          drawMessages(renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
+                       useReaderFontSettings);
+        } else {
+          drawMessages(renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
+                       useReaderFontSettings);
+        }
       }
       break;
     case Tab::MENU:
@@ -801,4 +782,262 @@ void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
           return (index == 1);
         });
   }
+}
+
+// --- Message rendering (moved from theme to activity) ---
+
+uint16_t MeshCoreThreadActivity::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender,
+                                                      const char* text, const char* meta,
+                                                      bool useReaderFontSettings) const {
+  constexpr int maxLines = 100;
+  const auto& m = UITheme::getInstance().getMetrics();
+  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
+  const int bodyLineH = renderer.getLineHeight(bodyFontId);
+  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
+  const int maxTextWidth = rect.width - 2 * m.contentSidePadding;
+
+  uint16_t height = 0;
+  if (sender && sender[0]) {
+    height += bodyLineH;
+  }
+  if (text && text[0]) {
+    auto lines = wrapMessageBody(renderer, bodyFontId, text, maxTextWidth, maxLines);
+    height += static_cast<uint16_t>(lines.size()) * bodyLineH;
+  }
+  if (meta && meta[0]) {
+    height += smallLineH;
+  }
+  height += m.verticalSpacing;
+  return height;
+}
+
+std::string MeshCoreThreadActivity::messageSenderLabel(int i) const {
+  if (i < 0 || i >= totalMessages) return {};
+  if (messages[i].direction == MsgDirection::SENT || !isChannel) {
+    return "";
+  }
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%s", messages[i].senderName[0] ? messages[i].senderName : "Unknown");
+  return buf;
+}
+
+std::string MeshCoreThreadActivity::messageBody(int i) const {
+  if (i < 0 || i >= totalMessages) return {};
+  return messages[i].text;
+}
+
+std::string MeshCoreThreadActivity::messageMeta(int i) const {
+  if (i < 0 || i >= totalMessages) return {};
+  char buf[64];
+  uint32_t ts = messages[i].timestamp;
+  if (ts > 0) {
+    char tsBuf[16];
+    formatMeshCoreTimestamp(ts, tsBuf, sizeof(tsBuf));
+    char hopBuf[12];
+    meshcore::formatMeshCoreHopCount(messages[i].pathLength, hopBuf, sizeof(hopBuf));
+    snprintf(buf, sizeof(buf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
+  } else {
+    buf[0] = '\0';
+  }
+  return buf;
+}
+
+bool MeshCoreThreadActivity::messageOutgoing(int i) const {
+  if (i < 0 || i >= totalMessages) return false;
+  return messages[i].direction == MsgDirection::SENT;
+}
+
+void MeshCoreThreadActivity::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages,
+                                          const uint16_t* msgHeights, uint16_t totalPixels, uint16_t scrollOffsetPx,
+                                          bool useReaderFontSettings, bool scanOnly) const {
+  constexpr int maxLines = 100;
+  const auto& m = UITheme::getInstance().getMetrics();
+  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
+  const int smallFontId = SMALL_FONT_ID;
+  const int bodyLineH = renderer.getLineHeight(bodyFontId);
+  const int smallLineH = renderer.getLineHeight(smallFontId);
+  const int maxTextWidth = rect.width - 2 * m.contentSidePadding;
+
+  // Find first message to render based on scrollOffsetPx
+  int startIdx = 0;
+  uint16_t acc = 0;
+  while (startIdx < totalMessages && acc + msgHeights[startIdx] <= scrollOffsetPx) {
+    acc += msgHeights[startIdx];
+    startIdx++;
+  }
+  if (startIdx >= totalMessages) {
+    startIdx = totalMessages - 1;
+    acc = totalPixels - msgHeights[startIdx];
+  }
+  int partialOffset = scrollOffsetPx - acc;
+
+  // ── Scan-only pass: collect text for font prewarming, draw nothing ──
+  if (scanOnly) {
+    int y = rect.y + 4 - partialOffset;
+    for (int i = startIdx; i < totalMessages; ++i) {
+      if (y > rect.y + rect.height) break;
+      y += msgHeights[i];
+
+      std::string senderStr = messageSenderLabel(i);
+      if (!senderStr.empty()) {
+        renderer.drawText(bodyFontId, 0, 0, senderStr.c_str(), true);
+      }
+
+      std::string textStr = messageBody(i);
+      if (!textStr.empty()) {
+        // Pass full body text — line wrapping is unnecessary for glyph collection
+        renderer.drawText(bodyFontId, 0, 0, textStr.c_str(), true);
+      }
+
+      std::string metaStr = messageMeta(i);
+      if (!metaStr.empty()) {
+        renderer.drawText(smallFontId, 0, 0, metaStr.c_str(), true);
+      }
+    }
+    return;
+  }
+
+  GUI.drawScrollBar(renderer, rect, totalPixels, scrollOffsetPx);
+
+  int y = rect.y + 4 - partialOffset;
+
+  bool rendered = false;
+  for (int i = startIdx; i < totalMessages; ++i) {
+    if (y > rect.y + rect.height) break;
+    rendered = true;
+
+    const bool outgoing = messageOutgoing(i);
+    std::string senderStr = messageSenderLabel(i);
+    std::string textStr = messageBody(i);
+    std::string metaStr = messageMeta(i);
+
+    // Sender line
+    if (!senderStr.empty()) {
+      int senderX;
+      if (outgoing) {
+        int senderW = renderer.getTextWidth(bodyFontId, senderStr.c_str());
+        senderX = rect.x + rect.width - m.contentSidePadding - senderW;
+      } else {
+        senderX = rect.x + m.contentSidePadding;
+      }
+      renderer.drawText(bodyFontId, senderX, y, senderStr.c_str(), true);
+      if (!outgoing && y >= rect.y) {
+        int sw = renderer.getTextWidth(bodyFontId, senderStr.c_str());
+        for (int py = y; py < y + bodyLineH; py++)
+          for (int px = senderX; px < senderX + sw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += bodyLineH;
+    }
+
+    // Text body
+    if (!textStr.empty()) {
+      auto lines = wrapMessageBody(renderer, bodyFontId, textStr.c_str(), maxTextWidth, maxLines);
+      for (const auto& line : lines) {
+        if (y > rect.y + rect.height) break;
+        if (line.empty()) {
+          y += bodyLineH;  // blank line from empty segment
+          continue;
+        }
+        if (outgoing) {
+          int textW = renderer.getTextWidth(bodyFontId, line.c_str());
+          renderer.drawText(bodyFontId, rect.x + rect.width - m.contentSidePadding - textW, y, line.c_str(), true);
+        } else {
+          renderer.drawText(bodyFontId, rect.x + m.contentSidePadding, y, line.c_str(), true);
+        }
+        y += bodyLineH;
+      }
+    }
+
+    // Meta line
+    if (!metaStr.empty()) {
+      if (y > rect.y + rect.height) break;
+      int metaX;
+      if (outgoing) {
+        int metaW = renderer.getTextWidth(smallFontId, metaStr.c_str());
+        metaX = rect.x + rect.width - m.contentSidePadding - metaW;
+      } else {
+        metaX = rect.x + m.contentSidePadding;
+      }
+      renderer.drawText(smallFontId, metaX, y, metaStr.c_str(), true);
+      if (y >= rect.y) {
+        int mw = renderer.getTextWidth(smallFontId, metaStr.c_str());
+        for (int py = y; py < y + smallLineH; py++)
+          for (int px = metaX; px < metaX + mw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
+      y += smallLineH;
+    }
+
+    // Spacing between message blocks
+    if (y < rect.y + rect.height) {
+      y += m.verticalSpacing;
+    }
+  }
+
+  // Clear areas above and below the content rect — messages may overflow bounds
+  if (rendered) {
+    const int screenW = renderer.getScreenWidth();
+    const int screenH = renderer.getScreenHeight();
+    if (rect.y > 0) {
+      renderer.fillRect(0, 0, screenW, rect.y, false);
+    }
+    const int belowY = rect.y + rect.height;
+    if (belowY < screenH) {
+      renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
+    }
+  }
+}
+
+// --- Word-wrap helper (moved from BaseTheme) ---
+
+std::vector<std::string> MeshCoreThreadActivity::wrapMessageBody(const GfxRenderer& renderer, int fontId,
+                                                                 const char* text, int maxWidth, int maxLines) {
+  std::vector<std::string> result;
+  if (!text || !*text) return result;
+
+  // Fast path: no newlines → delegate directly to wrappedText (no extra copy)
+  bool hasNewline = false;
+  for (const char* p = text; *p; ++p) {
+    if (*p == '\n') {
+      hasNewline = true;
+      break;
+    }
+  }
+  if (!hasNewline) {
+    return renderer.wrappedText(fontId, text, maxWidth, maxLines);
+  }
+
+  // Slow path: split on \n and word-wrap each segment
+  const char* segStart = text;
+  const char* p = text;
+  while (*p && static_cast<int>(result.size()) < maxLines) {
+    if (*p == '\n') {
+      // Handle \r\n: adjust end to exclude preceding \r
+      const char* segEnd = (p > segStart && *(p - 1) == '\r') ? p - 1 : p;
+      size_t segLen = segEnd - segStart;
+      if (segLen == 0) {
+        result.emplace_back();  // empty line marker
+      } else {
+        std::string segment(segStart, segLen);
+        auto wrapped =
+            renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
+        auto n = std::min(wrapped.size(), static_cast<size_t>(std::max(0, maxLines - static_cast<int>(result.size()))));
+        result.insert(result.end(), std::make_move_iterator(wrapped.begin()),
+                      std::make_move_iterator(wrapped.begin() + n));
+      }
+      segStart = p + 1;  // skip past \n
+    }
+    ++p;
+  }
+
+  // Trailing segment after the last \n (or whole text if no \n ended the loop)
+  if (segStart < p && static_cast<int>(result.size()) < maxLines) {
+    size_t segLen = p - segStart;
+    std::string segment(segStart, segLen);
+    auto wrapped = renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
+    result.insert(result.end(), std::make_move_iterator(wrapped.begin()), std::make_move_iterator(wrapped.end()));
+  }
+
+  return result;
 }

@@ -95,12 +95,8 @@ class LyraTheme : public BaseTheme {
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;
-  uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
-                                const char* meta, bool useReaderFontSettings = false) const override;
-  void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
-                    uint16_t totalPixels, uint16_t scrollOffsetPx, const std::function<std::string(int)>& sender,
-                    const std::function<std::string(int)>& text, const std::function<std::string(int)>& meta,
-                    const std::function<bool(int)>& isOutgoing, bool useReaderFontSettings = false) const override;
+  void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
+                     uint16_t scrollOffsetPx) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   bool showsFileIcons() const override { return true; }
 };

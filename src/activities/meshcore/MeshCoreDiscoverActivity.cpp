@@ -14,6 +14,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "utils/MeshCoreDisplayUtils.h"
+#include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreTimeUtils.h"
 
 MeshCoreDiscoverActivity::MeshCoreDiscoverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -34,12 +35,16 @@ void MeshCoreDiscoverActivity::provideSubtitle(const void* ctx, char* buf, size_
 
 void MeshCoreDiscoverActivity::onEnter() {
   Activity::onEnter();
+  MESHCORE_LOG_HEAP("Discover onEnter");
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, &client);
   requestUpdate();
 }
 
-void MeshCoreDiscoverActivity::onExit() { Activity::onExit(); }
+void MeshCoreDiscoverActivity::onExit() {
+  MESHCORE_LOG_HEAP("Discover onExit");
+  Activity::onExit();
+}
 
 void MeshCoreDiscoverActivity::loop() {
   client.poll();

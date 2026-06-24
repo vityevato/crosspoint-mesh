@@ -2,8 +2,6 @@
 
 #include <InflateReader.h>
 
-#include <vector>
-
 #include "EpdFontData.h"
 
 class FontDecompressor {
@@ -67,13 +65,29 @@ class FontDecompressor {
 
   // Hot group: last decompressed group (byte-aligned) for non-prewarmed fallback path.
   // Kept in byte-aligned format; individual glyphs are compacted on demand into hotGlyphBuf.
+  // Manually managed via nothrow malloc (not std::vector): under -fno-exceptions a vector
+  // resize() aborts() on allocation failure, which would crash the whole reader when the
+  // large (~34KB) Cyrillic group cannot be allocated on a fragmented heap. A nothrow malloc
+  // lets the fallback path return nullptr (missing glyph) instead. Capacity is retained
+  // across calls so same-size groups reuse the buffer without churn.
   const EpdFontData* hotGroupFont = nullptr;
   uint16_t hotGroupIndex = UINT16_MAX;
-  std::vector<uint8_t> hotGroup;
+  uint8_t* hotGroup = nullptr;
+  uint32_t hotGroupCapacity = 0;
+
+  // Memoizes a hot-group allocation failure. Without it, a single group that cannot be
+  // allocated on the current (e.g. BLE-fragmented) heap makes every glyph in that group
+  // re-attempt the large (~34 KB) malloc and re-emit an error log — hundreds of failing
+  // mallocs + SD-backed writes per frame, stalling the loop ~800 ms and starving BLE
+  // polling. When set, the fallback returns nullptr (missing glyph) immediately. Reset on
+  // every prewarm and on any cache free, so a later, less fragmented heap is retried once.
+  const EpdFontData* hotGroupFailedFont = nullptr;
+  uint16_t hotGroupFailedIndex = UINT16_MAX;
 
   // Scratch buffer for compacting a single glyph from the hot group.
-  // Valid until the next getBitmap() call.
-  std::vector<uint8_t> hotGlyphBuf;
+  // Valid until the next getBitmap() call. Manually managed (see hotGroup rationale).
+  uint8_t* hotGlyphBuf = nullptr;
+  uint32_t hotGlyphBufCapacity = 0;
 
   void freePageBuffer();
   void freeHotGroup();

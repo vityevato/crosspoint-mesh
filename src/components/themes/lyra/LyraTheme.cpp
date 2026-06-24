@@ -220,24 +220,12 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       (rowSubtitle != nullptr) ? LyraMetrics::values.listWithSubtitleRowHeight : LyraMetrics::values.listRowHeight;
   int pageItems = rect.height / rowHeight;
 
-  const int totalPages = (itemCount + pageItems - 1) / pageItems;
-  if (totalPages > 1) {
-    const int scrollAreaHeight = rect.height;
-
-    // Draw scroll bar
-    const int scrollBarHeight = (scrollAreaHeight * pageItems) / itemCount;
-    const int currentPage = selectedIndex / pageItems;
-    const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * currentPage) / (totalPages - 1);
-    const int scrollBarX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
-    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
-    renderer.fillRect(scrollBarX - LyraMetrics::values.scrollBarWidth, scrollBarY, LyraMetrics::values.scrollBarWidth,
-                      scrollBarHeight, true);
-  }
+  drawScrollBar(renderer, rect, itemCount * rowHeight, (selectedIndex / pageItems * pageItems) * rowHeight);
 
   // Draw selection
+  const bool hasScrollBar = (itemCount > pageItems);
   int contentWidth =
-      rect.width -
-      (totalPages > 1 ? (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset) : 1);
+      rect.width - (hasScrollBar ? (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset) : 1);
   if (selectedIndex >= 0) {
     renderer.fillRoundedRect(
         rect.x + LyraMetrics::values.contentSidePadding, rect.y + selectedIndex % pageItems * rowHeight,
@@ -317,158 +305,19 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
-uint16_t LyraTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
-                                         const char* meta, bool useReaderFontSettings) const {
-  constexpr int maxLines = 100;
-  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(UI_10_FONT_ID);
-  const int bodyLineH = renderer.getLineHeight(bodyFontId);
-  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
-  const int maxTextWidth = rect.width - 2 * LyraMetrics::values.contentSidePadding;
+void LyraTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
+                              uint16_t scrollOffsetPx) const {
+  if (totalPixels <= rect.height) return;
 
-  uint16_t height = 0;
-  if (sender && sender[0]) {
-    height += bodyLineH;
-  }
-  if (text && text[0]) {
-    auto lines = wrapMessageBody(renderer, bodyFontId, text, maxTextWidth, maxLines);
-    height += static_cast<uint16_t>(lines.size()) * bodyLineH;
-  }
-  if (meta && meta[0]) {
-    height += smallLineH;
-  }
-  height += LyraMetrics::values.verticalSpacing;
-  return height;
-}
+  const int barW = LyraMetrics::values.scrollBarWidth;
+  const int barX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
+  const int thumbH = std::max(10, (rect.height * rect.height) / totalPixels);
+  const int maxTravel = std::max(1, totalPixels - rect.height);
+  const int clampedOffset = std::clamp(static_cast<int>(scrollOffsetPx), 0, static_cast<int>(maxTravel));
+  const int thumbY = rect.y + (clampedOffset * (rect.height - thumbH)) / maxTravel;
 
-void LyraTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
-                             uint16_t totalPixels, uint16_t scrollOffsetPx,
-                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
-                             const std::function<std::string(int)>& meta, const std::function<bool(int)>& isOutgoing,
-                             bool useReaderFontSettings) const {
-  constexpr int maxLines = 100;
-  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(UI_10_FONT_ID);
-  const int bodyLineH = renderer.getLineHeight(bodyFontId);
-  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
-  const int maxTextWidth = rect.width - 2 * LyraMetrics::values.contentSidePadding;
-
-  LOG_DBG("MSG", "drawMessages: bodyFontId=%d lineH=%d total=%d scroll=%u useReader=%d", bodyFontId, bodyLineH,
-          totalMessages, scrollOffsetPx, (int)useReaderFontSettings);
-
-  // Pixel-perfect scrollbar: track line + filled thumb
-  if (totalPixels > rect.height) {
-    const int trackH = rect.height;
-    const int thumbH = std::max(10, trackH * trackH / totalPixels);
-    const int maxTravel = std::max(1, totalPixels - trackH);
-    const int thumbY = rect.y + (trackH - thumbH) * scrollOffsetPx / maxTravel;
-    const int scrollBarX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
-    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + trackH, true);
-    renderer.fillRect(scrollBarX - LyraMetrics::values.scrollBarWidth, thumbY, LyraMetrics::values.scrollBarWidth,
-                      thumbH, true);
-  }
-
-  // Find first message to render based on scrollOffsetPx
-  int startIdx = 0;
-  uint16_t acc = 0;
-  while (startIdx < totalMessages && acc + msgHeights[startIdx] <= scrollOffsetPx) {
-    acc += msgHeights[startIdx];
-    startIdx++;
-  }
-  if (startIdx >= totalMessages) {
-    startIdx = totalMessages - 1;
-    acc = totalPixels - msgHeights[startIdx];
-  }
-  int partialOffset = scrollOffsetPx - acc;
-
-  int y = rect.y + 4 - partialOffset;
-
-  bool rendered = false;
-  for (int i = startIdx; i < totalMessages; ++i) {
-    if (y > rect.y + rect.height) break;
-    rendered = true;
-
-    const bool outgoing = isOutgoing(i);
-    std::string senderStr = sender(i);
-    std::string textStr = text(i);
-    std::string metaStr = meta(i);
-
-    // Sender line
-    if (!senderStr.empty()) {
-      // int senderX;
-      // if (outgoing) {
-      //   int senderW = renderer.getTextWidth(bodyFontId, senderStr.c_str());
-      //   senderX = rect.x + rect.width - LyraMetrics::values.contentSidePadding - senderW;
-      // } else {
-      //   senderX = rect.x + LyraMetrics::values.contentSidePadding;
-      // }
-      // renderer.drawText(bodyFontId, senderX, y, senderStr.c_str(), true);
-      // if (!outgoing && y >= rect.y) {
-      //   int sw = renderer.getTextWidth(bodyFontId, senderStr.c_str());
-      //   for (int py = y; py < y + bodyLineH; py++)
-      //     for (int px = senderX; px < senderX + sw; px++)
-      //       if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      // }
-      // y += bodyLineH;
-    }
-
-    // Text body
-    if (!textStr.empty()) {
-      auto lines = wrapMessageBody(renderer, bodyFontId, textStr.c_str(), maxTextWidth, maxLines);
-      for (const auto& line : lines) {
-        if (y > rect.y + rect.height) break;
-        if (line.empty()) {
-          y += bodyLineH;  // blank line from empty segment
-          continue;
-        }
-        // if (outgoing) {
-        //   int textW = renderer.getTextWidth(bodyFontId, line.c_str());
-        //   renderer.drawText(bodyFontId, rect.x + rect.width - LyraMetrics::values.contentSidePadding - textW, y,
-        //                     line.c_str(), true);
-        // } else {
-        LOG_DBG("MSG", "drawText i=%d fontId=%d y=%d line=%.30s", i, bodyFontId, y, line.c_str());
-        renderer.drawText(bodyFontId, rect.x + LyraMetrics::values.contentSidePadding, y, line.c_str(), true);
-        LOG_DBG("MSG", "drawText i=%d done", i);
-        // }
-        y += bodyLineH;
-      }
-    }
-
-    // Meta line
-    if (!metaStr.empty()) {
-      if (y > rect.y + rect.height) break;
-      int metaX;
-      if (outgoing) {
-        int metaW = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
-        metaX = rect.x + rect.width - LyraMetrics::values.contentSidePadding - metaW;
-      } else {
-        metaX = rect.x + LyraMetrics::values.contentSidePadding;
-      }
-      renderer.drawText(SMALL_FONT_ID, metaX, y, metaStr.c_str(), true);
-      if (y >= rect.y) {
-        int mw = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
-        for (int py = y; py < y + smallLineH; py++)
-          for (int px = metaX; px < metaX + mw; px++)
-            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      }
-      y += smallLineH;
-    }
-
-    if (y < rect.y + rect.height) {
-      y += LyraMetrics::values.verticalSpacing;
-    }
-  }
-
-  // Clear areas above and below the content rect — messages may overflow bounds
-  if (rendered) {
-    const int screenW = renderer.getScreenWidth();
-    const int screenH = renderer.getScreenHeight();
-    if (rect.y > 0) {
-      renderer.fillRect(0, 0, screenW, rect.y, false);
-    }
-    const int belowY = rect.y + rect.height;
-    if (belowY < screenH) {
-      renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
-    }
-  }
+  renderer.drawLine(barX, rect.y, barX, rect.y + rect.height, true);
+  renderer.fillRect(barX - barW, thumbY, barW, thumbH, true);
 }
 
 void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,

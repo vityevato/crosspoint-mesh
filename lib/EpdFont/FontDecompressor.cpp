@@ -33,12 +33,16 @@ void FontDecompressor::freePageBuffer() {
 }
 
 void FontDecompressor::freeHotGroup() {
-  hotGroup.clear();
-  hotGroup.shrink_to_fit();
+  free(hotGroup);
+  hotGroup = nullptr;
+  hotGroupCapacity = 0;
   hotGroupFont = nullptr;
   hotGroupIndex = UINT16_MAX;
-  hotGlyphBuf.clear();
-  hotGlyphBuf.shrink_to_fit();
+  hotGroupFailedFont = nullptr;
+  hotGroupFailedIndex = UINT16_MAX;
+  free(hotGlyphBuf);
+  hotGlyphBuf = nullptr;
+  hotGlyphBufCapacity = 0;
 }
 
 uint16_t FontDecompressor::getGroupIndex(const EpdFontData* fontData, uint32_t glyphIndex) {
@@ -169,23 +173,37 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     return nullptr;
   }
 
+  // Skip groups already known to be unallocatable on the current heap. Avoids a malloc +
+  // error-log storm on every glyph of an oversized group; reset on prewarm / cache free.
+  if (hotGroupFailedFont == fontData && hotGroupFailedIndex == groupIndex) {
+    stats.getBitmapTimeUs += micros() - tStart;
+    return nullptr;
+  }
+
   // Check if hot group already has this group decompressed — if not, decompress it
-  if (!(!hotGroup.empty() && hotGroupFont == fontData && hotGroupIndex == groupIndex)) {
+  if (!(hotGroup != nullptr && hotGroupFont == fontData && hotGroupIndex == groupIndex)) {
     stats.cacheMisses++;
     const EpdFontGroup& group = fontData->groups[groupIndex];
 
-    hotGroup.resize(group.uncompressedSize);
-    if (hotGroup.empty()) {
+    // Grow the reusable buffer only when the new group is larger. Nothrow malloc: on OOM
+    // we return nullptr (missing glyph) rather than abort() the firmware.
+    if (group.uncompressedSize > hotGroupCapacity) {
+      free(hotGroup);
+      hotGroup = static_cast<uint8_t*>(malloc(group.uncompressedSize));
+      hotGroupCapacity = hotGroup ? group.uncompressedSize : 0;
+    }
+    if (!hotGroup) {
+      // Reached at most once per group per page (subsequent glyphs hit the skip above).
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
+      hotGroupFailedFont = fontData;
+      hotGroupFailedIndex = groupIndex;
       hotGroupFont = nullptr;
       hotGroupIndex = UINT16_MAX;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
 
-    if (!decompressGroup(fontData, groupIndex, hotGroup.data(), group.uncompressedSize)) {
-      hotGroup.clear();
-      hotGroup.shrink_to_fit();
+    if (!decompressGroup(fontData, groupIndex, hotGroup, group.uncompressedSize)) {
       hotGroupFont = nullptr;
       hotGroupIndex = UINT16_MAX;
       stats.getBitmapTimeUs += micros() - tStart;
@@ -200,18 +218,21 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   }
 
   // Compact just the requested glyph from byte-aligned data into scratch buffer
-  if (glyph->dataLength > hotGlyphBuf.size()) {
-    hotGlyphBuf.resize(glyph->dataLength);
+  if (glyph->dataLength > hotGlyphBufCapacity) {
+    free(hotGlyphBuf);
+    hotGlyphBuf = static_cast<uint8_t*>(malloc(glyph->dataLength));
+    hotGlyphBufCapacity = hotGlyphBuf ? glyph->dataLength : 0;
   }
-  if (hotGlyphBuf.empty()) {
+  if (!hotGlyphBuf) {
+    LOG_ERR("FDC", "Failed to allocate %u bytes for hot glyph buffer", glyph->dataLength);
     stats.getBitmapTimeUs += micros() - tStart;
     return nullptr;
   }
 
   uint32_t alignedOff = getAlignedOffset(fontData, groupIndex, glyphIndex);
-  compactSingleGlyph(&hotGroup[alignedOff], hotGlyphBuf.data(), glyph->width, glyph->height);
+  compactSingleGlyph(&hotGroup[alignedOff], hotGlyphBuf, glyph->width, glyph->height);
   stats.getBitmapTimeUs += micros() - tStart;
-  return hotGlyphBuf.data();
+  return hotGlyphBuf;
 }
 
 // --- Prewarm: pre-decompress glyph bitmaps for a page of text ---
@@ -244,6 +265,11 @@ int32_t FontDecompressor::findGlyphIndex(const EpdFontData* fontData, uint32_t c
 
 int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8Text) {
   if (!fontData || !fontData->groups || !utf8Text) return 0;
+
+  // Give the hot-group fallback one fresh allocation attempt for this page, clearing any
+  // failure memoized during a previous (possibly more fragmented) render.
+  hotGroupFailedFont = nullptr;
+  hotGroupFailedIndex = UINT16_MAX;
 
   // Allocate the next available slot (caller must call freePageBuffer/clearCache to reset)
   if (pageSlotCount >= MAX_PAGE_SLOTS) {

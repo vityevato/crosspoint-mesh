@@ -245,31 +245,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       (rowSubtitle != nullptr) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
   int pageItems = rect.height / rowHeight;
 
-  const int totalPages = (itemCount + pageItems - 1) / pageItems;
-  if (totalPages > 1) {
-    constexpr int indicatorWidth = 20;
-    constexpr int arrowSize = 6;
-    constexpr int margin = 15;  // Offset from right edge
-
-    const int centerX = rect.x + rect.width - indicatorWidth / 2 - margin;
-    const int indicatorTop = rect.y;  // Offset to avoid overlapping side button hints
-    const int indicatorBottom = rect.y + rect.height - arrowSize;
-
-    // Draw up arrow at top (^) - narrow point at top, wide base at bottom
-    for (int i = 0; i < arrowSize; ++i) {
-      const int lineWidth = 1 + i * 2;
-      const int startX = centerX - i;
-      renderer.drawLine(startX, indicatorTop + i, startX + lineWidth - 1, indicatorTop + i);
-    }
-
-    // Draw down arrow at bottom (v) - wide base at top, narrow point at bottom
-    for (int i = 0; i < arrowSize; ++i) {
-      const int lineWidth = 1 + (arrowSize - 1 - i) * 2;
-      const int startX = centerX - (arrowSize - 1 - i);
-      renderer.drawLine(startX, indicatorBottom - arrowSize + 1 + i, startX + lineWidth - 1,
-                        indicatorBottom - arrowSize + 1 + i);
-    }
-  }
+  drawScrollBar(renderer, rect, itemCount * rowHeight, (selectedIndex / pageItems * pageItems) * rowHeight);
 
   // Draw selection
   int contentWidth = rect.width - 5;
@@ -331,205 +307,34 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
-std::vector<std::string> BaseTheme::wrapMessageBody(const GfxRenderer& renderer, int fontId, const char* text,
-                                                    int maxWidth, int maxLines) {
-  std::vector<std::string> result;
-  if (!text || !*text) return result;
+void BaseTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
+                              uint16_t scrollOffsetPx) const {
+  if (totalPixels <= rect.height) return;
 
-  // Fast path: no newlines → delegate directly to wrappedText (no extra copy)
-  bool hasNewline = false;
-  for (const char* p = text; *p; ++p) {
-    if (*p == '\n') {
-      hasNewline = true;
-      break;
-    }
-  }
-  if (!hasNewline) {
-    return renderer.wrappedText(fontId, text, maxWidth, maxLines);
-  }
+  constexpr int indicatorWidth = 20;
+  constexpr int arrowSize = 6;
+  constexpr int margin = 15;
 
-  // Slow path: split on \n and word-wrap each segment
-  const char* segStart = text;
-  const char* p = text;
-  while (*p && static_cast<int>(result.size()) < maxLines) {
-    if (*p == '\n') {
-      // Handle \r\n: adjust end to exclude preceding \r
-      const char* segEnd = (p > segStart && *(p - 1) == '\r') ? p - 1 : p;
-      size_t segLen = segEnd - segStart;
-      if (segLen == 0) {
-        result.emplace_back();  // empty line marker
-      } else {
-        std::string segment(segStart, segLen);
-        auto wrapped =
-            renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
-        for (auto& line : wrapped) {
-          result.push_back(std::move(line));
-          if (static_cast<int>(result.size()) >= maxLines) break;
-        }
-      }
-      segStart = p + 1;  // skip past \n
-    }
-    ++p;
-  }
+  const int centerX = rect.x + rect.width - indicatorWidth / 2 - margin;
+  const int indicatorTop = rect.y;
+  const int indicatorBottom = rect.y + rect.height - arrowSize;
 
-  // Trailing segment after the last \n (or whole text if no \n ended the loop)
-  if (segStart < p && static_cast<int>(result.size()) < maxLines) {
-    size_t segLen = p - segStart;
-    std::string segment(segStart, segLen);
-    auto wrapped = renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
-    for (auto& line : wrapped) {
-      result.push_back(std::move(line));
+  if (scrollOffsetPx > 0) {
+    // Draw up arrow at top (^)
+    for (int i = 0; i < arrowSize; ++i) {
+      const int lineWidth = 1 + i * 2;
+      const int startX = centerX - i;
+      renderer.drawLine(startX, indicatorTop + i, startX + lineWidth - 1, indicatorTop + i);
     }
   }
 
-  return result;
-}
-
-uint16_t BaseTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
-                                         const char* meta, bool useReaderFontSettings) const {
-  constexpr int maxLines = 100;
-  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(UI_10_FONT_ID);
-  const int bodyLineH = renderer.getLineHeight(bodyFontId);
-  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
-  const int maxTextWidth = rect.width - 2 * BaseMetrics::values.contentSidePadding;
-
-  uint16_t height = 0;
-  if (sender && sender[0]) {
-    height += bodyLineH;
-  }
-  if (text && text[0]) {
-    auto lines = wrapMessageBody(renderer, bodyFontId, text, maxTextWidth, maxLines);
-    height += static_cast<uint16_t>(lines.size()) * bodyLineH;
-  }
-  if (meta && meta[0]) {
-    height += smallLineH;
-  }
-  height += BaseMetrics::values.verticalSpacing;
-  return height;
-}
-
-void BaseTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
-                             uint16_t totalPixels, uint16_t scrollOffsetPx,
-                             const std::function<std::string(int)>& sender, const std::function<std::string(int)>& text,
-                             const std::function<std::string(int)>& meta, const std::function<bool(int)>& isOutgoing,
-                             bool useReaderFontSettings) const {
-  constexpr int maxLines = 100;
-  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(UI_10_FONT_ID);
-  const int bodyLineH = renderer.getLineHeight(bodyFontId);
-  const int smallLineH = renderer.getLineHeight(SMALL_FONT_ID);
-  const int maxTextWidth = rect.width - 2 * BaseMetrics::values.contentSidePadding;
-
-  // Pixel-perfect scrollbar
-  if (totalPixels > rect.height) {
-    const int trackH = rect.height;
-    const int thumbH = std::max(10, trackH * trackH / totalPixels);
-    const int maxTravel = std::max(1, totalPixels - trackH);
-    const int thumbY = rect.y + (trackH - thumbH) * scrollOffsetPx / maxTravel;
-    const int barX =
-        rect.x + rect.width - BaseMetrics::values.scrollBarRightOffset - BaseMetrics::values.scrollBarWidth;
-    renderer.fillRect(barX, thumbY, BaseMetrics::values.scrollBarWidth, thumbH, true);
-  }
-
-  // Find first message to render based on scrollOffsetPx
-  int startIdx = 0;
-  uint16_t acc = 0;
-  while (startIdx < totalMessages && acc + msgHeights[startIdx] <= scrollOffsetPx) {
-    acc += msgHeights[startIdx];
-    startIdx++;
-  }
-  if (startIdx >= totalMessages) {
-    startIdx = totalMessages - 1;
-    acc = totalPixels - msgHeights[startIdx];
-  }
-  int partialOffset = scrollOffsetPx - acc;
-
-  int y = rect.y + 4 - partialOffset;
-
-  bool rendered = false;
-  for (int i = startIdx; i < totalMessages; ++i) {
-    if (y > rect.y + rect.height) break;
-    rendered = true;
-
-    const bool outgoing = isOutgoing(i);
-    std::string senderStr = sender(i);
-    std::string textStr = text(i);
-    std::string metaStr = meta(i);
-
-    // Sender line
-    if (!senderStr.empty()) {
-      int senderX;
-      if (outgoing) {
-        int senderW = renderer.getTextWidth(bodyFontId, senderStr.c_str());
-        senderX = rect.x + rect.width - BaseMetrics::values.contentSidePadding - senderW;
-      } else {
-        senderX = rect.x + BaseMetrics::values.contentSidePadding;
-      }
-      renderer.drawText(bodyFontId, senderX, y, senderStr.c_str(), true);
-      if (!outgoing && y >= rect.y) {
-        int sw = renderer.getTextWidth(bodyFontId, senderStr.c_str());
-        for (int py = y; py < y + bodyLineH; py++)
-          for (int px = senderX; px < senderX + sw; px++)
-            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      }
-      y += bodyLineH;
-    }
-
-    // Text body
-    if (!textStr.empty()) {
-      auto lines = wrapMessageBody(renderer, bodyFontId, textStr.c_str(), maxTextWidth, maxLines);
-      for (const auto& line : lines) {
-        if (y > rect.y + rect.height) break;
-        if (line.empty()) {
-          y += bodyLineH;  // blank line from empty segment
-          continue;
-        }
-        if (outgoing) {
-          int textW = renderer.getTextWidth(bodyFontId, line.c_str());
-          renderer.drawText(bodyFontId, rect.x + rect.width - BaseMetrics::values.contentSidePadding - textW, y,
-                            line.c_str(), true);
-        } else {
-          renderer.drawText(bodyFontId, rect.x + BaseMetrics::values.contentSidePadding, y, line.c_str(), true);
-        }
-        y += bodyLineH;
-      }
-    }
-
-    // Meta line
-    if (!metaStr.empty()) {
-      if (y > rect.y + rect.height) break;
-      int metaX;
-      if (outgoing) {
-        int metaW = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
-        metaX = rect.x + rect.width - BaseMetrics::values.contentSidePadding - metaW;
-      } else {
-        metaX = rect.x + BaseMetrics::values.contentSidePadding;
-      }
-      renderer.drawText(SMALL_FONT_ID, metaX, y, metaStr.c_str(), true);
-      if (y >= rect.y) {
-        int mw = renderer.getTextWidth(SMALL_FONT_ID, metaStr.c_str());
-        for (int py = y; py < y + smallLineH; py++)
-          for (int px = metaX; px < metaX + mw; px++)
-            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      }
-      y += smallLineH;
-    }
-
-    // Spacing between message blocks
-    if (y < rect.y + rect.height) {
-      y += BaseMetrics::values.verticalSpacing;
-    }
-  }
-
-  // Clear areas above and below the content rect — messages may overflow bounds
-  if (rendered) {
-    const int screenW = renderer.getScreenWidth();
-    const int screenH = renderer.getScreenHeight();
-    if (rect.y > 0) {
-      renderer.fillRect(0, 0, screenW, rect.y, false);
-    }
-    const int belowY = rect.y + rect.height;
-    if (belowY < screenH) {
-      renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
+  if (scrollOffsetPx + rect.height < totalPixels) {
+    // Draw down arrow at bottom (v)
+    for (int i = 0; i < arrowSize; ++i) {
+      const int lineWidth = 1 + (arrowSize - 1 - i) * 2;
+      const int startX = centerX - (arrowSize - 1 - i);
+      renderer.drawLine(startX, indicatorBottom - arrowSize + 1 + i, startX + lineWidth - 1,
+                        indicatorBottom - arrowSize + 1 + i);
     }
   }
 }

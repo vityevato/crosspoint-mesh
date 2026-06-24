@@ -5,6 +5,7 @@
 #include <MeshCore/MeshCoreTypes.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "StatusMessageOverlay.h"
@@ -111,6 +112,24 @@ class MeshCoreThreadActivity final : public Activity {
 
   void renderMenu(const Rect& contentRect);
 
+  uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
+                                const char* meta, bool useReaderFontSettings) const;
+  void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
+                    uint16_t totalPixels, uint16_t scrollOffsetPx, bool useReaderFontSettings,
+                    bool scanOnly = false) const;
+
+  // Per-message accessors used by drawMessages. Plain member methods (not std::function
+  // callbacks) so the render path makes no per-frame heap allocation for closures.
+  std::string messageSenderLabel(int i) const;
+  std::string messageBody(int i) const;
+  std::string messageMeta(int i) const;
+  bool messageOutgoing(int i) const;
+
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);
+
+  /// Word-wrap message body text, respecting \n as hard line breaks.
+  /// Normalizes \r\n → \n. Preserves empty lines from consecutive newlines.
+  static std::vector<std::string> wrapMessageBody(const GfxRenderer& renderer, int fontId, const char* text,
+                                                  int maxWidth, int maxLines);
 };

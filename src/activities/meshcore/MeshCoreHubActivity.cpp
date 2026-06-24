@@ -23,8 +23,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-
-#include "FontCacheManager.h"
+#include "utils/MeshCoreHeapLog.h"
 
 #ifdef SIMULATOR
 #include <MeshCoreMockHotkeys.h>
@@ -59,6 +58,7 @@ static constexpr const char* MESH_LOG_PATH = "/meshcore.log";
 
 void MeshCoreHubActivity::onEnter() {
   Activity::onEnter();
+  MESHCORE_LOG_HEAP("Hub onEnter:start");
 
 #ifdef SIMULATOR
   MockSession::loadMockConfig("/meshcore_mock.json");
@@ -93,6 +93,7 @@ void MeshCoreHubActivity::onEnter() {
       channels[i].unreadCount = channelUnread[i];
     }
   }
+  MESHCORE_LOG_HEAP("Hub onEnter:after store");
 
   client.setStateCallback(onStateChanged, this);
   client.setMessageCallback(onMessageReceived, this);
@@ -117,37 +118,17 @@ void MeshCoreHubActivity::onEnter() {
   }
 
   // BLE is owned by the hub for its entire lifetime — init once here.
+  MESHCORE_LOG_HEAP("Hub onEnter:before BLE init");
   if (!client.init()) {
     LOG_ERR("MESH", "BLE init failed");
     onGoHome();
     return;
   }
+  MESHCORE_LOG_HEAP("Hub onEnter:after BLE init");
 
   // Wire up the toast overlay: status messages override the standard subtitle
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
-
-  // Prewarm reader font with character set of the selected UI language
-  // while heap is clean — before BLE/mesh operations fragment it.
-  // Includes Latin + digits for mesh messages from any language.
-  {
-    auto* fcm = renderer.getFontCacheManager();
-    if (fcm) {
-      const char* langChars = I18N.getCharacterSet(I18N.getLanguage());
-      std::string prewarmText;
-      prewarmText.reserve(256);
-      prewarmText = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      if (langChars && langChars[0]) {
-        prewarmText += ' ';
-        prewarmText += langChars;
-      }
-      LOG_DBG("MSG", "Hub prewarm: lang=%d chars=%d", (int)I18N.getLanguage(), (int)prewarmText.size());
-      int readerFontId = SETTINGS.getReaderFontId();
-      fcm->clearCache();
-      fcm->prewarmCache(readerFontId, prewarmText.c_str(),
-                        1 << static_cast<uint8_t>(EpdFontFamily::REGULAR));
-    }
-  }
 
   // Auto-reconnect to known companion address
   if (addr[0] != '\0') {
@@ -161,6 +142,7 @@ void MeshCoreHubActivity::onEnter() {
 }
 
 void MeshCoreHubActivity::onExit() {
+  MESHCORE_LOG_HEAP("Hub onExit:start");
   // Disable SD log sink and close file
   clearLogFileSink();
   sdLogFile.close();
@@ -177,6 +159,7 @@ void MeshCoreHubActivity::onExit() {
   store.saveUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
 
   client.deinit();
+  MESHCORE_LOG_HEAP("Hub onExit:after BLE deinit");
 
 #ifdef SIMULATOR
   MockSession::unloadMockConfig();

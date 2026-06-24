@@ -107,6 +107,8 @@ void MeshCoreClient::deinit() {
   contactCb = nullptr;
   advertCb = nullptr;
   channelCb = nullptr;
+  heardCb = nullptr;
+  heardActive = false;
 
   // Interrupt any in-progress blocking connect/init so the worker can exit.
   // Only disconnect the link here — do NOT call NimBLEDevice::deleteClient()
@@ -421,7 +423,21 @@ bool MeshCoreClient::sendChannelMessage(uint8_t channelIdx, const char* text) {
   uint8_t buf[CMD_BUF_SIZE];
   uint32_t ts = static_cast<uint32_t>(millis() / 1000);
   size_t len = MeshProto::buildSendChannelMsg(buf, sizeof(buf), channelIdx, ts, text);
-  return len > 0 && enqueueCmd(buf, len, MeshProto::PKT_MSG_SENT);
+  // Firmware replies to CMD_SEND_CHAN_MSG with a bare PKT_OK (0x00), not
+  // PKT_MSG_SENT (0x06): channel messages are flood broadcasts with no
+  // per-message ACK. (Direct messages below DO get PKT_MSG_SENT with an ack
+  // tag.) Expecting PKT_MSG_SENT here left the command pending until the 5 s
+  // timeout fired, producing a spurious "Command timeout" after every send.
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
+  if (ok) {
+    // Arm the "heard by repeaters" tracker for this outgoing channel message.
+    heardActive = true;
+    heardChannelIdx = channelIdx;
+    heardStartMs = millis();
+    heardPayloadHash = 0;
+    heardRepeaterCount = 0;
+  }
+  return ok;
 }
 
 bool MeshCoreClient::sendDirectMessage(const uint8_t* pubkey32, const char* text) {
@@ -470,6 +486,58 @@ void MeshCoreClient::setChannelCallback(ChannelCallback cb, void* ctx) {
 void MeshCoreClient::setPinCallback(PinCallback cb, void* ctx) {
   pinCb = cb;
   pinCbCtx = ctx;
+}
+
+void MeshCoreClient::setChannelHeardCallback(ChannelHeardCallback cb, void* ctx) {
+  heardCb = cb;
+  heardCbCtx = ctx;
+}
+
+void MeshCoreClient::handleRxLog(const uint8_t* data, size_t len) {
+  if (!heardActive) return;
+
+  uint32_t now = millis();
+  if (now - heardStartMs > HEARD_TOTAL_WINDOW_MS) {
+    heardActive = false;  // stop counting after the total window elapses
+    return;
+  }
+
+  uint8_t hashes[MeshProto::MESH_MAX_PATH_HASHES];
+  uint8_t hashCount = 0;
+  uint32_t payloadHash = 0;
+  if (!MeshProto::parseChannelReflood(data, len, hashes, sizeof(hashes), hashCount, payloadHash)) {
+    return;  // not a channel (GRP_TXT) packet
+  }
+
+  // Lock onto the first channel message we hear shortly after our send, then
+  // only count re-floods that carry the same payload.
+  if (heardPayloadHash == 0) {
+    if (now - heardStartMs > HEARD_LOCK_WINDOW_MS) return;  // too late to be ours
+    heardPayloadHash = payloadHash;
+  } else if (payloadHash != heardPayloadHash) {
+    return;  // a different channel message
+  }
+
+  bool changed = false;
+  for (uint8_t i = 0; i < hashCount; ++i) {
+    uint8_t h = hashes[i];
+    bool known = false;
+    for (uint8_t j = 0; j < heardRepeaterCount; ++j) {
+      if (heardHashes[j] == h) {
+        known = true;
+        break;
+      }
+    }
+    if (!known && heardRepeaterCount < MAX_HEARD_REPEATERS) {
+      heardHashes[heardRepeaterCount++] = h;
+      changed = true;
+    }
+  }
+
+  if (changed && heardCb) {
+    LOG_DBG("MESH", "Channel msg heard by %d repeater(s)", (int)heardRepeaterCount);
+    heardCb(heardChannelIdx, heardRepeaterCount, heardHashes, heardCbCtx);
+  }
 }
 
 void MeshCoreClient::setAutoReconnectAddress(const char* addr, uint8_t addressType) {
@@ -707,9 +775,12 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     case 0x85:  // PUSH_CODE_LOGIN_SUCCESS
     case 0x86:  // PUSH_CODE_LOGIN_FAIL
     case 0x87:  // PUSH_CODE_STATUS_RESPONSE
-    case 0x88:  // PUSH_CODE_LOG_RX_DATA (raw LoRa packet log, verbose)
     case 0x89:  // PUSH_CODE_TRACE_DATA
       LOG_DBG("MESH", "Push 0x%02X len=%d (ignored)", pktType, (int)len);
+      break;
+
+    case MeshProto::PUSH_LOG_RX_DATA:  // 0x88: raw LoRa RX log — used to count channel re-floods
+      handleRxLog(data, len);
       break;
 
     case MeshProto::PKT_ACK: {

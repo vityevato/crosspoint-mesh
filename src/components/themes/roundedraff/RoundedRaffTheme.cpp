@@ -24,25 +24,6 @@ constexpr int kTitleFontId = UI_12_FONT_ID;     // Requested main title size: 12
 constexpr int kSubtitleFontId = SMALL_FONT_ID;  // Requested subtitle size: 8px
 constexpr int kGuideFontId = SMALL_FONT_ID;     // Closest available to requested 6px
 
-void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pageStartIndex, int pageItems) {
-  if (itemCount <= 0 || pageItems <= 0 || itemCount <= pageItems) {
-    return;
-  }
-
-  const int barW = RoundedRaffMetrics::values.scrollBarWidth;
-  const int barX = rect.x + rect.width - RoundedRaffMetrics::values.scrollBarRightOffset - barW;
-  const int barY = rect.y;
-  const int barH = rect.height;
-
-  const int thumbH = std::max(10, (barH * pageItems) / itemCount);
-  const int maxStart = std::max(1, itemCount - pageItems);
-  const int maxTravel = std::max(1, barH - thumbH);
-  const int clampedStart = std::clamp(pageStartIndex, 0, maxStart);
-  const int thumbY = barY + (clampedStart * maxTravel) / maxStart;
-
-  renderer.fillRect(barX, thumbY, barW, thumbH);
-}
-
 }  // namespace
 int coverWidth = 0;
 
@@ -227,7 +208,7 @@ void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int butt
     }
   }
 
-  drawScrollBar(renderer, rect, buttonCount, pageStartIndex, pageItems);
+  drawScrollBar(renderer, rect, buttonCount * rowStep, pageStartIndex * rowStep);
 }
 
 void RoundedRaffTheme::drawTextField(const GfxRenderer& renderer, Rect rect, const int textWidth, bool cursorMode,
@@ -378,156 +359,23 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
     }
   }
 
-  drawScrollBar(renderer, rect, itemCount, pageStartIndex, pageItems);
+  drawScrollBar(renderer, rect, itemCount * rowStep, pageStartIndex * rowStep);
 }
 
-uint16_t RoundedRaffTheme::measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender,
-                                                const char* text, const char* meta, bool useReaderFontSettings) const {
-  constexpr int maxLines = 100;
-  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(kTitleFontId);
-  const int bodyLineH = renderer.getLineHeight(bodyFontId);
-  const int smallLineH = renderer.getLineHeight(kSubtitleFontId);
-  const int maxTextWidth = rect.width - 2 * RoundedRaffMetrics::values.contentSidePadding;
+void RoundedRaffTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
+                                     uint16_t scrollOffsetPx) const {
+  if (totalPixels <= rect.height) return;
 
-  uint16_t height = 0;
-  if (sender && sender[0]) {
-    height += bodyLineH;
-  }
-  if (text && text[0]) {
-    auto lines = wrapMessageBody(renderer, bodyFontId, text, maxTextWidth, maxLines);
-    height += static_cast<uint16_t>(lines.size()) * bodyLineH;
-  }
-  if (meta && meta[0]) {
-    height += smallLineH;
-  }
-  height += RoundedRaffMetrics::values.verticalSpacing;
-  return height;
-}
+  const int barW = RoundedRaffMetrics::values.scrollBarWidth;
+  const int barX = rect.x + rect.width - RoundedRaffMetrics::values.scrollBarRightOffset - barW;
+  const int barH = rect.height;
 
-void RoundedRaffTheme::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages,
-                                    const uint16_t* msgHeights, uint16_t totalPixels, uint16_t scrollOffsetPx,
-                                    const std::function<std::string(int)>& sender,
-                                    const std::function<std::string(int)>& text,
-                                    const std::function<std::string(int)>& meta,
-                                    const std::function<bool(int)>& isOutgoing, bool useReaderFontSettings) const {
-  constexpr int maxLines = 100;
-  const int bodyFontId = useReaderFontSettings ? SETTINGS.getReaderFontId() : static_cast<int>(kTitleFontId);
-  const int bodyLineH = renderer.getLineHeight(bodyFontId);
-  const int smallLineH = renderer.getLineHeight(kSubtitleFontId);
-  const int maxTextWidth = rect.width - 2 * RoundedRaffMetrics::values.contentSidePadding;
+  const int thumbH = std::max(10, (barH * barH) / totalPixels);
+  const int maxTravel = std::max(1, totalPixels - barH);
+  const int clampedOffset = std::clamp(static_cast<int>(scrollOffsetPx), 0, static_cast<int>(maxTravel));
+  const int thumbY = rect.y + (clampedOffset * (barH - thumbH)) / maxTravel;
 
-  // Pixel-perfect scrollbar: filled thumb only (no track line), min 10px height
-  if (totalPixels > rect.height) {
-    const int trackH = rect.height;
-    const int thumbH = std::max(10, trackH * trackH / totalPixels);
-    const int maxTravel = std::max(1, totalPixels - trackH);
-    const int thumbY = rect.y + (trackH - thumbH) * scrollOffsetPx / maxTravel;
-    const int barW = RoundedRaffMetrics::values.scrollBarWidth;
-    const int barX = rect.x + rect.width - RoundedRaffMetrics::values.scrollBarRightOffset - barW;
-    renderer.fillRect(barX, thumbY, barW, thumbH);
-  }
-
-  // Find first message to render based on scrollOffsetPx
-  int startIdx = 0;
-  uint16_t acc = 0;
-  while (startIdx < totalMessages && acc + msgHeights[startIdx] <= scrollOffsetPx) {
-    acc += msgHeights[startIdx];
-    startIdx++;
-  }
-  if (startIdx >= totalMessages) {
-    startIdx = totalMessages - 1;
-    acc = totalPixels - msgHeights[startIdx];
-  }
-  int partialOffset = scrollOffsetPx - acc;
-
-  int y = rect.y + 4 - partialOffset;
-
-  bool rendered = false;
-  for (int i = startIdx; i < totalMessages; ++i) {
-    if (y > rect.y + rect.height) break;
-    rendered = true;
-
-    const bool outgoing = isOutgoing(i);
-    std::string senderStr = sender(i);
-    std::string textStr = text(i);
-    std::string metaStr = meta(i);
-
-    // Sender line
-    if (!senderStr.empty()) {
-      int senderX;
-      if (outgoing) {
-        int senderW = renderer.getTextWidth(bodyFontId, senderStr.c_str());
-        senderX = rect.x + rect.width - RoundedRaffMetrics::values.contentSidePadding - senderW;
-      } else {
-        senderX = rect.x + RoundedRaffMetrics::values.contentSidePadding;
-      }
-      renderer.drawText(bodyFontId, senderX, y, senderStr.c_str(), true);
-      if (!outgoing && y >= rect.y) {
-        int sw = renderer.getTextWidth(bodyFontId, senderStr.c_str());
-        for (int py = y; py < y + bodyLineH; py++)
-          for (int px = senderX; px < senderX + sw; px++)
-            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      }
-      y += bodyLineH;
-    }
-
-    // Text body
-    if (!textStr.empty()) {
-      auto lines = wrapMessageBody(renderer, bodyFontId, textStr.c_str(), maxTextWidth, maxLines);
-      for (const auto& line : lines) {
-        if (y > rect.y + rect.height) break;
-        if (line.empty()) {
-          y += bodyLineH;  // blank line from empty segment
-          continue;
-        }
-        if (outgoing) {
-          int textW = renderer.getTextWidth(bodyFontId, line.c_str());
-          renderer.drawText(bodyFontId, rect.x + rect.width - RoundedRaffMetrics::values.contentSidePadding - textW, y,
-                            line.c_str(), true);
-        } else {
-          renderer.drawText(bodyFontId, rect.x + RoundedRaffMetrics::values.contentSidePadding, y, line.c_str(), true);
-        }
-        y += bodyLineH;
-      }
-    }
-
-    // Meta line
-    if (!metaStr.empty()) {
-      if (y > rect.y + rect.height) break;
-      int metaX;
-      if (outgoing) {
-        int metaW = renderer.getTextWidth(kSubtitleFontId, metaStr.c_str());
-        metaX = rect.x + rect.width - RoundedRaffMetrics::values.contentSidePadding - metaW;
-      } else {
-        metaX = rect.x + RoundedRaffMetrics::values.contentSidePadding;
-      }
-      renderer.drawText(kSubtitleFontId, metaX, y, metaStr.c_str(), true);
-      if (y >= rect.y) {
-        int mw = renderer.getTextWidth(kSubtitleFontId, metaStr.c_str());
-        for (int py = y; py < y + smallLineH; py++)
-          for (int px = metaX; px < metaX + mw; px++)
-            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      }
-      y += smallLineH;
-    }
-
-    if (y < rect.y + rect.height) {
-      y += RoundedRaffMetrics::values.verticalSpacing;
-    }
-  }
-
-  // Clear areas above and below the content rect — messages may overflow bounds
-  if (rendered) {
-    const int screenW = renderer.getScreenWidth();
-    const int screenH = renderer.getScreenHeight();
-    if (rect.y > 0) {
-      renderer.fillRect(0, 0, screenW, rect.y, false);
-    }
-    const int belowY = rect.y + rect.height;
-    if (belowY < screenH) {
-      renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
-    }
-  }
+  renderer.fillRect(barX, thumbY, barW, thumbH);
 }
 
 void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,

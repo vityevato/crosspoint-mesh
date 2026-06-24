@@ -40,7 +40,20 @@ static constexpr uint8_t PKT_CHANNEL_INFO = 0x12;
 static constexpr uint8_t PKT_ADVERTISEMENT = 0x80;
 static constexpr uint8_t PKT_ACK = 0x82;
 static constexpr uint8_t PKT_MSGS_WAITING = 0x83;
-static constexpr uint8_t PKT_NEW_ADVERT = 0x8A;  // PUSH_CODE_NEW_ADVERT: full contact
+static constexpr uint8_t PUSH_LOG_RX_DATA = 0x88;  // PUSH_CODE_LOG_RX_DATA: raw RX packet log
+static constexpr uint8_t PKT_NEW_ADVERT = 0x8A;    // PUSH_CODE_NEW_ADVERT: full contact
+
+// Raw LoRa packet header fields (for parsing PUSH_LOG_RX_DATA frames).
+// header byte = route(2 bits) | type(4 bits) | version(2 bits)
+static constexpr uint8_t RAW_ROUTE_MASK = 0x03;
+static constexpr uint8_t RAW_ROUTE_TRANSPORT_FLOOD = 0x00;
+static constexpr uint8_t RAW_ROUTE_FLOOD = 0x01;
+static constexpr uint8_t RAW_ROUTE_DIRECT = 0x02;
+static constexpr uint8_t RAW_ROUTE_TRANSPORT_DIRECT = 0x03;
+static constexpr uint8_t RAW_PTYPE_SHIFT = 2;
+static constexpr uint8_t RAW_PTYPE_MASK = 0x0F;
+static constexpr uint8_t RAW_PAYLOAD_GRP_TXT = 0x05;  // group/channel text message
+static constexpr uint8_t MESH_MAX_PATH_HASHES = 16;
 
 // Command timeout
 static constexpr uint32_t CMD_TIMEOUT_MS = 5000;
@@ -133,5 +146,15 @@ bool parseContactMessage(const uint8_t* data, size_t len, MeshCoreMessage& out);
 bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck, uint32_t& suggestedTimeoutMs);
 
 bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]);
+
+// Parse a PUSH_LOG_RX_DATA (0x88) frame. If the embedded raw LoRa packet is a
+// group/channel text message (GRP_TXT), extracts the forwarding repeater hashes
+// (first byte of each path element) into outHashes and a content hash of the
+// encrypted payload into outPayloadHash. The payload hash is identical across
+// every re-flood of the same message, letting the caller count distinct
+// repeaters that re-broadcast an outgoing channel message. Returns true only
+// for GRP_TXT packets.
+bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, uint8_t maxHashes, uint8_t& outHashCount,
+                         uint32_t& outPayloadHash);
 
 }  // namespace MeshProto

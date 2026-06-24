@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "MeshCoreProtocol.h"
 #include "MeshCoreTypes.h"
 
 class NimBLEClient;
@@ -25,6 +26,10 @@ class MeshCoreClient {
   using ChannelCallback = void (*)(const MeshCoreChannel& ch, void* ctx);
   // Called during init if companion has a PIN (non-zero). Show PIN to user.
   using PinCallback = void (*)(uint32_t pin, void* ctx);
+  // Fired when the count of distinct repeaters that re-flooded our most recent
+  // outgoing channel message increases. hashes points to heardCount routing
+  // hashes (first byte of each repeater public key).
+  using ChannelHeardCallback = void (*)(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx);
 
   MeshCoreClient();
   ~MeshCoreClient();
@@ -72,6 +77,7 @@ class MeshCoreClient {
   void setAdvertCallback(AdvertCallback cb, void* ctx);
   void setChannelCallback(ChannelCallback cb, void* ctx);
   void setPinCallback(PinCallback cb, void* ctx);
+  void setChannelHeardCallback(ChannelHeardCallback cb, void* ctx);
 
   // Must be called from activity loop() to process responses and timeouts
   void poll();
@@ -108,7 +114,11 @@ class MeshCoreClient {
   ScanResult scanResults[MAX_SCAN_RESULTS] = {};
   uint8_t scanResultCount = 0;
 
-  // Command queue (simple ring buffer)
+  // Command queue (simple ring buffer).
+  // 12 slots: the hub init/connect burst (APP_START, DEVICE_QUERY, battery, channel
+  // queries, message poll) enqueues commands faster than responses return, so a smaller
+  // ring (e.g. 8) overflows with "Command queue full" before the in-flight command
+  // completes. 12 × 256 bytes = 3 KB.
   static constexpr size_t CMD_QUEUE_SIZE = 12;
   static constexpr size_t CMD_BUF_SIZE = 256;
   struct CmdEntry {
@@ -145,6 +155,22 @@ class MeshCoreClient {
   void* channelCbCtx = nullptr;
   PinCallback pinCb = nullptr;
   void* pinCbCtx = nullptr;
+  ChannelHeardCallback heardCb = nullptr;
+  void* heardCbCtx = nullptr;
+
+  // Tracker for "heard by N repeaters" on the most recent outgoing channel
+  // message. Armed on a successful sendChannelMessage(); fed by PUSH_LOG_RX_DATA
+  // (0x88) frames containing GRP_TXT re-floods of that message.
+  static constexpr uint8_t MAX_HEARD_REPEATERS = MeshProto::MESH_MAX_PATH_HASHES;
+  static constexpr uint32_t HEARD_LOCK_WINDOW_MS = 12000;   // window to lock onto our payload
+  static constexpr uint32_t HEARD_TOTAL_WINDOW_MS = 45000;  // total time we keep counting
+  bool heardActive = false;
+  uint8_t heardChannelIdx = 0;
+  uint32_t heardStartMs = 0;
+  uint32_t heardPayloadHash = 0;  // 0 = not yet locked onto our message's payload
+  uint8_t heardHashes[MAX_HEARD_REPEATERS] = {};
+  uint8_t heardRepeaterCount = 0;
+  void handleRxLog(const uint8_t* data, size_t len);
 
   char autoReconnectAddr[18] = {};
   uint8_t autoReconnectAddrType = 0;
@@ -155,10 +181,11 @@ class MeshCoreClient {
   // a single-slot buffer would silently overwrite earlier entries.
   // After init, the device can burst out a full contact list (one PKT_CONTACT
   // per contact) plus channels and messages before poll() drains them.
-  // 32 slots × 256 bytes = 8 KB — handles realistic contact list bursts
-  // (tested device sent 15+ packets before the next poll() call).
+  // 24 slots × 256 bytes = 6 KB — keeps comfortable headroom over the realistic
+  // contact-list burst (tested device sent 15+ packets before the next poll() call)
+  // while trimming static RAM vs the previous 32-slot ring.
   static constexpr size_t RX_BUF_SIZE = 256;
-  static constexpr uint8_t RX_QUEUE_SIZE = 32;
+  static constexpr uint8_t RX_QUEUE_SIZE = 24;
   struct RxEntry {
     uint8_t data[RX_BUF_SIZE];
     uint16_t len;
