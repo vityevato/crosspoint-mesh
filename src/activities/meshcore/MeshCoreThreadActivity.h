@@ -85,6 +85,9 @@ class MeshCoreThreadActivity final : public Activity {
   bool _advertIsFlood = false;
   uint32_t _advertSentTime = 0;
 
+  // Last known endGlobalId for new-message detection
+  uint32_t _lastEndGlobalId = 0;
+
   // Ephemeral toast overlay
   StatusMessageOverlay _toast;
 
@@ -112,8 +115,8 @@ class MeshCoreThreadActivity final : public Activity {
 
   void renderMenu(const Rect& contentRect);
 
-  uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, const char* sender, const char* text,
-                                const char* meta, bool useReaderFontSettings) const;
+  uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, bool sender, const char* text, bool meta,
+                                bool useReaderFontSettings) const;
   void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
                     uint16_t totalPixels, uint16_t scrollOffsetPx, bool useReaderFontSettings,
                     bool scanOnly = false) const;

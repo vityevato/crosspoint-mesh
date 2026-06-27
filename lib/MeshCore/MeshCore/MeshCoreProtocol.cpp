@@ -442,9 +442,10 @@ bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]) {
 }
 
 bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, uint8_t maxHashes, uint8_t& outHashCount,
-                         uint32_t& outPayloadHash) {
+                         uint32_t& outPayloadHash, uint8_t ourNodeHash, bool& pathContainsOurHash) {
   outHashCount = 0;
   outPayloadHash = 0;
+  pathContainsOurHash = false;
 
   // 0x88 LOG_RX_DATA frame: [0x88][snr*4:int8][rssi:int8][raw LoRa packet...]
   if (len < 3 + 2 || frame[0] != PUSH_LOG_RX_DATA) return false;
@@ -472,8 +473,14 @@ bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, u
 
   // Each path element identifies a forwarding repeater by its routing hash
   // (first byte of the element, which is the first byte of its public key).
+  // Check whether ourNodeHash appears in the path — if so, this is a re-flood
+  // of a message that originated from our companion.
   for (uint8_t i = 0; i < hashCount && outHashCount < maxHashes; ++i) {
-    outHashes[outHashCount++] = pkt[off + static_cast<size_t>(i) * hashSize];
+    uint8_t firstByte = pkt[off + static_cast<size_t>(i) * hashSize];
+    outHashes[outHashCount++] = firstByte;
+    if (ourNodeHash != 0 && firstByte == ourNodeHash) {
+      pathContainsOurHash = true;
+    }
   }
   off += pathBytes;
 

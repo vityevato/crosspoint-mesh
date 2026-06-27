@@ -108,7 +108,9 @@ void MeshCoreClient::deinit() {
   advertCb = nullptr;
   channelCb = nullptr;
   heardCb = nullptr;
-  heardActive = false;
+  // Clear all active trackers
+  for (auto& t : _trackers) t.active = false;
+  _ourNodeHash = 0;
 
   // Interrupt any in-progress blocking connect/init so the worker can exit.
   // Only disconnect the link here — do NOT call NimBLEDevice::deleteClient()
@@ -430,12 +432,28 @@ bool MeshCoreClient::sendChannelMessage(uint8_t channelIdx, const char* text) {
   // timeout fired, producing a spurious "Command timeout" after every send.
   bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
   if (ok) {
-    // Arm the "heard by repeaters" tracker for this outgoing channel message.
-    heardActive = true;
-    heardChannelIdx = channelIdx;
-    heardStartMs = millis();
-    heardPayloadHash = 0;
-    heardRepeaterCount = 0;
+    // Register a pending tracker for echo detection.
+    // The tracker stays in pending state (payloadHash == 0) until the first
+    // matching GRP_TXT re-flood arrives containing our node hash.
+    bool registered = false;
+    for (auto& t : _trackers) {
+      if (t.active) continue;  // skip active trackers
+      if (static_cast<size_t>(std::strlen(text)) >= sizeof(t.text)) break;
+      std::strncpy(t.text, text, sizeof(t.text) - 1);
+      t.text[sizeof(t.text) - 1] = '\0';
+      t.channelIdx = channelIdx;
+      t.sentTimeMs = millis();
+      t.payloadHash = 0;  // pending
+      t.echoCount = 0;
+      t.active = true;
+      registered = true;
+      LOG_DBG("MESH", "ECHO tracker registered: ch=%d text=\"%.30s\" ourNodeHash=0x%02X", (int)channelIdx, text,
+              (int)_ourNodeHash);
+      break;
+    }
+    if (!registered) {
+      LOG_DBG("MESH", "ECHO tracker FULL: could not register ch=%d \"%.30s\"", (int)channelIdx, text);
+    }
   }
   return ok;
 }
@@ -494,49 +512,116 @@ void MeshCoreClient::setChannelHeardCallback(ChannelHeardCallback cb, void* ctx)
 }
 
 void MeshCoreClient::handleRxLog(const uint8_t* data, size_t len) {
-  if (!heardActive) return;
-
-  uint32_t now = millis();
-  if (now - heardStartMs > HEARD_TOTAL_WINDOW_MS) {
-    heardActive = false;  // stop counting after the total window elapses
+  if (_ourNodeHash == 0) {
+    LOG_DBG("MESH", "ECHO SKIP: ourNodeHash not set yet (no SELF_INFO)");
     return;
   }
 
   uint8_t hashes[MeshProto::MESH_MAX_PATH_HASHES];
   uint8_t hashCount = 0;
   uint32_t payloadHash = 0;
-  if (!MeshProto::parseChannelReflood(data, len, hashes, sizeof(hashes), hashCount, payloadHash)) {
-    return;  // not a channel (GRP_TXT) packet
+  bool pathContainsOurHash = false;
+  if (!MeshProto::parseChannelReflood(data, len, hashes, sizeof(hashes), hashCount, payloadHash, _ourNodeHash,
+                                      pathContainsOurHash)) {
+    return;  // not a GRP_TXT packet
   }
 
-  // Lock onto the first channel message we hear shortly after our send, then
-  // only count re-floods that carry the same payload.
-  if (heardPayloadHash == 0) {
-    if (now - heardStartMs > HEARD_LOCK_WINDOW_MS) return;  // too late to be ours
-    heardPayloadHash = payloadHash;
-  } else if (payloadHash != heardPayloadHash) {
-    return;  // a different channel message
+  LOG_DBG("MESH", "ECHO RX_LOG: GRP_TXT ourHash=%s payloadHash=0x%08lX hashCount=%d",
+          pathContainsOurHash ? "YES" : "NO", (unsigned long)payloadHash, (int)hashCount);
+
+  // Only track re-floods of messages that originated from our companion
+  // (our node hash appears in the path).
+  if (!pathContainsOurHash) {
+    LOG_DBG("MESH", "ECHO SKIP: path does not contain ourNodeHash 0x%02X", (int)_ourNodeHash);
+    return;
   }
 
-  bool changed = false;
-  for (uint8_t i = 0; i < hashCount; ++i) {
-    uint8_t h = hashes[i];
-    bool known = false;
-    for (uint8_t j = 0; j < heardRepeaterCount; ++j) {
-      if (heardHashes[j] == h) {
-        known = true;
-        break;
+  uint32_t now = millis();
+
+  // Expire stale trackers
+  for (auto& t : _trackers) {
+    if (t.active && now - t.sentTimeMs > TRACKER_TTL_MS) {
+      LOG_DBG("MESH", "ECHO EXPIRE: tracker ch=%d \"%.20s\" age=%lums", (int)t.channelIdx, t.text,
+              (unsigned long)(now - t.sentTimeMs));
+      t.active = false;
+    }
+  }
+
+  // Find a matching tracker
+  SentChannelTracker* found = nullptr;
+  for (auto& t : _trackers) {
+    if (!t.active) continue;
+
+    if (t.payloadHash == 0) {
+      // Pending tracker: match by channelIdx + text within lock window
+      if (t.channelIdx == 0) continue;  // channel not set on pending tracker
+      if (now - t.sentTimeMs > TRACKER_LOCK_WINDOW_MS) {
+        LOG_DBG("MESH", "ECHO EXPIRE pending: ch=%d \"%.20s\" age=%lums", (int)t.channelIdx, t.text,
+                (unsigned long)(now - t.sentTimeMs));
+        t.active = false;  // expired
+        continue;
+      }
+      // This is the first matching re-flood — lock onto it
+      found = &t;
+      LOG_DBG("MESH", "ECHO LOCK: pending tracker ch=%d \"%.20s\" → payloadHash=0x%08lX", (int)t.channelIdx, t.text,
+              (unsigned long)payloadHash);
+      break;
+    } else if (t.payloadHash == payloadHash) {
+      // Already-locked tracker: match by payload hash
+      found = &t;
+      LOG_DBG("MESH", "ECHO MATCH: locked tracker ch=%d echoCount=%d payloadHash=0x%08lX", (int)t.channelIdx,
+              (int)t.echoCount, (unsigned long)payloadHash);
+      break;
+    }
+  }
+
+  if (!found) {
+#if LOG_LEVEL >= 2
+    uint8_t activeCount = 0;
+    for (auto& t : _trackers) {
+      if (t.active) activeCount++;
+    }
+    LOG_DBG("MESH", "ECHO SKIP: no matching tracker (active=%d payloadHash=0x%08lX)", (int)activeCount,
+            (unsigned long)payloadHash);
+#endif
+    return;
+  }
+
+  if (found->payloadHash == 0) {
+    // Transition from pending → locked
+    found->payloadHash = payloadHash;
+    found->echoCount = 1;  // first re-flood = echo count 1
+    LOG_DBG("MESH", "ECHO FIRST: ch=%d echoCount=1", (int)found->channelIdx);
+    if (heardCb) {
+      heardCb(found->channelIdx, 1, hashes, heardCbCtx);
+    }
+  } else {
+    // Already locked — count distinct repeaters (dedup by hash)
+    bool changed = false;
+    for (uint8_t i = 0; i < hashCount; ++i) {
+      uint8_t h = hashes[i];
+      bool known = false;
+      // Check against previously-counted hashes in earlier re-floods.
+      // We re-scan from scratch because we don't persist per-tracker dedup state,
+      // so the count is approximate but guaranteed non-decreasing.
+      for (uint8_t j = 0; j < found->echoCount; ++j) {
+        if (hashes[j] == h) {
+          known = true;
+          break;
+        }
+      }
+      if (!known && found->echoCount < MeshProto::MESH_MAX_PATH_HASHES) {
+        found->echoCount++;
+        changed = true;
       }
     }
-    if (!known && heardRepeaterCount < MAX_HEARD_REPEATERS) {
-      heardHashes[heardRepeaterCount++] = h;
-      changed = true;
+    if (changed && heardCb) {
+      LOG_DBG("MESH", "ECHO UPDATE: ch=%d echoCount=%d", (int)found->channelIdx, (int)found->echoCount);
+      heardCb(found->channelIdx, found->echoCount, hashes, heardCbCtx);
+    } else {
+      LOG_DBG("MESH", "ECHO NODUP: ch=%d echoCount=%d (no new repeaters)", (int)found->channelIdx,
+              (int)found->echoCount);
     }
-  }
-
-  if (changed && heardCb) {
-    LOG_DBG("MESH", "Channel msg heard by %d repeater(s)", (int)heardRepeaterCount);
-    heardCb(heardChannelIdx, heardRepeaterCount, heardHashes, heardCbCtx);
   }
 }
 
@@ -668,6 +753,8 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
   switch (pktType) {
     case MeshProto::PKT_SELF_INFO:
       MeshProto::parseSelfInfo(data, len, companion);
+      _ourNodeHash = companion.publicKey[0];  // first byte = routing hash for echo detection
+      LOG_DBG("MESH", "ECHO ourNodeHash = 0x%02X (from companion pubkey)", (int)_ourNodeHash);
       LOG_INF("MESH", "Self info: %s", companion.name);
       break;
 

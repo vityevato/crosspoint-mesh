@@ -7,6 +7,14 @@
 // Maximum messages stored per thread on SD card
 static constexpr uint16_t MAX_MSGS_PER_THREAD = 200;
 
+/// On-disk metadata for one conversation (channel or DM).
+struct ConvMeta {
+  uint16_t count = 0;
+  uint32_t startGlobalId = 0;
+  uint32_t endGlobalId = 0;
+  uint32_t scrollPosition = 0;
+};
+
 class MeshCoreMessageStore {
  public:
   // Initialize store for a specific companion (or nullptr for bare init).
@@ -23,15 +31,36 @@ class MeshCoreMessageStore {
   static void bleAddrToKey(const char* bleAddr, char* keyOut, size_t keySize);
 
   // Channel messages
+  bool clearChannelMessages(uint8_t channelIdx);
   bool appendChannelMessage(uint8_t channelIdx, const MeshCoreMessage& msg);
   uint16_t getChannelMessageCount(uint8_t channelIdx);
-  bool loadChannelMessages(uint8_t channelIdx, uint16_t offset, MeshCoreMessage* out, uint8_t count, uint8_t& loaded);
+  bool loadChannelMessages(uint8_t channelIdx, uint32_t startGlobalId, MeshCoreMessage* out, uint8_t maxCount,
+                           uint8_t& loaded);
+
+  // Update an existing channel message by globalId — called when a repeater
+  // refloods the message (pathLength + snr change after send).
+  bool updateChannelMessage(uint8_t channelIdx, uint32_t globalId, uint8_t newPathLength, int8_t newSnr);
 
   // Direct messages
+  bool clearDirectMessages(const uint8_t* pubkey32);
   bool appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg);
   uint16_t getDirectMessageCount(const uint8_t* pubkey32);
-  bool loadDirectMessages(const uint8_t* pubkey32, uint16_t offset, MeshCoreMessage* out, uint8_t count,
+  bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startGlobalId, MeshCoreMessage* out, uint8_t maxCount,
                           uint8_t& loaded);
+
+  // Update an existing direct message by globalId — called when delivery
+  // status transitions (SENT → ACKED or SENT → FAILED).
+  bool updateDirectMessage(const uint8_t* pubkey32, uint32_t globalId, DeliveryStatus newStatus);
+
+  // Conversation metadata
+  bool getChannelMeta(uint8_t channelIdx, ConvMeta& out);
+  bool getDirectMeta(const uint8_t* pubkey32, ConvMeta& out);
+
+  // Thread scroll position (globalId-based)
+  bool saveChannelPosition(uint8_t channelIdx, uint32_t globalId);
+  uint32_t loadChannelPosition(uint8_t channelIdx);
+  bool saveDirectPosition(const uint8_t* pubkey32, uint32_t globalId);
+  uint32_t loadDirectPosition(const uint8_t* pubkey32);
 
   // Saved contacts
   bool saveContacts(const MeshCoreContact* contacts, uint8_t count);
@@ -48,12 +77,6 @@ class MeshCoreMessageStore {
   // Static: load PIN for any companion by BLE address (no instance needed)
   static bool loadCompanionPinForAddress(const char* bleAddr, uint32_t* out);
 
-  // Thread scroll position (lastSeenGlobalId)
-  bool saveThreadPosition(uint8_t channelIdx, uint32_t globalId);
-  uint32_t loadThreadPosition(uint8_t channelIdx);
-  bool saveDirectPosition(const uint8_t* pubkey32, uint32_t globalId);
-  uint32_t loadDirectPosition(const uint8_t* pubkey32);
-
   // Unread counts
   bool saveUnreadCounts(const uint16_t* channelUnread, uint8_t channelCount, const MeshCoreContact* contacts,
                         uint8_t contactCount);
@@ -69,9 +92,15 @@ class MeshCoreMessageStore {
   void buildChannelPath(uint8_t idx, char* out, size_t maxLen);
   void buildContactPath(const uint8_t* pubkey32, char* out, size_t maxLen);
 
-  // Generic message append/load for both channel and DM files
-  bool appendMessage(const char* filePath, const MeshCoreMessage& msg);
-  bool truncateOldMessages(const char* filePath, uint16_t currentCount, uint32_t nextGlobalId);
-  uint16_t getMessageCount(const char* filePath);
-  bool loadMessages(const char* filePath, uint16_t offset, MeshCoreMessage* out, uint8_t count, uint8_t& loaded);
+  // Build path to conversation directory: "conv/ch_<idx>" or "conv/dm_<hex>"
+  void buildConvPath(uint8_t channelIdx, char* out, size_t maxLen);
+  void buildConvPath(const uint8_t* pubkey32, char* out, size_t maxLen);
+
+  // Read/write meta.bin for a conversation
+  bool readMeta(const char* convPath, ConvMeta& out);
+  bool writeMeta(const char* convPath, const ConvMeta& meta);
+
+  // Delete oldest message file, update meta accordingly
+  // Caller holds meta with count >= MAX_MSGS_PER_THREAD
+  bool dropOldestMessage(const char* convPath, ConvMeta& meta);
 };

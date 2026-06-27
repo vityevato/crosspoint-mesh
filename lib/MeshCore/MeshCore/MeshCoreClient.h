@@ -71,12 +71,42 @@ class MeshCoreClient {
   bool getLastCommandResult() const { return lastCmdSuccess; }
 
   // Callbacks (set before connect)
+
+  /// Called when BLE connection state changes (DISCONNECTED → SCANNING →
+  /// CONNECTING → INITIALIZING → CONNECTED, or any → DISCONNECTED on
+  /// disconnect/timeout). Use this to update UI indicators.
   void setStateCallback(StateCallback cb, void* ctx);
+
+  /// Called when a channel or direct message arrives from the companion.
+  /// The MeshCoreMessage is fully parsed — direction, type, sender info,
+  /// timestamp, pathLength, and text are populated. Store it via
+  /// MeshCoreMessageStore and update unread counts.
   void setMessageCallback(MessageCallback cb, void* ctx);
+
+  /// Called during contact enumeration (companion sends contact list
+  /// split into multiple packets). isEnd signals the last packet.
+  /// Build your contact list incrementally from these calls.
   void setContactCallback(ContactCallback cb, void* ctx);
+
+  /// Called when the companion relays a self-advert from a mesh node
+  /// (received during scanning or passively). Use to discover nodes
+  /// reachable through the companion.
   void setAdvertCallback(AdvertCallback cb, void* ctx);
+
+  /// Called when channel configuration data arrives from the companion
+  /// (name, secret, type for a given index). Populate the channel list
+  /// from these calls.
   void setChannelCallback(ChannelCallback cb, void* ctx);
+
+  /// Called during init if the companion requires a BLE pairing PIN
+  /// (pin is non-zero). Show the PIN on screen so the user can enter
+  /// it on the companion device.
   void setPinCallback(PinCallback cb, void* ctx);
+
+  /// Called when repeaters re-flood our outgoing channel message.
+  /// heardCount is the number of distinct repeaters heard so far, hashes
+  /// is an array of first-byte-of-public-key routing hashes. Use to
+  /// update the message's pathLength in the store for live UI feedback.
   void setChannelHeardCallback(ChannelHeardCallback cb, void* ctx);
 
   // Must be called from activity loop() to process responses and timeouts
@@ -158,18 +188,25 @@ class MeshCoreClient {
   ChannelHeardCallback heardCb = nullptr;
   void* heardCbCtx = nullptr;
 
-  // Tracker for "heard by N repeaters" on the most recent outgoing channel
-  // message. Armed on a successful sendChannelMessage(); fed by PUSH_LOG_RX_DATA
-  // (0x88) frames containing GRP_TXT re-floods of that message.
-  static constexpr uint8_t MAX_HEARD_REPEATERS = MeshProto::MESH_MAX_PATH_HASHES;
-  static constexpr uint32_t HEARD_LOCK_WINDOW_MS = 12000;   // window to lock onto our payload
-  static constexpr uint32_t HEARD_TOTAL_WINDOW_MS = 45000;  // total time we keep counting
-  bool heardActive = false;
-  uint8_t heardChannelIdx = 0;
-  uint32_t heardStartMs = 0;
-  uint32_t heardPayloadHash = 0;  // 0 = not yet locked onto our message's payload
-  uint8_t heardHashes[MAX_HEARD_REPEATERS] = {};
-  uint8_t heardRepeaterCount = 0;
+  // Tracker for "heard by N repeaters" on outgoing channel messages.
+  // Each call to sendChannelMessage() registers a pending tracker keyed by the
+  // message text + channel.  When a matching GRP_TXT re-flood arrives via
+  // PUSH_LOG_RX_DATA (0x88) and contains our node hash in its path, the tracker
+  // transitions from pending (payloadHash == 0) to locked (payloadHash != 0).
+  // Subsequent re-floods with the same payload hash increment echoCount.
+  struct SentChannelTracker {
+    char text[184];  // MAX_MSG_TEXT_LEN from MeshCoreTypes.h
+    uint8_t channelIdx;
+    uint32_t sentTimeMs;
+    uint32_t payloadHash;  // 0 = pending (not yet locked)
+    uint8_t echoCount;
+    bool active;
+  };
+  static constexpr uint8_t MAX_TRACKERS = 4;
+  static constexpr uint32_t TRACKER_TTL_MS = 45000;          // 45 s expiry
+  static constexpr uint32_t TRACKER_LOCK_WINDOW_MS = 15000;  // 15 s to lock pending tracker
+  SentChannelTracker _trackers[MAX_TRACKERS] = {};
+  uint8_t _ourNodeHash = 0;  // first byte of companion public key, set on SELF_INFO
   void handleRxLog(const uint8_t* data, size_t len);
 
   char autoReconnectAddr[18] = {};

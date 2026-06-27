@@ -12,4 +12,5 @@
 //
 // Tag "MEMM" (mesh-mem) is intentionally distinct so the whole memory trace
 // can be grepped out of the serial/SD log in isolation.
-#define MESHCORE_LOG_HEAP(label) LOG_DBG("MEMM", "%s free=%u largest=%u", (label), ESP.getFreeHeap(), ESP.getMaxAllocHeap())
+#define MESHCORE_LOG_HEAP(label) \
+  LOG_DBG("MEMM", "%s free=%u largest=%u", (label), ESP.getFreeHeap(), ESP.getMaxAllocHeap())

@@ -91,21 +91,19 @@ struct MeshCoreChannel {
 static constexpr uint16_t MAX_MSG_TEXT_LEN = 184;
 
 struct MeshCoreMessage {
-  MsgDirection direction = MsgDirection::RECEIVED;       ///< Message direction (received/sent)
-  MsgType type = MsgType::CHANNEL;                       ///< Message type (channel/direct)
-  uint8_t pubkeyPrefix[6] = {};                          ///< First 6 bytes of sender's public key
-  char senderName[64] = {};                              ///< Sender name
-  uint8_t channelIdx = 0;                                ///< Channel index (for channel messages)
-  uint32_t timestamp = 0;                                ///< Message timestamp (unix timestamp, sec)
-  int8_t snr = 0;                                        ///< SNR at reception (dB)
-  uint8_t pathLength = 0;                                ///< Number of hops the message traversed
+  MsgDirection direction = MsgDirection::RECEIVED;  ///< Message direction (received/sent)
+  MsgType type = MsgType::CHANNEL;                  ///< Message type (channel/direct)
+  uint8_t pubkeyPrefix[6] = {};                     ///< First 6 bytes of sender's public key
+  char senderName[64] = {};                         ///< Sender name
+  uint8_t channelIdx = 0;                           ///< Channel index (for channel messages)
+  uint32_t timestamp = 0;                           ///< Message timestamp (unix timestamp, sec)
+  int8_t snr = 0;                                   ///< SNR at reception (dB)
+  uint8_t pathLength = 0;  ///< Received: hop count; Sent (channel): number of repeaters that reflooded
   DeliveryStatus deliveryStatus = DeliveryStatus::SENT;  ///< Delivery status
   uint32_t globalId = 0;                                 ///< Monotonic ID, never resets on truncate
   char text[MAX_MSG_TEXT_LEN] = {};                      ///< Message text (up to MAX_MSG_TEXT_LEN bytes)
 };
 
-// Message store file version (increment on format change)
-static constexpr uint8_t MESHCORE_MSG_FILE_VERSION = 2;
 // Contact store file version
 static constexpr uint8_t MESHCORE_CONTACT_FILE_VERSION = 1;
 // Conservative max message text length for send UI

@@ -25,4 +25,21 @@ inline void formatMeshCoreHopCount(uint8_t pathLength, char* buf, size_t bufSize
   }
 }
 
+/**
+ * Formats the number of repeats (refloods) a sent channel message received.
+ *
+ * @param pathLength  Number of repeats
+ * @param buf         Destination buffer (must be >= 24 chars)
+ * @param bufSize     Size of destination buffer
+ */
+inline void formatMeshCoreHeardRepeats(uint8_t pathLength, char* buf, size_t bufSize) {
+  if (pathLength == 0) {
+    snprintf(buf, bufSize, "Not heard yet");
+  } else if (pathLength == 1) {
+    snprintf(buf, bufSize, "Heard 1 Repeat");
+  } else {
+    snprintf(buf, bufSize, "Heard %d Repeats", pathLength);
+  }
+}
+
 }  // namespace meshcore

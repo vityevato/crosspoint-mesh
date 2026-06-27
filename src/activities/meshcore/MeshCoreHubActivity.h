@@ -87,12 +87,14 @@ class MeshCoreHubActivity final : public Activity {
   static void onContactReceived(const MeshCoreContact& c, bool isEnd, void* ctx);
   static void onAdvertReceived(const MeshCoreContact& node, void* ctx);
   static void onChannelReceived(const MeshCoreChannel& ch, void* ctx);
+  static void onChannelHeard(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx);
 
   void handleStateChange(BleConnectionState state);
   void handleMessage(const MeshCoreMessage& msg);
   void handleContact(const MeshCoreContact& c, bool isEnd);
   void handleAdvert(const MeshCoreContact& node);
   void handleChannel(const MeshCoreChannel& ch);
+  void handleChannelHeard(uint8_t channelIdx, uint8_t heardCount);
 
   void renderChannelList(const Rect& contentRect);
   void renderContactList(const Rect& contentRect);

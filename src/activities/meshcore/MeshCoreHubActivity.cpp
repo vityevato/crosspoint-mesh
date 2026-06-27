@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,10 @@ void MeshCoreHubActivity::onChannelReceived(const MeshCoreChannel& ch, void* ctx
   static_cast<MeshCoreHubActivity*>(ctx)->handleChannel(ch);
 }
 
+void MeshCoreHubActivity::onChannelHeard(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx) {
+  static_cast<MeshCoreHubActivity*>(ctx)->handleChannelHeard(channelIdx, heardCount);
+}
+
 // --- Lifecycle ---
 
 static constexpr const char* MESH_LOG_PATH = "/meshcore.log";
@@ -92,6 +97,59 @@ void MeshCoreHubActivity::onEnter() {
     for (int i = 0; i < 8; ++i) {
       channels[i].unreadCount = channelUnread[i];
     }
+
+    // TEMP: one-shot test message generation for all channels (per companion)
+    char key[13];
+    MeshCoreMessageStore::bleAddrToKey(addr, key, sizeof(key));
+    char zhopaPath[64];
+    snprintf(zhopaPath, sizeof(zhopaPath), "/.crosspoint/meshcore/%s/zhopa.data", key);
+    if (key[0] != '\0' && !Storage.exists(zhopaPath)) {
+      constexpr uint16_t kTestCount = 200;
+      const uint32_t baseTime = 1740000000u;
+
+      LOG_INF("MESH", "Generating test messages for all channels...");
+
+      for (uint8_t ch = 0; ch < 8; ch++) {
+        LOG_DBG("MESH", "Channel %d: clearing old messages...", ch);
+        store.clearChannelMessages(ch);
+
+        static constexpr const char* SENDER_NAMES[] = {"Alice", "Bob", "Charlie", "Diana", "Eve"};
+        static constexpr const char* TEMPLATES[] = {
+            "%d. This is a test message to verify MeshCore thread view layout and scrolling behavior.",
+            "%d. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore.",
+            "%d. Quick test with short text.",
+            "%d. Longer message to test text wrapping over several lines in the thread view. Shows how the layout "
+            "handles extended content with proper indentation for sent and received messages.",
+        };
+
+        for (uint16_t i = 0; i < kTestCount; i++) {
+          MeshCoreMessage msg = {};
+          msg.direction = (i % 3 == 0) ? MsgDirection::SENT : MsgDirection::RECEIVED;
+          msg.type = MsgType::CHANNEL;
+          msg.channelIdx = ch;
+
+          if (msg.direction == MsgDirection::RECEIVED) {
+            snprintf(msg.senderName, sizeof(msg.senderName), "%s", SENDER_NAMES[i % 5]);
+          }
+
+          msg.timestamp = baseTime + i * 30;
+          msg.pathLength = static_cast<uint8_t>(i % 4);
+          msg.deliveryStatus = DeliveryStatus::SENT;
+          snprintf(msg.text, sizeof(msg.text), TEMPLATES[i % 4], static_cast<int>(i + 1));
+
+          store.appendChannelMessage(ch, msg);
+        }
+        LOG_DBG("MESH", "Channel %d: done", ch);
+      }
+
+      // Write marker so this never runs again for this companion
+      HalFile marker = Storage.open(zhopaPath, O_WRONLY | O_CREAT);
+      if (marker) {
+        marker.write(reinterpret_cast<const uint8_t*>("1"), 1);
+        // DESTRUCTOR_CLOSES_FILE=1 → marker closes at scope exit
+      }
+      LOG_INF("MESH", "Test messages generated, marker written");
+    }
   }
   MESHCORE_LOG_HEAP("Hub onEnter:after store");
 
@@ -100,6 +158,7 @@ void MeshCoreHubActivity::onEnter() {
   client.setContactCallback(onContactReceived, this);
   client.setAdvertCallback(onAdvertReceived, this);
   client.setChannelCallback(onChannelReceived, this);
+  client.setChannelHeardCallback(onChannelHeard, this);
 
   if (hasAddr && addr[0] != '\0') {
     client.setAutoReconnectAddress(addr, addrType);
@@ -672,6 +731,19 @@ void MeshCoreHubActivity::handleChannel(const MeshCoreChannel& ch) {
     channels[ch.index] = ch;
     // Preserve unread count from store (not in protocol response)
     requestUpdate();
+  }
+}
+
+void MeshCoreHubActivity::handleChannelHeard(uint8_t channelIdx, uint8_t heardCount) {
+  // Update pathLength on the last SENT message in this channel
+  ConvMeta meta;
+  if (!store.getChannelMeta(channelIdx, meta) || meta.count == 0) return;
+
+  uint8_t loaded = 0;
+  MeshCoreMessage lastMsg;
+  store.loadChannelMessages(channelIdx, meta.endGlobalId, &lastMsg, 1, loaded);
+  if (loaded == 1 && lastMsg.direction == MsgDirection::SENT) {
+    store.updateChannelMessage(channelIdx, lastMsg.globalId, heardCount, lastMsg.snr);
   }
 }
 
