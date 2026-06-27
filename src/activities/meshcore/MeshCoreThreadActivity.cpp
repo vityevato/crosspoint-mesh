@@ -82,7 +82,7 @@ void MeshCoreThreadActivity::onEnter() {
   if (totalMessages > 0) {
     uint32_t savedId = isChannel ? store.loadChannelPosition(channelIdx) : store.loadDirectPosition(contactPubkey);
     if (savedId > 0) {
-      // Find first message with globalId >= savedId
+      // Find first message with id >= savedId
       int startIdx = 0;
       for (int i = 0; i < totalMessages; i++) {
         if (messages[i].globalId >= savedId) {
@@ -104,7 +104,7 @@ void MeshCoreThreadActivity::onEnter() {
 
 void MeshCoreThreadActivity::onExit() {
   MESHCORE_LOG_HEAP("Thread onExit");
-  uint32_t id = firstVisibleGlobalId();
+  uint32_t id = firstVisibleId();
   if (id > 0) {
     if (isChannel) {
       store.saveChannelPosition(channelIdx, id);
@@ -123,16 +123,16 @@ void MeshCoreThreadActivity::loadPage() {
   if (isChannel) {
     if (store.getChannelMeta(channelIdx, meta)) {
       totalMessages = meta.count;
-      _lastEndGlobalId = meta.endGlobalId;
-      startId = meta.startGlobalId;
+      _lastEndId = meta.endId;
+      startId = meta.startId;
     } else {
       totalMessages = 0;
     }
   } else {
     if (store.getDirectMeta(contactPubkey, meta)) {
       totalMessages = meta.count;
-      _lastEndGlobalId = meta.endGlobalId;
-      startId = meta.startGlobalId;
+      _lastEndId = meta.endId;
+      startId = meta.startId;
     } else {
       totalMessages = 0;
     }
@@ -164,7 +164,7 @@ void MeshCoreThreadActivity::loadPage() {
   requestUpdate();
 }
 
-uint32_t MeshCoreThreadActivity::firstVisibleGlobalId() const {
+uint32_t MeshCoreThreadActivity::firstVisibleId() const {
   if (messages.empty()) return 0;
   uint16_t acc = 0;
   for (int i = 0; i < totalMessages; i++) {
@@ -222,9 +222,9 @@ void MeshCoreThreadActivity::scrollDown() {
     scrollOffsetPx = maxOffset;
   }
   if (isChannel) {
-    store.saveChannelPosition(channelIdx, firstVisibleGlobalId());
+    store.saveChannelPosition(channelIdx, firstVisibleId());
   } else {
-    store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
+    store.saveDirectPosition(contactPubkey, firstVisibleId());
   }
   requestUpdate();
 }
@@ -237,9 +237,9 @@ void MeshCoreThreadActivity::scrollUp() {
     scrollOffsetPx = 0;
   }
   if (isChannel) {
-    store.saveChannelPosition(channelIdx, firstVisibleGlobalId());
+    store.saveChannelPosition(channelIdx, firstVisibleId());
   } else {
-    store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
+    store.saveDirectPosition(contactPubkey, firstVisibleId());
   }
   requestUpdate();
 }
@@ -258,11 +258,11 @@ auto MeshCoreThreadActivity::getVisibleState() const -> VisibleState {
   return vs;
 }
 
-void MeshCoreThreadActivity::saveScrollPosition() {
+void MeshCoreThreadActivity::savePosition() {
   if (isChannel) {
-    store.saveChannelPosition(channelIdx, firstVisibleGlobalId());
+    store.saveChannelPosition(channelIdx, firstVisibleId());
   } else {
-    store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
+    store.saveDirectPosition(contactPubkey, firstVisibleId());
   }
 }
 
@@ -308,7 +308,7 @@ void MeshCoreThreadActivity::scrollDownByMessage() {
   uint16_t maxOffset = totalPixels > ch ? totalPixels - ch : 0;
   if (scrollOffsetPx > maxOffset) scrollOffsetPx = maxOffset;
 
-  saveScrollPosition();
+  savePosition();
   requestUpdate();
 }
 
@@ -329,7 +329,7 @@ void MeshCoreThreadActivity::scrollUpByMessage() {
     }
   }
 
-  saveScrollPosition();
+  savePosition();
   requestUpdate();
 }
 
@@ -388,11 +388,11 @@ void MeshCoreThreadActivity::loop() {
     bool wasAtEnd = (scrollOffsetPx + contentHeight() >= totalPixels || totalPixels == 0);
     uint16_t oldCount = totalMessages;
 
-    uint32_t startId = _lastEndGlobalId + 1;
-    uint16_t newCount = meta.endGlobalId - _lastEndGlobalId;
+    uint32_t startId = _lastEndId + 1;
+    uint16_t newCount = meta.endId - _lastEndId;
 
     totalMessages = meta.count;
-    _lastEndGlobalId = meta.endGlobalId;
+    _lastEndId = meta.endId;
     messages.resize(totalMessages);
     msgHeights.resize(totalMessages);
 
@@ -662,9 +662,9 @@ void MeshCoreThreadActivity::sendMessage() {
                              // Reload all messages, scroll to end, save position
                              loadPage();
                              if (isChannel) {
-                               store.saveChannelPosition(channelIdx, firstVisibleGlobalId());
+                               store.saveChannelPosition(channelIdx, firstVisibleId());
                              } else {
-                               store.saveDirectPosition(contactPubkey, firstVisibleGlobalId());
+                               store.saveDirectPosition(contactPubkey, firstVisibleId());
                              }
                            } else {
                              LOG_ERR("MESH", "Failed to queue message");

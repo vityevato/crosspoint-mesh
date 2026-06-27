@@ -320,10 +320,18 @@ subdirectory named after the BLE address with colons stripped
 ├── <ble-addr-hex>/           # Per-companion data directory
 │   ├── contacts.bin          # Saved contacts
 │   ├── unread.bin            # Unread message counters
-│   ├── ch_<N>/               # Channel message threads (N = 0–7)
-│   │   └── msgs.bin
-│   └── dm_<pubkey-hex>/      # Direct message threads (12-char hex)
-│       └── msgs.bin
+│   ├── pin.bin               # BLE pairing PIN (4 bytes LE)
+│   ├── conv/                 # Conversation storage
+│   │   ├── ch_<N>/           # Channel message threads (N = 0–7)
+│   │   │   ├── meta.bin
+│   │   │   └── msgs/
+│   │   │       ├── 1         # MeshCoreMessage (268 bytes), filename = id
+│   │   │       ├── 2
+│   │   │       └── ...
+│   │   └── dm_<hexprefix>/   # Direct message threads (12-char hex)
+│   │       ├── meta.bin
+│   │       └── msgs/
+│   │           └── ...
 ```
 
 ### `companion.json`
@@ -369,15 +377,33 @@ accepted and treated as type 0.
 | N+1 | 1 | Contact count (`uint8_t`) |
 | N+2 | 8× | Per-contact: 6-byte pubkey prefix + `uint16_t` unread |
 
-### `msgs.bin` (channels and DMs) — version 1
+### `meta.bin` — version 1
+
+Per-conversation metadata file. Located at `conv/ch_<N>/meta.bin` and
+`conv/dm_<hexprefix>/meta.bin`.
 
 | Offset | Size | Field |
 | --- | --- | --- |
-| 0 | 1 | Version (`MESHCORE_MSG_FILE_VERSION = 1`) |
-| 1 | 2 | Count (`uint16_t`, little-endian) |
-| 3+ | 264× | `MeshCoreMessage` records |
+| 0 | 1 | Version (`META_FILE_VERSION = 1`) |
+| 1 | 2 | `count` — number of messages (`uint16_t`) |
+| 3 | 4 | `startId` — id of the oldest message (`uint32_t`) |
+| 7 | 4 | `endId` — id of the newest message (`uint32_t`) |
+| 11 | 4 | `positionId` — id of last viewed message (scroll restore) |
 
-**`MeshCoreMessage`** (264 bytes):
+Total: 15 bytes.
+
+### `msgs/` — per-file message storage
+
+Each message is stored as a separate file named by its numeric id
+(e.g. `msgs/1`, `msgs/2`, ...). The id is a monotonically increasing
+`uint32_t`, starting at 1 for the first message of a conversation.
+Ids never reset — even after old messages are trimmed at
+`MAX_MSGS_PER_THREAD` (200), new messages continue incrementing
+from the last `endId`.
+
+Each file contains exactly one `MeshCoreMessage` struct (268 bytes):
+
+**`MeshCoreMessage`** (268 bytes):
 
 | Offset | Size | Field |
 | --- | --- | --- |
@@ -390,10 +416,8 @@ accepted and treated as type 0.
 | 77 | 1 | `snr` — signal-to-noise ratio (`int8_t`) |
 | 78 | 1 | `pathLength` — LoRa hop count |
 | 79 | 1 | `deliveryStatus` — `DeliveryStatus` enum |
-| 80 | 184 | `text` — message text (`MAX_MSG_TEXT_LEN`) |
-
-Messages are truncated to the newest 100 when the count reaches
-`MAX_MSGS_PER_THREAD` (200).
+| 80 | 4 | `globalId` — monotonic message id (`uint32_t`) |
+| 84 | 184 | `text` — message text (`MAX_MSG_TEXT_LEN`) |
 
 ### Cache invalidation
 

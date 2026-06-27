@@ -10,9 +10,9 @@ static constexpr uint16_t MAX_MSGS_PER_THREAD = 200;
 /// On-disk metadata for one conversation (channel or DM).
 struct ConvMeta {
   uint16_t count = 0;
-  uint32_t startGlobalId = 0;
-  uint32_t endGlobalId = 0;
-  uint32_t scrollPosition = 0;
+  uint32_t startId = 0;
+  uint32_t endId = 0;
+  uint32_t positionId = 0;
 };
 
 class MeshCoreMessageStore {
@@ -34,32 +34,32 @@ class MeshCoreMessageStore {
   bool clearChannelMessages(uint8_t channelIdx);
   bool appendChannelMessage(uint8_t channelIdx, const MeshCoreMessage& msg);
   uint16_t getChannelMessageCount(uint8_t channelIdx);
-  bool loadChannelMessages(uint8_t channelIdx, uint32_t startGlobalId, MeshCoreMessage* out, uint8_t maxCount,
+  bool loadChannelMessages(uint8_t channelIdx, uint32_t startId, MeshCoreMessage* out, uint8_t maxCount,
                            uint8_t& loaded);
 
-  // Update an existing channel message by globalId — called when a repeater
+  // Update an existing channel message by id — called when a repeater
   // refloods the message (pathLength + snr change after send).
-  bool updateChannelMessage(uint8_t channelIdx, uint32_t globalId, uint8_t newPathLength, int8_t newSnr);
+  bool updateChannelMessage(uint8_t channelIdx, uint32_t id, uint8_t newPathLength, int8_t newSnr);
 
   // Direct messages
   bool clearDirectMessages(const uint8_t* pubkey32);
   bool appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg);
   uint16_t getDirectMessageCount(const uint8_t* pubkey32);
-  bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startGlobalId, MeshCoreMessage* out, uint8_t maxCount,
+  bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, MeshCoreMessage* out, uint8_t maxCount,
                           uint8_t& loaded);
 
-  // Update an existing direct message by globalId — called when delivery
+  // Update an existing direct message by id — called when delivery
   // status transitions (SENT → ACKED or SENT → FAILED).
-  bool updateDirectMessage(const uint8_t* pubkey32, uint32_t globalId, DeliveryStatus newStatus);
+  bool updateDirectMessage(const uint8_t* pubkey32, uint32_t id, DeliveryStatus newStatus);
 
   // Conversation metadata
   bool getChannelMeta(uint8_t channelIdx, ConvMeta& out);
   bool getDirectMeta(const uint8_t* pubkey32, ConvMeta& out);
 
-  // Thread scroll position (globalId-based)
-  bool saveChannelPosition(uint8_t channelIdx, uint32_t globalId);
+  // Thread scroll position (id-based)
+  bool saveChannelPosition(uint8_t channelIdx, uint32_t id);
   uint32_t loadChannelPosition(uint8_t channelIdx);
-  bool saveDirectPosition(const uint8_t* pubkey32, uint32_t globalId);
+  bool saveDirectPosition(const uint8_t* pubkey32, uint32_t id);
   uint32_t loadDirectPosition(const uint8_t* pubkey32);
 
   // Saved contacts

@@ -155,8 +155,10 @@ Typical persisted areas on SD:
     <ble-addr-hex>/
       contacts.bin
       unread.bin
-      ch_<N>/msgs.bin
-      dm_<pubkey-hex>/msgs.bin
+      pin.bin
+      conv/
+        ch_<N>/meta.bin, msgs/{1,2,...}
+        dm_<hexprefix>/meta.bin, msgs/{1,2,...}
   settings.json
   state.json
 ```

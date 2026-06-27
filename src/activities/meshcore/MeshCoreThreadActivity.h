@@ -85,22 +85,22 @@ class MeshCoreThreadActivity final : public Activity {
   bool _advertIsFlood = false;
   uint32_t _advertSentTime = 0;
 
-  // Last known endGlobalId for new-message detection
-  uint32_t _lastEndGlobalId = 0;
+  // Last known endId for new-message detection
+  uint32_t _lastEndId = 0;
 
   // Ephemeral toast overlay
   StatusMessageOverlay _toast;
 
   void loadPage();
   void recomputeHeights();
-  uint32_t firstVisibleGlobalId() const;
+  uint32_t firstVisibleId() const;
   int contentHeight() const;
   void scrollDown();
   void scrollUp();
   void scrollDownByMessage();
   void scrollUpByMessage();
   void scrollToEnd();
-  void saveScrollPosition();
+  void savePosition();
   void sendMessage();
 
   /// Result of resolving scrollOffsetPx into the first visible message index.

@@ -118,9 +118,9 @@ bool MeshCoreMessageStore::readMeta(const char* convPath, ConvMeta& out) {
   if (file.read(&version, 1) != 1 || version != META_FILE_VERSION) return false;
 
   if (file.read(reinterpret_cast<uint8_t*>(&out.count), 2) != 2) return false;
-  if (file.read(reinterpret_cast<uint8_t*>(&out.startGlobalId), 4) != 4) return false;
-  if (file.read(reinterpret_cast<uint8_t*>(&out.endGlobalId), 4) != 4) return false;
-  if (file.read(reinterpret_cast<uint8_t*>(&out.scrollPosition), 4) != 4) return false;
+  if (file.read(reinterpret_cast<uint8_t*>(&out.startId), 4) != 4) return false;
+  if (file.read(reinterpret_cast<uint8_t*>(&out.endId), 4) != 4) return false;
+  if (file.read(reinterpret_cast<uint8_t*>(&out.positionId), 4) != 4) return false;
   return true;
 }
 
@@ -134,9 +134,9 @@ bool MeshCoreMessageStore::writeMeta(const char* convPath, const ConvMeta& meta)
   uint8_t version = META_FILE_VERSION;
   if (file.write(&version, 1) != 1) return false;
   if (file.write(reinterpret_cast<const uint8_t*>(&meta.count), 2) != 2) return false;
-  if (file.write(reinterpret_cast<const uint8_t*>(&meta.startGlobalId), 4) != 4) return false;
-  if (file.write(reinterpret_cast<const uint8_t*>(&meta.endGlobalId), 4) != 4) return false;
-  if (file.write(reinterpret_cast<const uint8_t*>(&meta.scrollPosition), 4) != 4) return false;
+  if (file.write(reinterpret_cast<const uint8_t*>(&meta.startId), 4) != 4) return false;
+  if (file.write(reinterpret_cast<const uint8_t*>(&meta.endId), 4) != 4) return false;
+  if (file.write(reinterpret_cast<const uint8_t*>(&meta.positionId), 4) != 4) return false;
   return true;
 }
 
@@ -145,7 +145,7 @@ bool MeshCoreMessageStore::writeMeta(const char* convPath, const ConvMeta& meta)
 bool MeshCoreMessageStore::dropOldestMessage(const char* convPath, ConvMeta& meta) {
   // Delete the oldest message file
   char msgPath[80];
-  snprintf(msgPath, sizeof(msgPath), "%s/msgs/%lu", convPath, static_cast<unsigned long>(meta.startGlobalId));
+  snprintf(msgPath, sizeof(msgPath), "%s/msgs/%lu", convPath, static_cast<unsigned long>(meta.startId));
 
   if (Storage.exists(msgPath)) {
     if (!Storage.remove(msgPath)) {
@@ -154,7 +154,7 @@ bool MeshCoreMessageStore::dropOldestMessage(const char* convPath, ConvMeta& met
     }
   }
 
-  meta.startGlobalId++;
+  meta.startId++;
   meta.count--;
   return true;
 }
@@ -196,13 +196,13 @@ bool MeshCoreMessageStore::appendChannelMessage(uint8_t channelIdx, const MeshCo
     if (!dropOldestMessage(convPath, meta)) return false;
   }
 
-  // Assign globalId
+  // Assign id
   uint32_t newId;
   if (meta.count == 0) {
     newId = 1;
-    meta.startGlobalId = 1;
+    meta.startId = 1;
   } else {
-    newId = meta.endGlobalId + 1;
+    newId = meta.endId + 1;
   }
 
   // Write message as individual file
@@ -219,7 +219,7 @@ bool MeshCoreMessageStore::appendChannelMessage(uint8_t channelIdx, const MeshCo
 
   // Update metadata
   meta.count++;
-  meta.endGlobalId = newId;
+  meta.endId = newId;
   return writeMeta(convPath, meta);
 }
 
@@ -231,7 +231,7 @@ uint16_t MeshCoreMessageStore::getChannelMessageCount(uint8_t channelIdx) {
   return meta.count;
 }
 
-bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t startGlobalId, MeshCoreMessage* out,
+bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t startId, MeshCoreMessage* out,
                                                uint8_t maxCount, uint8_t& loaded) {
   loaded = 0;
 
@@ -241,12 +241,12 @@ bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t star
   ConvMeta meta;
   if (!readMeta(convPath, meta)) return false;
 
-  if (meta.count == 0 || startGlobalId > meta.endGlobalId) return true;
+  if (meta.count == 0 || startId > meta.endId) return true;
 
   char msgsPath[80];
   snprintf(msgsPath, sizeof(msgsPath), "%s/msgs", convPath);
 
-  for (uint32_t gid = startGlobalId; gid <= meta.endGlobalId && loaded < maxCount; ++gid) {
+  for (uint32_t gid = startId; gid <= meta.endId && loaded < maxCount; ++gid) {
     char msgPath[80];
     snprintf(msgPath, sizeof(msgPath), "%s/%lu", msgsPath, static_cast<unsigned long>(gid));
 
@@ -261,13 +261,13 @@ bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t star
   return loaded > 0;
 }
 
-bool MeshCoreMessageStore::updateChannelMessage(uint8_t channelIdx, uint32_t globalId, uint8_t newPathLength,
+bool MeshCoreMessageStore::updateChannelMessage(uint8_t channelIdx, uint32_t id, uint8_t newPathLength,
                                                 int8_t newSnr) {
   char convPath[64];
   buildConvPath(channelIdx, convPath, sizeof(convPath));
 
   char msgPath[80];
-  snprintf(msgPath, sizeof(msgPath), "%s/msgs/%lu", convPath, static_cast<unsigned long>(globalId));
+  snprintf(msgPath, sizeof(msgPath), "%s/msgs/%lu", convPath, static_cast<unsigned long>(id));
 
   HalFile file;
   if (!Storage.openFileForRead("MESH", msgPath, file)) return false;
@@ -325,13 +325,13 @@ bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const Me
     if (!dropOldestMessage(convPath, meta)) return false;
   }
 
-  // Assign globalId
+  // Assign id
   uint32_t newId;
   if (meta.count == 0) {
     newId = 1;
-    meta.startGlobalId = 1;
+    meta.startId = 1;
   } else {
-    newId = meta.endGlobalId + 1;
+    newId = meta.endId + 1;
   }
 
   // Write message as individual file
@@ -348,7 +348,7 @@ bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const Me
 
   // Update metadata
   meta.count++;
-  meta.endGlobalId = newId;
+  meta.endId = newId;
   return writeMeta(convPath, meta);
 }
 
@@ -360,7 +360,7 @@ uint16_t MeshCoreMessageStore::getDirectMessageCount(const uint8_t* pubkey32) {
   return meta.count;
 }
 
-bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t startGlobalId, MeshCoreMessage* out,
+bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, MeshCoreMessage* out,
                                               uint8_t maxCount, uint8_t& loaded) {
   loaded = 0;
 
@@ -370,12 +370,12 @@ bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t 
   ConvMeta meta;
   if (!readMeta(convPath, meta)) return false;
 
-  if (meta.count == 0 || startGlobalId > meta.endGlobalId) return true;
+  if (meta.count == 0 || startId > meta.endId) return true;
 
   char msgsPath[80];
   snprintf(msgsPath, sizeof(msgsPath), "%s/msgs", convPath);
 
-  for (uint32_t gid = startGlobalId; gid <= meta.endGlobalId && loaded < maxCount; ++gid) {
+  for (uint32_t gid = startId; gid <= meta.endId && loaded < maxCount; ++gid) {
     char msgPath[80];
     snprintf(msgPath, sizeof(msgPath), "%s/%lu", msgsPath, static_cast<unsigned long>(gid));
 
@@ -390,12 +390,12 @@ bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t 
   return loaded > 0;
 }
 
-bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t globalId, DeliveryStatus newStatus) {
+bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t id, DeliveryStatus newStatus) {
   char convPath[64];
   buildConvPath(pubkey32, convPath, sizeof(convPath));
 
   char msgPath[80];
-  snprintf(msgPath, sizeof(msgPath), "%s/msgs/%lu", convPath, static_cast<unsigned long>(globalId));
+  snprintf(msgPath, sizeof(msgPath), "%s/msgs/%lu", convPath, static_cast<unsigned long>(id));
 
   HalFile file;
   if (!Storage.openFileForRead("MESH", msgPath, file)) return false;
@@ -431,14 +431,14 @@ bool MeshCoreMessageStore::getDirectMeta(const uint8_t* pubkey32, ConvMeta& out)
 
 // --- Thread scroll position (stored in meta.bin) ---
 
-bool MeshCoreMessageStore::saveChannelPosition(uint8_t channelIdx, uint32_t globalId) {
+bool MeshCoreMessageStore::saveChannelPosition(uint8_t channelIdx, uint32_t id) {
   if (companionDir[0] == '\0') return false;
   char convPath[64];
   buildConvPath(channelIdx, convPath, sizeof(convPath));
 
   ConvMeta meta;
   if (!readMeta(convPath, meta)) return false;
-  meta.scrollPosition = globalId;
+  meta.positionId = id;
   return writeMeta(convPath, meta);
 }
 
@@ -448,17 +448,17 @@ uint32_t MeshCoreMessageStore::loadChannelPosition(uint8_t channelIdx) {
   buildConvPath(channelIdx, convPath, sizeof(convPath));
   ConvMeta meta;
   if (!readMeta(convPath, meta)) return 0;
-  return meta.scrollPosition;
+  return meta.positionId;
 }
 
-bool MeshCoreMessageStore::saveDirectPosition(const uint8_t* pubkey32, uint32_t globalId) {
+bool MeshCoreMessageStore::saveDirectPosition(const uint8_t* pubkey32, uint32_t id) {
   if (companionDir[0] == '\0') return false;
   char convPath[64];
   buildConvPath(pubkey32, convPath, sizeof(convPath));
 
   ConvMeta meta;
   if (!readMeta(convPath, meta)) return false;
-  meta.scrollPosition = globalId;
+  meta.positionId = id;
   return writeMeta(convPath, meta);
 }
 
@@ -468,7 +468,7 @@ uint32_t MeshCoreMessageStore::loadDirectPosition(const uint8_t* pubkey32) {
   buildConvPath(pubkey32, convPath, sizeof(convPath));
   ConvMeta meta;
   if (!readMeta(convPath, meta)) return 0;
-  return meta.scrollPosition;
+  return meta.positionId;
 }
 
 // --- Contacts ---
