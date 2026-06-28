@@ -9,10 +9,16 @@ static constexpr uint16_t MAX_MSGS_PER_THREAD = 200;
 
 /// On-disk metadata for one conversation (channel or DM).
 struct ConvMeta {
-  uint16_t count = 0;
-  uint32_t startId = 0;
-  uint32_t endId = 0;
-  uint32_t positionId = 0;
+  uint16_t count = 0;       ///< Number of messages in this conversation
+  uint32_t startId = 0;     ///< Id of the oldest message (monotonically increasing)
+  uint32_t endId = 0;       ///< Id of the newest message
+  uint32_t positionId = 0;  ///< Id of the viewed message (scroll restore) which
+                            ///< corresponds to positionPx below
+  uint16_t totalPx = 0;     ///< Total pixel height of all messages in this thread
+  uint16_t positionPx = 0;  ///< Pixel offset of the messages list (scroll restore),
+                            ///< measured from the top of the first message and
+                            ///< corresponds to the top of the viewport on screen.
+  int fontId = 0;           ///< Font ID used to render this thread (for scroll restore)
 };
 
 class MeshCoreMessageStore {
@@ -32,10 +38,24 @@ class MeshCoreMessageStore {
 
   // Channel messages
   bool clearChannelMessages(uint8_t channelIdx);
+
+  /// Append a message to the channel.
+  /// Side effect: updates ConvMeta (count, endId, totalPx).
+  /// If the thread is at capacity, drops the oldest message first
+  /// (which also adjusts positionPx).
   bool appendChannelMessage(uint8_t channelIdx, const MeshCoreMessage& msg);
-  uint16_t getChannelMessageCount(uint8_t channelIdx);
   bool loadChannelMessages(uint8_t channelIdx, uint32_t startId, MeshCoreMessage* out, uint8_t maxCount,
                            uint8_t& loaded);
+  /// Overload that loads messages by pixel height rather than count.
+  /// Starts at startId and loads messages filling up to maxHeightPx pixels.
+  /// If up is true — loads backwards (ids <= startId), otherwise forwards (ids >= startId).
+  /// On return, messages in out are always ordered by id ascending.
+  bool loadChannelMessages(uint8_t channelIdx, uint32_t startId, uint16_t maxHeightPx, bool up, MeshCoreMessage* out,
+                           uint8_t& loaded);
+
+  /// Overload that replaces the entire message on disk by id.
+  /// Reads the existing file, applies all fields from msg, then writes it back.
+  bool updateChannelMessage(uint8_t channelIdx, uint32_t id, MeshCoreMessage& msg);
 
   // Update an existing channel message by id — called when a repeater
   // refloods the message (pathLength + snr change after send).
@@ -43,10 +63,24 @@ class MeshCoreMessageStore {
 
   // Direct messages
   bool clearDirectMessages(const uint8_t* pubkey32);
+
+  /// Append a message to a direct-message conversation.
+  /// Side effect: updates ConvMeta (count, endId, totalPx).
+  /// If the thread is at capacity, drops the oldest message first
+  /// (which also adjusts positionPx).
   bool appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg);
-  uint16_t getDirectMessageCount(const uint8_t* pubkey32);
   bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, MeshCoreMessage* out, uint8_t maxCount,
                           uint8_t& loaded);
+  /// Overload that loads messages by pixel height rather than count.
+  /// Starts at startId and loads messages filling up to maxHeightPx pixels.
+  /// If up is true — loads backwards (ids <= startId), otherwise forwards (ids >= startId).
+  /// On return, messages in out are always ordered by id ascending.
+  bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint16_t maxHeightPx, bool up,
+                          MeshCoreMessage* out, uint8_t& loaded);
+
+  /// Overload that replaces the entire message on disk by id.
+  /// Reads the existing file, applies all fields from msg, then writes it back.
+  bool updateDirectMessage(const uint8_t* pubkey32, uint32_t id, MeshCoreMessage& msg);
 
   // Update an existing direct message by id — called when delivery
   // status transitions (SENT → ACKED or SENT → FAILED).
@@ -55,12 +89,8 @@ class MeshCoreMessageStore {
   // Conversation metadata
   bool getChannelMeta(uint8_t channelIdx, ConvMeta& out);
   bool getDirectMeta(const uint8_t* pubkey32, ConvMeta& out);
-
-  // Thread scroll position (id-based)
-  bool saveChannelPosition(uint8_t channelIdx, uint32_t id);
-  uint32_t loadChannelPosition(uint8_t channelIdx);
-  bool saveDirectPosition(const uint8_t* pubkey32, uint32_t id);
-  uint32_t loadDirectPosition(const uint8_t* pubkey32);
+  bool saveChannelMeta(uint8_t channelIdx, const ConvMeta& meta);
+  bool saveDirectMeta(const uint8_t* pubkey32, const ConvMeta& meta);
 
   // Saved contacts
   bool saveContacts(const MeshCoreContact* contacts, uint8_t count);
@@ -100,7 +130,24 @@ class MeshCoreMessageStore {
   bool readMeta(const char* convPath, ConvMeta& out);
   bool writeMeta(const char* convPath, const ConvMeta& meta);
 
-  // Delete oldest message file, update meta accordingly
-  // Caller holds meta with count >= MAX_MSGS_PER_THREAD
+  /// Delete oldest message file and update meta accordingly:
+  /// startId++, count--, totalPx -= heightPx, positionPx -= heightPx.
+  /// Caller must hold meta with count >= MAX_MSGS_PER_THREAD.
   bool dropOldestMessage(const char* convPath, ConvMeta& meta);
+
+  /// Unified message loader — all four public load*Messages overloads
+  /// delegate here.
+  /// maxCount > 0 → count mode: loads up to maxCount messages from
+  ///                startId forward (ascending).
+  /// maxHeightPx > 0 → height mode: loads per 'up' direction, stops
+  ///                    when accumulated heightPx ≥ maxHeightPx.
+  /// Messages in out are always ordered by id ascending.
+  bool loadMessages(const char* convPath, uint32_t startId, uint8_t maxCount, uint16_t maxHeightPx, bool up,
+                    MeshCoreMessage* out, uint8_t& loaded);
+
+  /// Read a single message by id from a conversation directory.
+  bool readMessage(const char* convPath, uint32_t id, MeshCoreMessage& msg);
+
+  /// Write (overwrite) a single message by id to a conversation directory.
+  bool writeMessage(const char* convPath, uint32_t id, const MeshCoreMessage& msg);
 };

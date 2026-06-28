@@ -100,8 +100,9 @@ struct MeshCoreMessage {
   int8_t snr = 0;                                   ///< SNR at reception (dB)
   uint8_t pathLength = 0;  ///< Received: hop count; Sent (channel): number of repeaters that reflooded
   DeliveryStatus deliveryStatus = DeliveryStatus::SENT;  ///< Delivery status
-  uint32_t globalId = 0;                                 ///< Monotonic ID, never resets on truncate
-  char text[MAX_MSG_TEXT_LEN] = {};                      ///< Message text (up to MAX_MSG_TEXT_LEN bytes)
+  uint32_t id = 0;                                       ///< Monotonic ID, never resets on truncate
+  uint16_t heightPx = 0;             ///< Cached rendered height in pixels (for thread view scrolling)
+  char text[MAX_MSG_TEXT_LEN] = {};  ///< Message text (up to MAX_MSG_TEXT_LEN bytes)
 };
 
 // Contact store file version

@@ -80,12 +80,18 @@ void MeshCoreThreadActivity::onEnter() {
 
   // Restore saved scroll position from last session
   if (totalMessages > 0) {
-    uint32_t savedId = isChannel ? store.loadChannelPosition(channelIdx) : store.loadDirectPosition(contactPubkey);
+    ConvMeta meta;
+    uint32_t savedId = 0;
+    if (isChannel) {
+      if (store.getChannelMeta(channelIdx, meta)) savedId = meta.positionId;
+    } else {
+      if (store.getDirectMeta(contactPubkey, meta)) savedId = meta.positionId;
+    }
     if (savedId > 0) {
       // Find first message with id >= savedId
       int startIdx = 0;
       for (int i = 0; i < totalMessages; i++) {
-        if (messages[i].globalId >= savedId) {
+        if (messages[i].id >= savedId) {
           startIdx = i;
           break;
         }
@@ -104,14 +110,7 @@ void MeshCoreThreadActivity::onEnter() {
 
 void MeshCoreThreadActivity::onExit() {
   MESHCORE_LOG_HEAP("Thread onExit");
-  uint32_t id = firstVisibleId();
-  if (id > 0) {
-    if (isChannel) {
-      store.saveChannelPosition(channelIdx, id);
-    } else {
-      store.saveDirectPosition(contactPubkey, id);
-    }
-  }
+  savePosition();
   Activity::onExit();
 }
 
@@ -169,11 +168,11 @@ uint32_t MeshCoreThreadActivity::firstVisibleId() const {
   uint16_t acc = 0;
   for (int i = 0; i < totalMessages; i++) {
     if (acc + msgHeights[i] > scrollOffsetPx) {
-      return messages[i].globalId;
+      return messages[i].id;
     }
     acc += msgHeights[i];
   }
-  return messages.back().globalId;
+  return messages.back().id;
 }
 
 void MeshCoreThreadActivity::recomputeHeights() {
@@ -221,11 +220,7 @@ void MeshCoreThreadActivity::scrollDown() {
   } else {
     scrollOffsetPx = maxOffset;
   }
-  if (isChannel) {
-    store.saveChannelPosition(channelIdx, firstVisibleId());
-  } else {
-    store.saveDirectPosition(contactPubkey, firstVisibleId());
-  }
+  savePosition();
   requestUpdate();
 }
 
@@ -236,11 +231,7 @@ void MeshCoreThreadActivity::scrollUp() {
   } else {
     scrollOffsetPx = 0;
   }
-  if (isChannel) {
-    store.saveChannelPosition(channelIdx, firstVisibleId());
-  } else {
-    store.saveDirectPosition(contactPubkey, firstVisibleId());
-  }
+  savePosition();
   requestUpdate();
 }
 
@@ -259,10 +250,15 @@ auto MeshCoreThreadActivity::getVisibleState() const -> VisibleState {
 }
 
 void MeshCoreThreadActivity::savePosition() {
+  ConvMeta meta;
   if (isChannel) {
-    store.saveChannelPosition(channelIdx, firstVisibleId());
+    if (!store.getChannelMeta(channelIdx, meta)) return;
+    meta.positionId = firstVisibleId();
+    store.saveChannelMeta(channelIdx, meta);
   } else {
-    store.saveDirectPosition(contactPubkey, firstVisibleId());
+    if (!store.getDirectMeta(contactPubkey, meta)) return;
+    meta.positionId = firstVisibleId();
+    store.saveDirectMeta(contactPubkey, meta);
   }
 }
 
@@ -661,11 +657,7 @@ void MeshCoreThreadActivity::sendMessage() {
                              }
                              // Reload all messages, scroll to end, save position
                              loadPage();
-                             if (isChannel) {
-                               store.saveChannelPosition(channelIdx, firstVisibleId());
-                             } else {
-                               store.saveDirectPosition(contactPubkey, firstVisibleId());
-                             }
+                             savePosition();
                            } else {
                              LOG_ERR("MESH", "Failed to queue message");
                              requestUpdate();

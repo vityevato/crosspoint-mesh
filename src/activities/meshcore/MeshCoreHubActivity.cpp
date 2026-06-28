@@ -743,7 +743,7 @@ void MeshCoreHubActivity::handleChannelHeard(uint8_t channelIdx, uint8_t heardCo
   MeshCoreMessage lastMsg;
   store.loadChannelMessages(channelIdx, meta.endId, &lastMsg, 1, loaded);
   if (loaded == 1 && lastMsg.direction == MsgDirection::SENT) {
-    store.updateChannelMessage(channelIdx, lastMsg.globalId, heardCount, lastMsg.snr);
+    store.updateChannelMessage(channelIdx, lastMsg.id, heardCount, lastMsg.snr);
   }
 }
 
