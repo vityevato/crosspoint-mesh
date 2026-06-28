@@ -240,11 +240,11 @@ bool MeshCoreMessageStore::appendChannelMessage(uint8_t channelIdx, const MeshCo
   return writeMeta(convPath, meta);
 }
 
-bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t startId, MeshCoreMessage* out,
-                                               uint8_t maxCount, uint8_t& loaded) {
+bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t startId, uint8_t maxCount, bool up,
+                                               MeshCoreMessage* out, uint8_t& loaded) {
   char convPath[64];
   buildConvPath(channelIdx, convPath, sizeof(convPath));
-  return loadMessages(convPath, startId, maxCount, 0, false, out, loaded);
+  return loadMessages(convPath, startId, maxCount, 0, up, out, loaded);
 }
 
 bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t startId, uint16_t maxHeightPx, bool up,
@@ -336,11 +336,11 @@ bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const Me
   return writeMeta(convPath, meta);
 }
 
-bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, MeshCoreMessage* out,
-                                              uint8_t maxCount, uint8_t& loaded) {
+bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint8_t maxCount, bool up,
+                                              MeshCoreMessage* out, uint8_t& loaded) {
   char convPath[64];
   buildConvPath(pubkey32, convPath, sizeof(convPath));
-  return loadMessages(convPath, startId, maxCount, 0, false, out, loaded);
+  return loadMessages(convPath, startId, maxCount, 0, up, out, loaded);
 }
 
 bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint16_t maxHeightPx, bool up,
@@ -383,17 +383,46 @@ bool MeshCoreMessageStore::loadMessages(const char* convPath, uint32_t startId, 
   bool byHeight = (maxHeightPx > 0);
 
   if (byCount) {
-    if (startId > meta.endId) return true;
+    if (up) {
+      // Load backwards from startId, then reverse to ascending order
+      uint32_t gid = startId;
+      while (gid >= meta.startId && loaded < maxCount) {
+        char msgPath[80];
+        snprintf(msgPath, sizeof(msgPath), "%s/%lu", msgsPath, static_cast<unsigned long>(gid));
 
-    for (uint32_t gid = startId; gid <= meta.endId && loaded < maxCount; ++gid) {
-      char msgPath[80];
-      snprintf(msgPath, sizeof(msgPath), "%s/%lu", msgsPath, static_cast<unsigned long>(gid));
+        HalFile file;
+        if (!Storage.openFileForRead("MESH", msgPath, file)) {
+          if (gid == 0) break;
+          --gid;
+          continue;
+        }
 
-      HalFile file;
-      if (!Storage.openFileForRead("MESH", msgPath, file)) continue;
+        if (file.read(reinterpret_cast<uint8_t*>(&out[loaded]), sizeof(MeshCoreMessage)) == sizeof(MeshCoreMessage)) {
+          loaded++;
+        }
+        if (gid == 0) break;
+        --gid;
+      }
 
-      if (file.read(reinterpret_cast<uint8_t*>(&out[loaded]), sizeof(MeshCoreMessage)) == sizeof(MeshCoreMessage)) {
-        loaded++;
+      // Reverse to ascending order
+      for (uint8_t i = 0; i < loaded / 2; ++i) {
+        MeshCoreMessage tmp = out[i];
+        out[i] = out[loaded - 1 - i];
+        out[loaded - 1 - i] = tmp;
+      }
+    } else {
+      if (startId > meta.endId) return loaded > 0;
+
+      for (uint32_t gid = startId; gid <= meta.endId && loaded < maxCount; ++gid) {
+        char msgPath[80];
+        snprintf(msgPath, sizeof(msgPath), "%s/%lu", msgsPath, static_cast<unsigned long>(gid));
+
+        HalFile file;
+        if (!Storage.openFileForRead("MESH", msgPath, file)) continue;
+
+        if (file.read(reinterpret_cast<uint8_t*>(&out[loaded]), sizeof(MeshCoreMessage)) == sizeof(MeshCoreMessage)) {
+          loaded++;
+        }
       }
     }
   } else if (byHeight) {

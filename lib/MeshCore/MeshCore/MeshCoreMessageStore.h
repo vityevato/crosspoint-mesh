@@ -44,8 +44,8 @@ class MeshCoreMessageStore {
   /// If the thread is at capacity, drops the oldest message first
   /// (which also adjusts positionPx).
   bool appendChannelMessage(uint8_t channelIdx, const MeshCoreMessage& msg);
-  bool loadChannelMessages(uint8_t channelIdx, uint32_t startId, MeshCoreMessage* out, uint8_t maxCount,
-                           uint8_t& loaded);
+  bool loadChannelMessages(uint8_t channelIdx, uint32_t startId, uint8_t maxCount, bool up,
+                           MeshCoreMessage* out, uint8_t& loaded);
   /// Overload that loads messages by pixel height rather than count.
   /// Starts at startId and loads messages filling up to maxHeightPx pixels.
   /// If up is true — loads backwards (ids <= startId), otherwise forwards (ids >= startId).
@@ -69,8 +69,8 @@ class MeshCoreMessageStore {
   /// If the thread is at capacity, drops the oldest message first
   /// (which also adjusts positionPx).
   bool appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg);
-  bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, MeshCoreMessage* out, uint8_t maxCount,
-                          uint8_t& loaded);
+  bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint8_t maxCount, bool up,
+    MeshCoreMessage* out, uint8_t& loaded);
   /// Overload that loads messages by pixel height rather than count.
   /// Starts at startId and loads messages filling up to maxHeightPx pixels.
   /// If up is true — loads backwards (ids <= startId), otherwise forwards (ids >= startId).

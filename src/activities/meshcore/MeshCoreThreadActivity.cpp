@@ -144,9 +144,9 @@ void MeshCoreThreadActivity::loadPage() {
   if (totalMessages > 0) {
     uint8_t loaded = 0;
     if (isChannel) {
-      store.loadChannelMessages(channelIdx, startId, messages.data(), static_cast<uint8_t>(totalMessages), loaded);
+      store.loadChannelMessages(channelIdx, startId, static_cast<uint8_t>(totalMessages), false, messages.data(), loaded);
     } else {
-      store.loadDirectMessages(contactPubkey, startId, messages.data(), static_cast<uint8_t>(totalMessages), loaded);
+      store.loadDirectMessages(contactPubkey, startId, static_cast<uint8_t>(totalMessages), false, messages.data(), loaded);
     }
     if (loaded < totalMessages) {
       messages.resize(loaded);
@@ -394,11 +394,11 @@ void MeshCoreThreadActivity::loop() {
 
     uint8_t loaded = 0;
     if (isChannel) {
-      store.loadChannelMessages(channelIdx, startId, messages.data() + oldCount, static_cast<uint8_t>(newCount),
-                                loaded);
+      store.loadChannelMessages(channelIdx, startId, static_cast<uint8_t>(newCount), false,
+                                messages.data() + oldCount, loaded);
     } else {
-      store.loadDirectMessages(contactPubkey, startId, messages.data() + oldCount, static_cast<uint8_t>(newCount),
-                               loaded);
+      store.loadDirectMessages(contactPubkey, startId, static_cast<uint8_t>(newCount), false,
+                               messages.data() + oldCount, loaded);
     }
 
     // Compute heights for new messages only
