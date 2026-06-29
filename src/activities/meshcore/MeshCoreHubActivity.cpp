@@ -23,8 +23,8 @@
 #include "MeshCoreThreadActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
-#include "fontIds.h"
 #include "utils/MeshCoreHeapLog.h"
+#include "utils/MeshCoreMessageHeight.h"
 
 #ifdef SIMULATOR
 #include <MeshCoreMockHotkeys.h>
@@ -137,9 +137,22 @@ void MeshCoreHubActivity::onEnter() {
           msg.deliveryStatus = DeliveryStatus::SENT;
           snprintf(msg.text, sizeof(msg.text), TEMPLATES[i % 4], static_cast<int>(i + 1));
 
+          // Calculate render height for batch-load scrolling support
+          const auto& tmetrics = UITheme::getInstance().getMetrics();
+          int tcontentWidth = renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
+          msg.heightPx =
+              measureMeshCoreMessageHeight(renderer, SETTINGS.getReaderFontId(), tcontentWidth, true, msg, tmetrics);
+
           store.appendChannelMessage(ch, msg);
         }
-        LOG_DBG("MESH", "Channel %d: done", ch);
+
+        // Record the fontId used for height calculation in ConvMeta
+        ConvMeta chMeta;
+        if (store.getChannelMeta(ch, chMeta)) {
+          chMeta.fontId = SETTINGS.getReaderFontId();
+          store.saveChannelMeta(ch, chMeta);
+        }
+        LOG_DBG("MESH", "Channel %d: done (fontId=%d)", ch, SETTINGS.getReaderFontId());
       }
 
       // Write marker so this never runs again for this companion
@@ -623,10 +636,20 @@ void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
 }
 
 void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
+  // Compute rendered height before storing (needed for batch-load scrolling)
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  int contentWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
+  int fontId = SETTINGS.getReaderFontId();
+
+  MeshCoreMessage msgWithHeight = msg;
+  msgWithHeight.heightPx = measureMeshCoreMessageHeight(renderer, fontId, contentWidth, msg.type == MsgType::CHANNEL,
+                                                        msgWithHeight, metrics);
+  LOG_DBG("MESH", "Computed heightPx=%d for msg id=%u", msgWithHeight.heightPx, msgWithHeight.id);
+
   if (msg.type == MsgType::CHANNEL) {
-    bool ok = store.appendChannelMessage(msg.channelIdx, msg);
+    bool ok = store.appendChannelMessage(msg.channelIdx, msgWithHeight);
     if (ok) {
-      LOG_INF("MESH", "Stored ch%d msg: %.40s", msg.channelIdx, msg.text);
+      LOG_INF("MESH", "Stored ch%d msg: %.40s", msg.channelIdx, msgWithHeight.text);
     } else {
       LOG_ERR("MESH", "Failed to store ch%d msg", msg.channelIdx);
     }
@@ -637,7 +660,7 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
     // Check if sender is in saved contacts
     for (uint8_t i = 0; i < savedContactCount; ++i) {
       if (memcmp(savedContacts[i].publicKey, msg.pubkeyPrefix, 6) == 0) {
-        store.appendDirectMessage(savedContacts[i].publicKey, msg);
+        store.appendDirectMessage(savedContacts[i].publicKey, msgWithHeight);
         savedContacts[i].unreadCount++;
         requestUpdate();
         return;

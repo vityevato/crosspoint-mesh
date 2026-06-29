@@ -12,7 +12,6 @@
 
 #include "MeshCoreSubtitle.h"
 #include "components/UITheme.h"
-#include "fontIds.h"
 #include "utils/MeshCoreDisplayUtils.h"
 #include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreTimeUtils.h"

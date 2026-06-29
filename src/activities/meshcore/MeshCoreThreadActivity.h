@@ -18,17 +18,16 @@ struct Rect;
  * MeshCoreThreadActivity shows a pixel-paginated message thread for either a
  * LoRa channel (group chat) or a direct message conversation with a
  * contact, with a two-tab UI:
- *  - MESSAGES — pixel-scrolled message list with send capability.
+ *  - MESSAGES — batch-loaded message list with send capability.
  *  - MENU — context-sensitive actions that differ for channels vs DMs.
+ *
+ * Only the visible batch (~10 messages) is kept in RAM. Messages are loaded
+ * on demand from SD card using height-based batch queries. Scroll state is
+ * managed via ConvMeta (positionId / positionPx / totalPx / fontId).
  *
  * Two constructors:
  *  - Channel thread: takes a channel index and name.
  *  - Direct message thread: takes a MeshCoreContact (stores pubkey).
- *
- * All messages are loaded into a std::vector on entry. Navigation advances
- * by exactly one viewport height (contentHeight pixels). A pixel-perfect
- * scrollbar shows the position within the total content. The activity
- * auto-refreshes when the store grows (new messages from hub callbacks).
  *
  * Tab navigation follows the same Settings-style pattern as the hub:
  *   selectedIndex == 0 → tab bar is highlighted, Confirm cycles tabs.
@@ -62,13 +61,34 @@ class MeshCoreThreadActivity final : public Activity {
   char threadName[64] = {};
   uint8_t contactPubkey[32] = {};
 
-  // All messages loaded into RAM (max MAX_MSGS_PER_THREAD = 200)
-  std::vector<MeshCoreMessage> messages;
-  std::vector<uint16_t> msgHeights;
-  uint16_t totalMessages = 0;
-  uint16_t totalPixels = 0;
-  uint16_t scrollOffsetPx = 0;
-  uint16_t contentWidth = 0;
+  // Batch loading — only visible messages, not the whole thread
+  static constexpr uint8_t MAX_VISIBLE_BATCH = 10;
+  MeshCoreMessage _visibleMsgs[MAX_VISIBLE_BATCH] = {};
+  uint8_t _visibleCount = 0;
+
+  // Cached conversation metadata (scroll state lives here)
+  ConvMeta _meta = {};
+
+  // Rendering bookkeeping (derived during draw, reset on scroll)
+  uint16_t _accHeight = 0;
+  uint32_t _firstVisibleId = 0;
+  uint32_t _lastVisibleId = 0;
+
+  // Cached font/layout for current session
+  int _bodyFontId = 0;
+  int _contentAreaWidth = 0;
+  int _contentAreaHeight = 0;
+
+  // Font recalculation state (async, non-blocking)
+  enum class RecalcState : uint8_t { IDLE = 0, RUNNING, DONE };
+  RecalcState _recalcState = RecalcState::IDLE;
+  uint32_t _recalcGid = 0;
+  uint32_t _recalcEndId = 0;
+  uint16_t _recalcNewTotalPx = 0;
+  ConvMeta _recalcMeta = {};
+  int _recalcFontId = 0;
+  int _recalcContentWidth = 0;
+  bool _recalcIsChannel = false;
 
   // Tab state
   Tab currentTab = Tab::MESSAGES;
@@ -85,48 +105,29 @@ class MeshCoreThreadActivity final : public Activity {
   bool _advertIsFlood = false;
   uint32_t _advertSentTime = 0;
 
-  // Last known endId for new-message detection
-  uint32_t _lastEndId = 0;
-
   // Ephemeral toast overlay
   StatusMessageOverlay _toast;
 
-  void loadPage();
-  void recomputeHeights();
-  uint32_t firstVisibleId() const;
   int contentHeight() const;
-  void scrollDown();
-  void scrollUp();
+  void loadVisibleBatch();
+  void loadVisibleBatchUp();
+  void drawVisibleMessages(const GfxRenderer& renderer, Rect rect, bool useReaderFontSettings,
+                           bool scanOnly = false);
+  void scrollDownPage();
+  void scrollUpPage();
   void scrollDownByMessage();
   void scrollUpByMessage();
-  void scrollToEnd();
   void savePosition();
   void sendMessage();
 
-  /// Result of resolving scrollOffsetPx into the first visible message index.
-  struct VisibleState {
-    int startIdx;       ///< First message with any part visible
-    uint16_t acc;       ///< Sum of msgHeights[0..startIdx-1]
-    int partialOffset;  ///< Pixels of startIdx scrolled off the top
-  };
-  [[nodiscard]] VisibleState getVisibleState() const;
+  // Font recalculation helpers
+  void _recalcStep();
+  void _finishRecalc();
+
   void switchTab(Tab tab);
   int getListCountForCurrentTab() const;
 
   void renderMenu(const Rect& contentRect);
-
-  uint16_t measureMessageHeight(const GfxRenderer& renderer, Rect rect, bool sender, const char* text, bool meta,
-                                bool useReaderFontSettings) const;
-  void drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages, const uint16_t* msgHeights,
-                    uint16_t totalPixels, uint16_t scrollOffsetPx, bool useReaderFontSettings,
-                    bool scanOnly = false) const;
-
-  // Per-message accessors used by drawMessages. Plain member methods (not std::function
-  // callbacks) so the render path makes no per-frame heap allocation for closures.
-  std::string messageSenderLabel(int i) const;
-  std::string messageBody(int i) const;
-  std::string messageMeta(int i) const;
-  bool messageOutgoing(int i) const;
 
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);

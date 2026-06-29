@@ -21,6 +21,7 @@
 #include "fontIds.h"
 #include "utils/MeshCoreDisplayUtils.h"
 #include "utils/MeshCoreHeapLog.h"
+#include "utils/MeshCoreMessageHeight.h"
 #include "utils/MeshCoreTimeUtils.h"
 
 namespace {
@@ -74,131 +75,92 @@ void MeshCoreThreadActivity::onEnter() {
   MESHCORE_LOG_HEAP("Thread onEnter:start");
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
-  contentWidth = renderer.getScreenWidth();
-  loadPage();
-  MESHCORE_LOG_HEAP("Thread onEnter:after loadPage");
 
-  // Restore saved scroll position from last session
-  if (totalMessages > 0) {
-    ConvMeta meta;
-    uint32_t savedId = 0;
-    if (isChannel) {
-      if (store.getChannelMeta(channelIdx, meta)) savedId = meta.positionId;
-    } else {
-      if (store.getDirectMeta(contactPubkey, meta)) savedId = meta.positionId;
-    }
-    if (savedId > 0) {
-      // Find first message with id >= savedId
-      int startIdx = 0;
-      for (int i = 0; i < totalMessages; i++) {
-        if (messages[i].id >= savedId) {
-          startIdx = i;
-          break;
-        }
-      }
-      // Convert to pixel offset
-      scrollOffsetPx = 0;
-      for (int i = 0; i < startIdx; i++) scrollOffsetPx += msgHeights[i];
-      int ch = contentHeight();
-      if (scrollOffsetPx + ch > totalPixels) {
-        scrollOffsetPx = (totalPixels > ch) ? totalPixels - ch : 0;
-      }
-    }
-    // else: savedId == 0 or not found — stay at scrollToEnd from loadPage
+  _bodyFontId = SETTINGS.getReaderFontId();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  _contentAreaWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
+  _contentAreaHeight = contentHeight();
+
+  // Load ConvMeta from store
+  bool hasMeta = isChannel ? store.getChannelMeta(channelIdx, _meta) : store.getDirectMeta(contactPubkey, _meta);
+
+  if (!hasMeta || _meta.count == 0) {
+    _visibleCount = 0;
+    MESHCORE_LOG_HEAP("Thread onEnter:empty thread");
+    return;
   }
+
+  // Check font match — if changed, recalculate all heights asynchronously
+  if (_meta.fontId != _bodyFontId) {
+    LOG_DBG("MESH", "Thread onEnter: font mismatch (meta=%d current=%d), starting recalc", _meta.fontId, _bodyFontId);
+    _recalcState = RecalcState::RUNNING;
+    _recalcGid = _meta.startId;
+    _recalcEndId = _meta.endId;
+    _recalcNewTotalPx = 0;
+    _recalcMeta = _meta;
+    _recalcFontId = _bodyFontId;
+    _recalcContentWidth = _contentAreaWidth;
+    _recalcIsChannel = isChannel;
+    _toast.show(tr(STR_MESHCORE_RECALC_LAYOUT), 0);  // persistent toast
+    _visibleCount = 0;                               // nothing to show until recalc completes
+    LOG_DBG("MESH", "Thread onEnter: recalculation started from id=%u to %u", _recalcGid, _recalcEndId);
+  } else {
+    loadVisibleBatch();
+    LOG_DBG("MESH", "Thread onEnter: loaded batch — posPx=%u posId=%u firstId=%u lastId=%u accHeight=%u totalPx=%u",
+            _meta.positionPx, _meta.positionId, _firstVisibleId, _lastVisibleId, _accHeight, _meta.totalPx);
+  }
+  MESHCORE_LOG_HEAP("Thread onEnter:end");
 }
 
 void MeshCoreThreadActivity::onExit() {
   MESHCORE_LOG_HEAP("Thread onExit");
   savePosition();
+  memset(_visibleMsgs, 0, sizeof(_visibleMsgs));
+  _visibleCount = 0;
   Activity::onExit();
 }
 
-void MeshCoreThreadActivity::loadPage() {
-  MESHCORE_LOG_HEAP("Thread loadPage:start");
+void MeshCoreThreadActivity::loadVisibleBatch() {
+  _visibleCount = 0;
+  _firstVisibleId = 0;
+  _lastVisibleId = 0;
 
-  ConvMeta meta;
-  uint32_t startId = 0;
+  if (_meta.count == 0) return;
+
+  uint32_t startId = _meta.positionId > 0 ? _meta.positionId : _meta.startId;
+  LOG_DBG("MESH", "loadVisibleBatch: startId=%u height=%d count=%u", startId, _contentAreaHeight, _meta.count);
+
   if (isChannel) {
-    if (store.getChannelMeta(channelIdx, meta)) {
-      totalMessages = meta.count;
-      _lastEndId = meta.endId;
-      startId = meta.startId;
-    } else {
-      totalMessages = 0;
-    }
+    store.loadChannelMessages(channelIdx, startId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
+                              _visibleMsgs, _visibleCount);
   } else {
-    if (store.getDirectMeta(contactPubkey, meta)) {
-      totalMessages = meta.count;
-      _lastEndId = meta.endId;
-      startId = meta.startId;
-    } else {
-      totalMessages = 0;
-    }
-  }
-  LOG_DBG("MESH", "Thread loadPage: count=%d sizeof(msg)=%zu", totalMessages, sizeof(MeshCoreMessage));
-
-  messages.resize(totalMessages);
-  msgHeights.resize(totalMessages);
-
-  if (totalMessages > 0) {
-    uint8_t loaded = 0;
-    if (isChannel) {
-      store.loadChannelMessages(channelIdx, startId, static_cast<uint8_t>(totalMessages), false, messages.data(), loaded);
-    } else {
-      store.loadDirectMessages(contactPubkey, startId, static_cast<uint8_t>(totalMessages), false, messages.data(), loaded);
-    }
-    if (loaded < totalMessages) {
-      messages.resize(loaded);
-      totalMessages = loaded;
-      msgHeights.resize(loaded);
-    }
-    recomputeHeights();
-  } else {
-    totalPixels = 0;
+    store.loadDirectMessages(contactPubkey, startId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
+                             _visibleMsgs, _visibleCount);
   }
 
-  scrollToEnd();
-  MESHCORE_LOG_HEAP("Thread loadPage:end");
-  requestUpdate();
+  if (_visibleCount > 0) {
+    _firstVisibleId = _visibleMsgs[0].id;
+    _lastVisibleId = _visibleMsgs[_visibleCount - 1].id;
+    LOG_DBG("MESH", "loadVisibleBatch: loaded %d msgs [%u..%u]", _visibleCount, _firstVisibleId, _lastVisibleId);
+  } else {
+    LOG_DBG("MESH", "loadVisibleBatch: no messages loaded");
+  }
 }
 
-uint32_t MeshCoreThreadActivity::firstVisibleId() const {
-  if (messages.empty()) return 0;
-  uint16_t acc = 0;
-  for (int i = 0; i < totalMessages; i++) {
-    if (acc + msgHeights[i] > scrollOffsetPx) {
-      return messages[i].id;
-    }
-    acc += msgHeights[i];
+void MeshCoreThreadActivity::loadVisibleBatchUp() {
+  uint8_t loaded = 0;
+  if (isChannel) {
+    store.loadChannelMessages(channelIdx, _meta.endId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
+                              _visibleMsgs, loaded);
+  } else {
+    store.loadDirectMessages(contactPubkey, _meta.endId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
+                             _visibleMsgs, loaded);
   }
-  return messages.back().id;
-}
-
-void MeshCoreThreadActivity::recomputeHeights() {
-  totalPixels = 0;
-  Rect measRect(0, 0, contentWidth, 0);
-  for (int i = 0; i < totalMessages; i++) {
-    const auto& msg = messages[i];
-
-    std::string senderStr;
-    if (isChannel && msg.direction != MsgDirection::SENT) {
-      senderStr = msg.senderName[0] ? msg.senderName : "Unknown";
-    }
-
-    char metaBuf[64] = {};
-    char tsBuf[16];
-    formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
-    char hopBuf[12];
-    if (isChannel && msg.direction == MsgDirection::SENT) {
-      meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
-    } else {
-      meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
-    }
-    snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
-
-    msgHeights[i] = measureMessageHeight(renderer, measRect, senderStr.c_str(), msg.text, true, false);
-    totalPixels += msgHeights[i];
+  _visibleCount = loaded;
+  if (loaded > 0) {
+    _firstVisibleId = _visibleMsgs[0].id;
+    _lastVisibleId = _visibleMsgs[loaded - 1].id;
+    LOG_DBG("MESH", "loadVisibleBatchUp: loaded %d msgs [%u..%u]", loaded, _firstVisibleId, _lastVisibleId);
   }
 }
 
@@ -211,139 +173,190 @@ int MeshCoreThreadActivity::contentHeight() const {
          metrics.bottomSubtitleHeight;
 }
 
-void MeshCoreThreadActivity::scrollDown() {
-  int ch = contentHeight();
-  if (totalPixels <= ch) return;
-  uint16_t maxOffset = totalPixels - ch;
-  if (scrollOffsetPx + ch < maxOffset) {
-    scrollOffsetPx += ch;
+void MeshCoreThreadActivity::scrollDownPage() {
+  LOG_DBG("MESH", "scrollDownPage: posPx=%u accH=%u totalPx=%u ch=%d lastId=%u endId=%u", _meta.positionPx, _accHeight,
+          _meta.totalPx, _contentAreaHeight, _lastVisibleId, _meta.endId);
+  if (_meta.totalPx <= static_cast<uint16_t>(_contentAreaHeight)) {
+    LOG_DBG("MESH", "scrollDownPage: skip — fits in one page");
+    return;
+  }
+  if (_lastVisibleId >= _meta.endId) {
+    LOG_DBG("MESH", "scrollDownPage: skip — already at end");
+    return;
+  }
+
+  _meta.positionId = _lastVisibleId + 1;
+  _meta.positionPx += _accHeight;
+  if (_meta.positionPx > _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)) {
+    _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
+                           ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
+                           : 0;
+    _meta.positionId = _meta.endId;
+    LOG_DBG("MESH", "scrollDownPage: clamped to end, loading Up (posPx=%u posId=%u)", _meta.positionPx,
+            _meta.positionId);
+    loadVisibleBatchUp();
   } else {
-    scrollOffsetPx = maxOffset;
+    LOG_DBG("MESH", "scrollDownPage: advancing (posPx=%u posId=%u)", _meta.positionPx, _meta.positionId);
+    loadVisibleBatch();
   }
   savePosition();
   requestUpdate();
 }
 
-void MeshCoreThreadActivity::scrollUp() {
-  int ch = contentHeight();
-  if (scrollOffsetPx >= ch) {
-    scrollOffsetPx -= ch;
-  } else {
-    scrollOffsetPx = 0;
+void MeshCoreThreadActivity::scrollUpPage() {
+  LOG_DBG("MESH", "scrollUpPage: posPx=%u accH=%u posId=%u startId=%u", _meta.positionPx, _accHeight, _meta.positionId,
+          _meta.startId);
+  if (_meta.positionPx == 0) {
+    LOG_DBG("MESH", "scrollUpPage: skip — positionPx==0");
+    return;
   }
+
+  uint32_t newStartId = _meta.positionId > 0 ? _meta.positionId - 1 : _meta.startId;
+  uint8_t loaded = 0;
+  if (isChannel) {
+    store.loadChannelMessages(channelIdx, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
+                              _visibleMsgs, loaded);
+  } else {
+    store.loadDirectMessages(contactPubkey, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
+                             _visibleMsgs, loaded);
+  }
+
+  if (loaded == 0) {
+    LOG_DBG("MESH", "scrollUpPage: no messages loaded from newStartId=%u", newStartId);
+    return;
+  }
+
+  _visibleCount = loaded;
+  _firstVisibleId = _visibleMsgs[0].id;
+  _lastVisibleId = _visibleMsgs[loaded - 1].id;
+  LOG_DBG("MESH", "scrollUpPage: loaded %d msgs [%u..%u] (new posPx calculation: %u - %u)", loaded, _firstVisibleId,
+          _lastVisibleId, _meta.positionPx, _accHeight);
+
+  _meta.positionId = _firstVisibleId;
+
+  // Subtract heights of all visible messages except the last one
+  {
+    uint16_t exceptLastHeight = 0;
+    for (uint8_t i = 0; i < loaded - 1; ++i) {
+      exceptLastHeight += _visibleMsgs[i].heightPx;
+    }
+    _meta.positionPx = (_meta.positionPx >= exceptLastHeight) ? _meta.positionPx - exceptLastHeight : 0;
+  }
+
+  LOG_DBG("MESH", "scrollUpPage: final posPx=%u posId=%u", _meta.positionPx, _meta.positionId);
+
   savePosition();
   requestUpdate();
-}
-
-auto MeshCoreThreadActivity::getVisibleState() const -> VisibleState {
-  VisibleState vs = {};
-  while (vs.startIdx < totalMessages && vs.acc + msgHeights[vs.startIdx] <= scrollOffsetPx) {
-    vs.acc += msgHeights[vs.startIdx];
-    vs.startIdx++;
-  }
-  if (vs.startIdx >= totalMessages) {
-    vs.startIdx = totalMessages - 1;
-    vs.acc = totalPixels - msgHeights[vs.startIdx];
-  }
-  vs.partialOffset = static_cast<int>(scrollOffsetPx - vs.acc);
-  return vs;
 }
 
 void MeshCoreThreadActivity::savePosition() {
-  ConvMeta meta;
   if (isChannel) {
-    if (!store.getChannelMeta(channelIdx, meta)) return;
-    meta.positionId = firstVisibleId();
-    store.saveChannelMeta(channelIdx, meta);
+    store.saveChannelMeta(channelIdx, _meta);
   } else {
-    if (!store.getDirectMeta(contactPubkey, meta)) return;
-    meta.positionId = firstVisibleId();
-    store.saveDirectMeta(contactPubkey, meta);
+    store.saveDirectMeta(contactPubkey, _meta);
   }
 }
 
 void MeshCoreThreadActivity::scrollDownByMessage() {
-  if (totalMessages == 0) return;
-  int ch = contentHeight();
-  if (totalPixels <= ch) return;
+  LOG_DBG("MESH", "scrollDownByMsg: posPx=%u accH=%u lastId=%u endId=%u", _meta.positionPx, _accHeight, _lastVisibleId,
+          _meta.endId);
+  if (_meta.count == 0) return;
+  if (_lastVisibleId >= _meta.endId) return;
 
-  VisibleState vs = getVisibleState();
-
-  // Find the last (bottom-most) message with any part visible
-  int yRel = 4 - vs.partialOffset;
-  int lastIdx = vs.startIdx;
-  for (int i = vs.startIdx; i < totalMessages; i++) {
-    if (yRel + static_cast<int>(msgHeights[i]) <= ch) {
-      lastIdx = i;
-      yRel += msgHeights[i];
-    } else if (yRel < ch) {
-      lastIdx = i;  // partially visible at the bottom
-      break;
-    } else {
-      break;
-    }
+  _meta.positionId = _lastVisibleId + 1;
+  _meta.positionPx += _accHeight;
+  
+  uint32_t newStartId = _meta.positionId > 0 ? _meta.positionId : _meta.startId;
+  uint8_t loaded = 0;
+  if (isChannel) {
+    store.loadChannelMessages(channelIdx, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
+                              _visibleMsgs, loaded);
+  } else {
+    store.loadDirectMessages(contactPubkey, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
+                             _visibleMsgs, loaded);
   }
 
-  // Sum of msgHeights from startIdx to lastIdx inclusive
-  uint16_t sumSlice = 0;
-  for (int i = vs.startIdx; i <= lastIdx; i++) sumSlice += msgHeights[i];
-  int bottomRel = static_cast<int>(sumSlice) - vs.partialOffset + 4;
-
-  if (bottomRel > ch) {
-    // Step 1: bottom message is partially cut off — scroll to reveal it fully
-    scrollOffsetPx += (bottomRel - ch);
-  } else if (lastIdx + 1 < totalMessages) {
-    // Step 2: bottom message fully visible — advance to next message
-    scrollOffsetPx += msgHeights[lastIdx];
-  } else {
-    scrollToEnd();
+  if (loaded == 0) {
+    LOG_DBG("MESH", "scrollDownByMsg: no messages loaded from newStartId=%u", newStartId);
     return;
   }
 
-  // Clamp to valid range
-  uint16_t maxOffset = totalPixels > ch ? totalPixels - ch : 0;
-  if (scrollOffsetPx > maxOffset) scrollOffsetPx = maxOffset;
+  _visibleCount = loaded;
+  _firstVisibleId = _visibleMsgs[0].id;
+  _lastVisibleId = _visibleMsgs[loaded - 1].id;
+  LOG_DBG("MESH", "scrollDownByMsg: loaded %d msgs [%u..%u] (new posPx calculation: %u - %u)", loaded, _firstVisibleId,
+          _lastVisibleId, _meta.positionPx, _accHeight);
 
+  _meta.positionId = _firstVisibleId;
+  // _meta.positionPx = (_meta.positionPx >= _accHeight) ? _meta.positionPx - _accHeight : 0;
+  LOG_DBG("MESH", "scrollDownByMsg: final posPx=%u posId=%u", _meta.positionPx, _meta.positionId);
+
+  savePosition();
+  requestUpdate();
+
+  
+  if (_meta.positionPx > _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)) {
+    _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
+                           ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
+                           : 0;
+  }
+
+  loadVisibleBatch();
   savePosition();
   requestUpdate();
 }
 
 void MeshCoreThreadActivity::scrollUpByMessage() {
-  if (totalMessages == 0) return;
+  LOG_DBG("MESH", "scrollUpByMsg: posPx=%u posId=%u startId=%u", _meta.positionPx, _meta.positionId, _meta.startId);
+  if (_meta.positionPx == 0 && _meta.positionId <= _meta.startId) return;
 
-  VisibleState vs = getVisibleState();
-
-  if (vs.partialOffset > 0) {
-    // Step 1: align partially-visible message to top
-    scrollOffsetPx = vs.acc;
+  // Find the real previous message id (1 message up, skips holes)
+  MeshCoreMessage prevMsg;
+  uint8_t prevLoaded = 0;
+  uint32_t searchId = _meta.positionId > 0 ? _meta.positionId - 1 : 0;
+  if (isChannel) {
+    store.loadChannelMessages(channelIdx, searchId, static_cast<uint8_t>(1), true, &prevMsg, prevLoaded);
   } else {
-    // Step 2: go to previous message
-    if (vs.startIdx > 0) {
-      scrollOffsetPx = vs.acc - msgHeights[vs.startIdx - 1];
-    } else {
-      scrollOffsetPx = 0;
-    }
+    store.loadDirectMessages(contactPubkey, searchId, static_cast<uint8_t>(1), true, &prevMsg, prevLoaded);
   }
+  if (prevLoaded == 0) return;
+
+  _meta.positionId = prevMsg.id;
+  uint8_t loaded = 0;
+  if (isChannel) {
+    store.loadChannelMessages(channelIdx, _meta.positionId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
+                              _visibleMsgs, loaded);
+  } else {
+    store.loadDirectMessages(contactPubkey, _meta.positionId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
+                             _visibleMsgs, loaded);
+  }
+
+  if (loaded == 0) return;
+
+  _visibleCount = loaded;
+  _firstVisibleId = _visibleMsgs[0].id;
+  _lastVisibleId = _visibleMsgs[loaded - 1].id;
+
+  _meta.positionPx = (_meta.positionPx >= prevMsg.heightPx) ? _meta.positionPx - prevMsg.heightPx : 0;
+  _meta.positionId = _firstVisibleId;
 
   savePosition();
   requestUpdate();
 }
 
-void MeshCoreThreadActivity::scrollToEnd() {
-  if (totalPixels == 0) {
-    scrollOffsetPx = 0;
-    return;
-  }
-  int ch = contentHeight();
-  if (totalPixels > ch) {
-    scrollOffsetPx = totalPixels - ch;
-  } else {
-    scrollOffsetPx = 0;
-  }
-}
-
 void MeshCoreThreadActivity::loop() {
   client.poll();
+
+  // ── Font recalculation (non-blocking, one msg per iteration) ──
+  if (_recalcState == RecalcState::RUNNING) {
+    _recalcStep();
+    if (_toast.poll()) requestUpdate();
+    // Don't process input during recalc (except Back handled below)
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      finish();
+    }
+    return;
+  }
 
   // Battery polling
   if (pollMeshCoreBattery(client, lastBatteryRequestMs, lastBatteryMv)) {
@@ -376,62 +389,31 @@ void MeshCoreThreadActivity::loop() {
   pollMock(client.getBleClient(), millis());
 #endif
 
-  // Detect new messages and auto-scroll if at end
-  ConvMeta meta;
-  bool hasMeta = isChannel ? store.getChannelMeta(channelIdx, meta) : store.getDirectMeta(contactPubkey, meta);
-  if (hasMeta && meta.count > totalMessages) {
-    // A — new messages arrived
-    bool wasAtEnd = (scrollOffsetPx + contentHeight() >= totalPixels || totalPixels == 0);
-    uint16_t oldCount = totalMessages;
+  // ── Detect new messages (store updated by hub callback) ──
+  ConvMeta currentMeta;
+  bool hasMeta =
+      isChannel ? store.getChannelMeta(channelIdx, currentMeta) : store.getDirectMeta(contactPubkey, currentMeta);
 
-    uint32_t startId = _lastEndId + 1;
-    uint16_t newCount = meta.endId - _lastEndId;
-
-    totalMessages = meta.count;
-    _lastEndId = meta.endId;
-    messages.resize(totalMessages);
-    msgHeights.resize(totalMessages);
-
-    uint8_t loaded = 0;
-    if (isChannel) {
-      store.loadChannelMessages(channelIdx, startId, static_cast<uint8_t>(newCount), false,
-                                messages.data() + oldCount, loaded);
-    } else {
-      store.loadDirectMessages(contactPubkey, startId, static_cast<uint8_t>(newCount), false,
-                               messages.data() + oldCount, loaded);
-    }
-
-    // Compute heights for new messages only
-    Rect measRect(0, 0, contentWidth, 0);
-    for (int i = oldCount; i < oldCount + loaded; i++) {
-      const auto& msg = messages[i];
-      std::string senderStr;
-      if (isChannel && msg.direction != MsgDirection::SENT) {
-        senderStr = msg.senderName[0] ? msg.senderName : "Unknown";
-      }
-      char metaBuf[64] = {};
-      char tsBuf[16];
-      formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
-      char hopBuf[12];
-      if (isChannel && msg.direction == MsgDirection::SENT) {
-        meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
-      } else {
-        meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
-      }
-      snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
-      msgHeights[i] = measureMessageHeight(renderer, measRect, !senderStr.empty(), msg.text, true, true);
-      totalPixels += msgHeights[i];
-    }
-
-    // Only auto-scroll if user was already at the end
+  if (hasMeta && currentMeta.count > _meta.count) {
+    // New messages arrived
+    bool wasAtEnd =
+        (_meta.positionPx + static_cast<uint16_t>(_contentAreaHeight) >= _meta.totalPx || _meta.totalPx == 0);
+    _meta = currentMeta;
     if (wasAtEnd) {
-      scrollToEnd();
+      loadVisibleBatchUp();
+      _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
+                             ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
+                             : 0;
+      _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
+    } else {
+      loadVisibleBatch();
     }
     requestUpdate();
-
-  } else if (hasMeta && meta.count < messages.size()) {
-    // B — truncate happened, reload everything from store
-    loadPage();
+  } else if (hasMeta && currentMeta.count < _meta.count) {
+    // Truncation happened (oldest messages dropped)
+    _meta = currentMeta;
+    loadVisibleBatch();
+    requestUpdate();
   }
 
   // --- Status subscreen ---
@@ -549,8 +531,6 @@ void MeshCoreThreadActivity::loop() {
 
   if (currentTab == Tab::MESSAGES) {
     // Side buttons (Up/Down): message-by-message scrolling
-    //   Down on tab bar → enter content; in content → scroll to next message
-    //   Up in content → scroll to previous message; on tab bar → no-op
     buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this] {
       if (selectedIndex == 0) {
         selectedIndex = 1;
@@ -566,19 +546,17 @@ void MeshCoreThreadActivity::loop() {
     });
 
     // Front buttons (Right/Left): page-by-page (screenful) scrolling
-    //   Right on tab bar → enter content; in content → page down
-    //   Left in content → page up; on tab bar → no-op
     buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this] {
       if (selectedIndex == 0) {
         selectedIndex = 1;
         requestUpdate();
       } else {
-        scrollDown();
+        scrollDownPage();
       }
     });
     buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this] {
       if (selectedIndex == 1) {
-        scrollUp();
+        scrollUpPage();
       }
     });
   } else {
@@ -650,13 +628,28 @@ void MeshCoreThreadActivity::sendMessage() {
                              msg.deliveryStatus = DeliveryStatus::SENT;
                              snprintf(msg.text, sizeof(msg.text), "%s", text.c_str());
 
+                             // Compute rendered height for batch-load scrolling
+                             const auto& tmetrics = UITheme::getInstance().getMetrics();
+                             int tcontentWidth = renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
+                             msg.heightPx = measureMeshCoreMessageHeight(renderer, SETTINGS.getReaderFontId(),
+                                                                         tcontentWidth, isChannel, msg, tmetrics);
+
                              if (isChannel) {
                                store.appendChannelMessage(channelIdx, msg);
                              } else {
                                store.appendDirectMessage(contactPubkey, msg);
                              }
-                             // Reload all messages, scroll to end, save position
-                             loadPage();
+                             // Reload meta and batch-load from end
+                             if (isChannel) {
+                               store.getChannelMeta(channelIdx, _meta);
+                             } else {
+                               store.getDirectMeta(contactPubkey, _meta);
+                             }
+                             loadVisibleBatchUp();
+                             _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
+                                                    ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
+                                                    : 0;
+                             _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
                              savePosition();
                            } else {
                              LOG_ERR("MESH", "Failed to queue message");
@@ -705,24 +698,21 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
 
   switch (currentTab) {
     case Tab::MESSAGES:
-      if (messages.empty()) {
+      if (_visibleCount == 0 && _meta.count == 0) {
         GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_NO_MESSAGES));
-      } else {
+      } else if (_visibleCount > 0) {
         // Two-pass font prewarming: scan → prewarm → render
         auto* fcm = renderer.getFontCacheManager();
         bool useReaderFontSettings = true;
         if (fcm) {
           MESHCORE_LOG_HEAP("Thread prewarm:before");
           auto scope = fcm->createPrewarmScope();
-          drawMessages(renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
-                       useReaderFontSettings, /*scanOnly=*/true);
+          drawVisibleMessages(renderer, contentRect, useReaderFontSettings, /*scanOnly=*/true);
           scope.endScanAndPrewarm();
           MESHCORE_LOG_HEAP("Thread prewarm:after");
-          drawMessages(renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
-                       useReaderFontSettings);
+          drawVisibleMessages(renderer, contentRect, useReaderFontSettings);
         } else {
-          drawMessages(renderer, contentRect, totalMessages, msgHeights.data(), totalPixels, scrollOffsetPx,
-                       useReaderFontSettings);
+          drawVisibleMessages(renderer, contentRect, useReaderFontSettings);
         }
       }
       break;
@@ -823,146 +813,70 @@ void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
   }
 }
 
-// --- Message rendering (moved from theme to activity) ---
+// --- Message rendering (reads from _visibleMsgs array) ---
 
-/// Measures the total height required to render a single message bubble, accounting for sender name, body text,
-/// metadata line, and vertical spacing. Uses the thread's font and layout settings.
-uint16_t MeshCoreThreadActivity::measureMessageHeight(const GfxRenderer& renderer, Rect rect, bool sender,
-                                                      const char* text, bool meta, bool useReaderFontSettings) const {
+void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Rect rect, bool useReaderFontSettings,
+                                                 bool scanOnly) {
+  if (_visibleCount == 0) return;
+
   constexpr int maxLines = 100;
   const ThreadRenderCtx ctx(renderer, rect, useReaderFontSettings);
 
-  uint16_t height = 0;
-  if (sender) {
-    height += ctx.bodyLineH;
-  }
-  if (text && text[0]) {
-    auto lines = wrapMessageBody(renderer, ctx.bodyFontId, text, ctx.maxTextWidth, maxLines);
-    height += static_cast<uint16_t>(lines.size()) * ctx.bodyLineH;
-  }
-  if (meta) {
-    height += ctx.metaLineH;
-  }
-  height += ctx.metrics.verticalSpacing;
-  return height;
-}
-
-/// Returns the sender display label for message index \p i. Empty for outgoing messages or non-channel threads.
-std::string MeshCoreThreadActivity::messageSenderLabel(int i) const {
-  if (i < 0 || i >= totalMessages) return {};
-  if (messages[i].direction == MsgDirection::SENT || !isChannel) {
-    return "";
-  }
-  char buf[64];
-  snprintf(buf, sizeof(buf), "%s", messages[i].senderName[0] ? messages[i].senderName : "Unknown");
-  return buf;
-}
-
-/// Returns the text body of message at index \p i.
-std::string MeshCoreThreadActivity::messageBody(int i) const {
-  if (i < 0 || i >= totalMessages) return {};
-  return messages[i].text;
-}
-
-/// Returns a formatted metadata string (timestamp + hop count / heard repeaters) for message index \p i.
-std::string MeshCoreThreadActivity::messageMeta(int i) const {
-  if (i < 0 || i >= totalMessages) return {};
-  char buf[64];
-  uint32_t ts = messages[i].timestamp;
-  if (ts > 0) {
-    char tsBuf[16];
-    formatMeshCoreTimestamp(ts, tsBuf, sizeof(tsBuf));
-    char hopBuf[12];
-    if (isChannel && messages[i].direction == MsgDirection::SENT) {
-      meshcore::formatMeshCoreHeardRepeats(messages[i].pathLength, hopBuf, sizeof(hopBuf));
-    } else {
-      meshcore::formatMeshCoreHopCount(messages[i].pathLength, hopBuf, sizeof(hopBuf));
-    }
-    snprintf(buf, sizeof(buf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
-  } else {
-    buf[0] = '\0';
-  }
-  return buf;
-}
-
-/// Returns true if message at index \p i was sent by the local user.
-bool MeshCoreThreadActivity::messageOutgoing(int i) const {
-  if (i < 0 || i >= totalMessages) return false;
-  return messages[i].direction == MsgDirection::SENT;
-}
-
-void MeshCoreThreadActivity::drawMessages(const GfxRenderer& renderer, Rect rect, int totalMessages,
-                                          const uint16_t* msgHeights, uint16_t totalPixels, uint16_t scrollOffsetPx,
-                                          bool useReaderFontSettings, bool scanOnly) const {
-  constexpr int maxLines = 100;
-  const ThreadRenderCtx ctx(renderer, rect, useReaderFontSettings);
-
-  // Find first message to render based on scrollOffsetPx
-  int startIdx = 0;
-  uint16_t acc = 0;
-  while (startIdx < totalMessages && acc + msgHeights[startIdx] <= scrollOffsetPx) {
-    acc += msgHeights[startIdx];
-    startIdx++;
-  }
-  if (startIdx >= totalMessages) {
-    startIdx = totalMessages - 1;
-    acc = totalPixels - msgHeights[startIdx];
-  }
-  int partialOffset = scrollOffsetPx - acc;
-
-  // ── Scan-only pass: collect text for font prewarming, draw nothing ──
+  // ── Scan-only pass for font prewarming ──
   if (scanOnly) {
-    int y = rect.y + 4 - partialOffset;
-    for (int i = startIdx; i < totalMessages; ++i) {
-      if (y > rect.y + rect.height) break;
-      y += msgHeights[i];
-
-      std::string senderStr = messageSenderLabel(i);
-      if (!senderStr.empty()) {
-        renderer.drawText(ctx.bodyFontId, 0, 0, senderStr.c_str(), true);
+    for (uint8_t i = 0; i < _visibleCount; ++i) {
+      const auto& msg = _visibleMsgs[i];
+      bool showSender = (isChannel && msg.direction != MsgDirection::SENT && msg.senderName[0]);
+      if (showSender) {
+        renderer.drawText(ctx.bodyFontId, 0, 0, msg.senderName, true);
       }
-
-      std::string textStr = messageBody(i);
-      if (!textStr.empty()) {
-        // Pass full body text — line wrapping is unnecessary for glyph collection
-        renderer.drawText(ctx.bodyFontId, 0, 0, textStr.c_str(), true);
+      if (msg.text[0]) {
+        renderer.drawText(ctx.bodyFontId, 0, 0, msg.text, true);
       }
-
-      std::string metaStr = messageMeta(i);
-      if (!metaStr.empty()) {
-        renderer.drawText(SMALL_FONT_ID, 0, 0, metaStr.c_str(), true);
+      if (msg.timestamp > 0) {
+        char tsBuf[16];
+        formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
+        renderer.drawText(ctx.metaFontId, 0, 0, tsBuf, true);
       }
     }
     return;
   }
 
-  GUI.drawScrollBar(renderer, rect, totalPixels, scrollOffsetPx);
+  // Accumulate height of messages before the visible batch to compute partial offset
+  _accHeight = 0;
+  for (uint8_t i = 0; i < _visibleCount; ++i) {
+    _accHeight += _visibleMsgs[i].heightPx;
+    if (_accHeight > static_cast<uint16_t>(_contentAreaHeight)) {
+      _accHeight -= _visibleMsgs[i].heightPx;
+      _lastVisibleId = _visibleMsgs[i - 1].id;
+      break;
+    }
+  }
 
-  int y = rect.y + 4 - partialOffset;
-
+  int y = rect.y;
   bool rendered = false;
-  for (int i = startIdx; i < totalMessages; ++i) {
+
+  for (uint8_t i = 0; i < _visibleCount; ++i) {
     if (y > rect.y + rect.height) break;
     rendered = true;
 
-    const bool outgoing = messageOutgoing(i);
-    std::string senderStr = messageSenderLabel(i);
-    std::string textStr = messageBody(i);
-    std::string metaStr = messageMeta(i);
+    const auto& msg = _visibleMsgs[i];
+    const bool outgoing = (msg.direction == MsgDirection::SENT);
+    const bool showSender = (isChannel && !outgoing && msg.senderName[0]);
 
-    // Sender line
-    if (!senderStr.empty()) {
+    // ── Sender line ──
+    if (showSender) {
       int senderX;
       if (outgoing) {
-        int senderW = renderer.getTextWidth(ctx.bodyFontId, senderStr.c_str());
+        int senderW = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
         senderX = rect.x + rect.width - ctx.metrics.contentSidePadding - senderW;
       } else {
         senderX = rect.x + ctx.metrics.contentSidePadding;
       }
-      renderer.drawText(ctx.bodyFontId, senderX, y, senderStr.c_str(), true);
-      // Checkerboard dither background for meta line
+      renderer.drawText(ctx.bodyFontId, senderX, y, msg.senderName, true);
+      // Checkerboard dither for received messages
       if (!outgoing) {
-        int sw = renderer.getTextWidth(ctx.bodyFontId, senderStr.c_str());
+        int sw = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
         for (int py = y; py < y + ctx.bodyLineH; py++)
           for (int px = senderX; px < senderX + sw; px++)
             if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
@@ -970,13 +884,13 @@ void MeshCoreThreadActivity::drawMessages(const GfxRenderer& renderer, Rect rect
       y += ctx.bodyLineH;
     }
 
-    // Text body
-    if (!textStr.empty()) {
-      auto lines = wrapMessageBody(renderer, ctx.bodyFontId, textStr.c_str(), ctx.maxTextWidth, maxLines);
+    // ── Body text ──
+    if (msg.text[0]) {
+      auto lines = wrapMessageBody(renderer, ctx.bodyFontId, msg.text, ctx.maxTextWidth, maxLines);
       for (const auto& line : lines) {
         if (y > rect.y + rect.height) break;
         if (line.empty()) {
-          y += ctx.bodyLineH;  // blank line from empty segment
+          y += ctx.bodyLineH;
           continue;
         }
         if (outgoing) {
@@ -990,43 +904,118 @@ void MeshCoreThreadActivity::drawMessages(const GfxRenderer& renderer, Rect rect
       }
     }
 
-    // Meta line
-    if (!metaStr.empty()) {
+    // ── Meta line (timestamp + hops) ──
+    if (msg.timestamp > 0) {
       if (y > rect.y + rect.height) break;
+      char metaBuf[64];
+      char tsBuf[16];
+      formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
+      char hopBuf[12];
+      if (isChannel && outgoing) {
+        meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
+      } else {
+        meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
+      }
+      snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
       int metaX;
       if (outgoing) {
-        int metaW = renderer.getTextWidth(ctx.metaFontId, metaStr.c_str());
+        int metaW = renderer.getTextWidth(ctx.metaFontId, metaBuf);
         metaX = rect.x + rect.width - ctx.metrics.contentSidePadding - metaW;
       } else {
         metaX = rect.x + ctx.metrics.contentSidePadding;
       }
-      renderer.drawText(ctx.metaFontId, metaX, y, metaStr.c_str(), true);
-      // Checkerboard dither background for meta line
-      int mw = renderer.getTextWidth(ctx.metaFontId, metaStr.c_str());
+      renderer.drawText(ctx.metaFontId, metaX, y, metaBuf, true);
+      // Checkerboard dither
+      int mw = renderer.getTextWidth(ctx.metaFontId, metaBuf);
       for (int py = y; py < y + ctx.metaLineH; py++)
         for (int px = metaX; px < metaX + mw; px++)
           if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
       y += ctx.metaLineH;
     }
 
-    // Spacing between message blocks
+    // Vertical spacing between messages
     if (y < rect.y + rect.height) {
       y += ctx.metrics.verticalSpacing;
     }
   }
 
-  // Clear areas above and below the content rect — messages may overflow bounds
+  // ── Render pass ──
+  GUI.drawScrollBar(renderer, rect, _meta.totalPx, _meta.positionPx);
+
+  // Clear overflow areas
   if (rendered) {
     const int screenW = renderer.getScreenWidth();
     const int screenH = renderer.getScreenHeight();
-    if (rect.y > 0) {
-      renderer.fillRect(0, 0, screenW, rect.y, false);
-    }
+    if (rect.y > 0) renderer.fillRect(0, 0, screenW, rect.y, false);
     const int belowY = rect.y + rect.height;
-    if (belowY < screenH) {
-      renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
-    }
+    if (belowY < screenH) renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
   }
+}
+
+// --- Font recalculation (async, non-blocking) ---
+
+void MeshCoreThreadActivity::_recalcStep() {
+  if (_recalcState != RecalcState::RUNNING) return;
+
+  // Process one message per call
+  MeshCoreMessage msg;
+  uint8_t loaded = 0;
+  if (isChannel) {
+    store.loadChannelMessages(channelIdx, _recalcGid, static_cast<uint8_t>(1), false, &msg, loaded);
+  } else {
+    store.loadDirectMessages(contactPubkey, _recalcGid, static_cast<uint8_t>(1), false, &msg, loaded);
+  }
+  if (loaded == 0) {
+    // Skip missing message, advance to next
+    _recalcGid++;
+    if (_recalcGid > _recalcEndId) _finishRecalc();
+    return;
+  }
+
+  // Recompute height with current font settings
+  msg.heightPx = measureMeshCoreMessageHeight(renderer, _recalcFontId, _recalcContentWidth, _recalcIsChannel, msg,
+                                              UITheme::getInstance().getMetrics());
+
+  // Write back
+  if (isChannel) {
+    store.updateChannelMessage(channelIdx, _recalcGid, msg);
+  } else {
+    store.updateDirectMessage(contactPubkey, _recalcGid, msg);
+  }
+
+  _recalcNewTotalPx += msg.heightPx;
+  _recalcGid++;
+
+  if (_recalcGid > _recalcEndId) {
+    _finishRecalc();
+  }
+}
+
+void MeshCoreThreadActivity::_finishRecalc() {
+  // Update and save ConvMeta
+  if (_recalcMeta.totalPx > 0) {
+    _recalcMeta.positionPx = static_cast<uint16_t>((static_cast<uint32_t>(_recalcMeta.positionPx) * _recalcNewTotalPx) /
+                                                   _recalcMeta.totalPx);
+  }
+  _recalcMeta.totalPx = _recalcNewTotalPx;
+  _recalcMeta.fontId = _recalcFontId;
+
+  if (isChannel) {
+    store.saveChannelMeta(channelIdx, _recalcMeta);
+  } else {
+    store.saveDirectMeta(contactPubkey, _recalcMeta);
+  }
+
+  _meta = _recalcMeta;
+  _recalcState = RecalcState::DONE;
+
+  // Clear toast, show loaded confirmation
+  _toast.show(tr(STR_MESHCORE_LOADED), 3000);
+
+  // Load visible batch with new heights
+  loadVisibleBatch();
+  requestUpdate();
+  LOG_DBG("MESH", "Recalculation complete: totalPx=%d fontId=%d", _meta.totalPx, _recalcFontId);
 }
 
 // --- Word-wrap helper (moved from BaseTheme) ---
