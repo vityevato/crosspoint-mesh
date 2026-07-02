@@ -12,12 +12,15 @@
 #include <string>
 
 namespace {
-// RX holds the response headers. 4096 fits real OPDS servers; GitHub's release
-// CDN sends more and logs HTTP_HEADER "Buffer length is small", but that's
-// non-fatal: the headers we read (Location, Content-Length) come first and
-// survive. Smaller keeps contiguous heap free while WiFi and TLS are up. TX
-// only carries our GET; the body streams in READ_CHUNK pieces.
-constexpr int HTTP_RX_BUF = 4096;
+// RX holds the response headers. GitHub's release CDN returns a 302 with a
+// long Location header (AWS S3 signed URL ≈1–2 KB) plus security headers.
+// If the buffer is too small the HTTP parser receives headers in many pieces
+// and http_utils_append_string reallocs the accumulation buffer many times;
+// on a fragmented post-TLS heap (~25 KB free) that realloc can fail and trip
+// an ESP-IDF assert. 8192 lets most server responses arrive as 1-2 reads so
+// the accumulation buffer is allocated once at its final size. TX only
+// carries our GET; the body streams in READ_CHUNK pieces.
+constexpr int HTTP_RX_BUF = 8192;
 constexpr int HTTP_TX_BUF = 1024;
 // Per-socket-op timeout. Some OPDS download endpoints are slow to send headers
 // (>15s) and chunked catalogs stall mid-body, so 15s killed them. 60s gives

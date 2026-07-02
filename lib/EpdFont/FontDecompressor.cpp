@@ -377,6 +377,22 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   stats.uniqueGroupsAccessed = groupCount;
 
+  // Sort needed groups by uncompressedSize descending so the largest group
+  // (typically the Cyrillic block, ~16 KB) is decompressed FIRST, while the
+  // heap is least fragmented. Under BLE heap fragmentation (~14-18 KB largest),
+  // decompressing a small group first can malloc/free and split the only
+  // contiguous block that fits the big group, causing it to fail silently.
+  for (uint8_t i = 1; i < groupCount; i++) {
+    uint16_t key = neededGroups[i];
+    uint32_t keySize = fontData->groups[key].uncompressedSize;
+    int8_t j = static_cast<int8_t>(i) - 1;
+    while (j >= 0 && fontData->groups[neededGroups[j]].uncompressedSize < keySize) {
+      neededGroups[j + 1] = neededGroups[j];
+      j--;
+    }
+    neededGroups[j + 1] = key;
+  }
+
   // Step 3: Allocate page buffer and lookup table for this slot
   slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));
   slot.glyphs = static_cast<PageGlyphEntry*>(malloc(glyphCount * sizeof(PageGlyphEntry)));

@@ -74,21 +74,11 @@ class MeshCoreThreadActivity final : public Activity {
   uint32_t _firstVisibleId = 0;
   uint32_t _lastVisibleId = 0;
 
-  // Cached font/layout for current session
+  // Render
   int _bodyFontId = 0;
   int _contentAreaWidth = 0;
   int _contentAreaHeight = 0;
-
-  // Font recalculation state (async, non-blocking)
-  enum class RecalcState : uint8_t { IDLE = 0, RUNNING, DONE };
-  RecalcState _recalcState = RecalcState::IDLE;
-  uint32_t _recalcGid = 0;
-  uint32_t _recalcEndId = 0;
-  uint16_t _recalcNewTotalPx = 0;
-  ConvMeta _recalcMeta = {};
-  int _recalcFontId = 0;
-  int _recalcContentWidth = 0;
-  bool _recalcIsChannel = false;
+  bool _needsRebuild = false;
 
   // Tab state
   Tab currentTab = Tab::MESSAGES;
@@ -111,8 +101,7 @@ class MeshCoreThreadActivity final : public Activity {
   int contentHeight() const;
   void loadVisibleBatch();
   void loadVisibleBatchUp();
-  void drawVisibleMessages(const GfxRenderer& renderer, Rect rect, bool useReaderFontSettings,
-                           bool scanOnly = false);
+  void drawVisibleMessages(const GfxRenderer& renderer, Rect rect, bool useReaderFontSettings, bool scanOnly = false);
   void scrollDownPage();
   void scrollUpPage();
   void scrollDownByMessage();
@@ -120,9 +109,7 @@ class MeshCoreThreadActivity final : public Activity {
   void savePosition();
   void sendMessage();
 
-  // Font recalculation helpers
-  void _recalcStep();
-  void _finishRecalc();
+  void _rebuildMessageHeights();
 
   void switchTab(Tab tab);
   int getListCountForCurrentTab() const;

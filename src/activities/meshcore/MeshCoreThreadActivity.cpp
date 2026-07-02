@@ -90,25 +90,18 @@ void MeshCoreThreadActivity::onEnter() {
     return;
   }
 
-  // Check font match — if changed, recalculate all heights asynchronously
+  // Check font match — if changed, recalculate all heights synchronously.
+  // Mirrors the reader's pattern: block onEnter() with a popup while
+  // rebuilding, so the user sees what's happening and the next render()
+  // shows ready-to-use pages.
   if (_meta.fontId != _bodyFontId) {
-    LOG_DBG("MESH", "Thread onEnter: font mismatch (meta=%d current=%d), starting recalc", _meta.fontId, _bodyFontId);
-    _recalcState = RecalcState::RUNNING;
-    _recalcGid = _meta.startId;
-    _recalcEndId = _meta.endId;
-    _recalcNewTotalPx = 0;
-    _recalcMeta = _meta;
-    _recalcFontId = _bodyFontId;
-    _recalcContentWidth = _contentAreaWidth;
-    _recalcIsChannel = isChannel;
-    _toast.show(tr(STR_MESHCORE_RECALC_LAYOUT), 0);  // persistent toast
-    _visibleCount = 0;                               // nothing to show until recalc completes
-    LOG_DBG("MESH", "Thread onEnter: recalculation started from id=%u to %u", _recalcGid, _recalcEndId);
+    LOG_DBG("MESH", "Thread onEnter: font mismatch (meta=%d current=%d) — queuing rebuild", _meta.fontId, _bodyFontId);
+    _needsRebuild = true;
   } else {
     loadVisibleBatch();
-    LOG_DBG("MESH", "Thread onEnter: loaded batch — posPx=%u posId=%u firstId=%u lastId=%u accHeight=%u totalPx=%u",
-            _meta.positionPx, _meta.positionId, _firstVisibleId, _lastVisibleId, _accHeight, _meta.totalPx);
   }
+  LOG_DBG("MESH", "Thread onEnter: loaded batch — posPx=%u posId=%u firstId=%u lastId=%u accHeight=%u totalPx=%u",
+          _meta.positionPx, _meta.positionId, _firstVisibleId, _lastVisibleId, _accHeight, _meta.totalPx);
   MESHCORE_LOG_HEAP("Thread onEnter:end");
 }
 
@@ -265,7 +258,7 @@ void MeshCoreThreadActivity::scrollDownByMessage() {
 
   _meta.positionId = _lastVisibleId + 1;
   _meta.positionPx += _accHeight;
-  
+
   uint32_t newStartId = _meta.positionId > 0 ? _meta.positionId : _meta.startId;
   uint8_t loaded = 0;
   if (isChannel) {
@@ -294,7 +287,6 @@ void MeshCoreThreadActivity::scrollDownByMessage() {
   savePosition();
   requestUpdate();
 
-  
   if (_meta.positionPx > _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)) {
     _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
                            ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
@@ -347,17 +339,6 @@ void MeshCoreThreadActivity::scrollUpByMessage() {
 void MeshCoreThreadActivity::loop() {
   client.poll();
 
-  // ── Font recalculation (non-blocking, one msg per iteration) ──
-  if (_recalcState == RecalcState::RUNNING) {
-    _recalcStep();
-    if (_toast.poll()) requestUpdate();
-    // Don't process input during recalc (except Back handled below)
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      finish();
-    }
-    return;
-  }
-
   // Battery polling
   if (pollMeshCoreBattery(client, lastBatteryRequestMs, lastBatteryMv)) {
     requestUpdate();
@@ -398,6 +379,8 @@ void MeshCoreThreadActivity::loop() {
     // New messages arrived
     bool wasAtEnd =
         (_meta.positionPx + static_cast<uint16_t>(_contentAreaHeight) >= _meta.totalPx || _meta.totalPx == 0);
+    LOG_DBG("MESH", "New msgs detected: old.count=%u new.count=%u old.fontId=%d new.fontId=%d wasAtEnd=%d", _meta.count,
+            currentMeta.count, _meta.fontId, currentMeta.fontId, wasAtEnd);
     _meta = currentMeta;
     if (wasAtEnd) {
       loadVisibleBatchUp();
@@ -666,6 +649,18 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
+
+  // --- Font rebuild popup (like reader's "Indexing…") ---
+  if (_needsRebuild) {
+    _needsRebuild = false;
+    renderer.clearScreen();
+    GUI.drawPopup(renderer, tr(STR_MESHCORE_RECALC_LAYOUT));
+    renderer.displayBuffer();
+    _rebuildMessageHeights();
+    loadVisibleBatch();
+    requestUpdate();
+    return;
+  }
 
   // --- Status popup overlay ---
   if (showingStatus) {
@@ -952,70 +947,66 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
   }
 }
 
-// --- Font recalculation (async, non-blocking) ---
+// ── Font recalculation (synchronous, called from onEnter) ──
+// Mirrors the reader's createSectionFile pattern: blocks until done,
+// with a popup on screen so the user knows the device is busy.
 
-void MeshCoreThreadActivity::_recalcStep() {
-  if (_recalcState != RecalcState::RUNNING) return;
+void MeshCoreThreadActivity::_rebuildMessageHeights() {
+  const auto& tmetrics = UITheme::getInstance().getMetrics();
+  uint16_t newTotalPx = 0;
+  const int oldFontId = _meta.fontId;
+  const uint32_t t0 = millis();
 
-  // Process one message per call
-  MeshCoreMessage msg;
-  uint8_t loaded = 0;
+  for (uint32_t gid = _meta.startId; gid <= _meta.endId; ++gid) {
+    MeshCoreMessage msg;
+    uint8_t loaded = 0;
+    if (isChannel) {
+      store.loadChannelMessages(channelIdx, gid, static_cast<uint8_t>(1), false, &msg, loaded);
+    } else {
+      store.loadDirectMessages(contactPubkey, gid, static_cast<uint8_t>(1), false, &msg, loaded);
+    }
+    if (loaded == 0) continue;
+
+    // Warm the SD card font's advance table in one batched, glyph-index-ordered SD
+    // read before measuring. Without this, measureMeshCoreMessageHeight() -> wrappedText()
+    // -> getTextAdvanceX() would fall back to a per-character glyph load (random SD I/O)
+    // for every uncached codepoint. Builtin fonts are not in sdCardFonts_, so this is a
+    // no-op for them. Body text is drawn REGULAR, so only style 0x01 is needed.
+    if (msg.text[0]) {
+      renderer.ensureSdCardFontReady(_bodyFontId, msg.text, /*styleMask=*/0x01);
+    }
+
+    msg.heightPx = measureMeshCoreMessageHeight(renderer, _bodyFontId, _contentAreaWidth, isChannel, msg, tmetrics);
+
+    if (isChannel) {
+      store.updateChannelMessage(channelIdx, gid, msg);
+    } else {
+      store.updateDirectMessage(contactPubkey, gid, msg);
+    }
+
+    newTotalPx += msg.heightPx;
+
+    if ((gid - _meta.startId) % 10 == 0) {
+      LOG_DBG("MESH", "Recalc: %u/%u msgs, %u ms", gid - _meta.startId + 1, _meta.endId - _meta.startId + 1,
+              millis() - t0);
+    }
+  }
+
+  // Proportionally scale scroll position
+  if (_meta.totalPx > 0) {
+    _meta.positionPx = static_cast<uint16_t>((static_cast<uint32_t>(_meta.positionPx) * newTotalPx) / _meta.totalPx);
+  }
+  _meta.totalPx = newTotalPx;
+  _meta.fontId = _bodyFontId;
+
   if (isChannel) {
-    store.loadChannelMessages(channelIdx, _recalcGid, static_cast<uint8_t>(1), false, &msg, loaded);
+    store.saveChannelMeta(channelIdx, _meta);
   } else {
-    store.loadDirectMessages(contactPubkey, _recalcGid, static_cast<uint8_t>(1), false, &msg, loaded);
-  }
-  if (loaded == 0) {
-    // Skip missing message, advance to next
-    _recalcGid++;
-    if (_recalcGid > _recalcEndId) _finishRecalc();
-    return;
+    store.saveDirectMeta(contactPubkey, _meta);
   }
 
-  // Recompute height with current font settings
-  msg.heightPx = measureMeshCoreMessageHeight(renderer, _recalcFontId, _recalcContentWidth, _recalcIsChannel, msg,
-                                              UITheme::getInstance().getMetrics());
-
-  // Write back
-  if (isChannel) {
-    store.updateChannelMessage(channelIdx, _recalcGid, msg);
-  } else {
-    store.updateDirectMessage(contactPubkey, _recalcGid, msg);
-  }
-
-  _recalcNewTotalPx += msg.heightPx;
-  _recalcGid++;
-
-  if (_recalcGid > _recalcEndId) {
-    _finishRecalc();
-  }
-}
-
-void MeshCoreThreadActivity::_finishRecalc() {
-  // Update and save ConvMeta
-  if (_recalcMeta.totalPx > 0) {
-    _recalcMeta.positionPx = static_cast<uint16_t>((static_cast<uint32_t>(_recalcMeta.positionPx) * _recalcNewTotalPx) /
-                                                   _recalcMeta.totalPx);
-  }
-  _recalcMeta.totalPx = _recalcNewTotalPx;
-  _recalcMeta.fontId = _recalcFontId;
-
-  if (isChannel) {
-    store.saveChannelMeta(channelIdx, _recalcMeta);
-  } else {
-    store.saveDirectMeta(contactPubkey, _recalcMeta);
-  }
-
-  _meta = _recalcMeta;
-  _recalcState = RecalcState::DONE;
-
-  // Clear toast, show loaded confirmation
-  _toast.show(tr(STR_MESHCORE_LOADED), 3000);
-
-  // Load visible batch with new heights
-  loadVisibleBatch();
-  requestUpdate();
-  LOG_DBG("MESH", "Recalculation complete: totalPx=%d fontId=%d", _meta.totalPx, _recalcFontId);
+  LOG_DBG("MESH", "Heights rebuilt: %u msgs, %u ms, totalPx=%u fontId=%d (old=%d)", _meta.count, millis() - t0,
+          _meta.totalPx, _bodyFontId, oldFontId);
 }
 
 // --- Word-wrap helper (moved from BaseTheme) ---

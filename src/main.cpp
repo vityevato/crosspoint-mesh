@@ -344,6 +344,24 @@ void setup() {
 
   HalSystem::checkPanic();
 
+#if LOG_LEVEL >= 2
+  // Global SD card log (DEBUG LOG_LEVEL builds only) — routes all
+  // LOG_ERR/LOG_INF/LOG_DBG to /system.log so errors are preserved even when
+  // serial is not accessible. File is appended across boots (not truncated)
+  // so crash/error logs survive silent restarts and panic reboots.
+  {
+    static constexpr const char* LOG_PATH = "/system.log";
+    static HalFile systemLogFile;
+    systemLogFile = Storage.open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND);
+    if (systemLogFile) {
+      setLogFileSink(&systemLogFile);
+      // Start each boot session with a visible marker
+      LOG_INF("MAIN", "=== Boot session ===");
+      LOG_INF("MAIN", "SD log sink enabled: %s", LOG_PATH);
+    }
+  }
+#endif
+
   SETTINGS.loadFromFile();
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();

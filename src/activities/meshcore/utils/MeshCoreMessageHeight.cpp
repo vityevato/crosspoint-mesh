@@ -1,20 +1,14 @@
 #include "MeshCoreMessageHeight.h"
 
+#include <GfxRenderer.h>
+
 #include <string>
 #include <vector>
 
-#include <GfxRenderer.h>
-
 #include "components/themes/BaseTheme.h"
 
-uint16_t measureMeshCoreMessageHeight(
-    const GfxRenderer& renderer,
-    int fontId,
-    int contentWidth,
-    bool isChannel,
-    const MeshCoreMessage& msg,
-    const ThemeMetrics& metrics) {
-
+uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, int contentWidth, bool isChannel,
+                                      const MeshCoreMessage& msg, const ThemeMetrics& metrics) {
   constexpr int maxLines = 100;
   const uint16_t lineH = renderer.getLineHeight(fontId);
   uint16_t height = 0;
@@ -32,7 +26,10 @@ uint16_t measureMeshCoreMessageHeight(
     // Check for newlines
     bool hasNewline = false;
     for (const char* p = msg.text; *p; ++p) {
-      if (*p == '\n') { hasNewline = true; break; }
+      if (*p == '\n') {
+        hasNewline = true;
+        break;
+      }
     }
 
     if (hasNewline) {
@@ -47,8 +44,8 @@ uint16_t measureMeshCoreMessageHeight(
             lineCount++;  // empty line
           } else {
             std::string segment(segStart, segLen);
-            auto wrapped = renderer.wrappedText(fontId, segment.c_str(), contentWidth,
-                                                maxLines - static_cast<int>(lineCount));
+            auto wrapped =
+                renderer.wrappedText(fontId, segment.c_str(), contentWidth, maxLines - static_cast<int>(lineCount));
             lineCount += static_cast<uint16_t>(wrapped.size());
           }
           segStart = p + 1;
@@ -59,8 +56,8 @@ uint16_t measureMeshCoreMessageHeight(
       if (*segStart) {
         size_t segLen = p - segStart;
         std::string segment(segStart, segLen);
-        auto wrapped = renderer.wrappedText(fontId, segment.c_str(), contentWidth,
-                                            maxLines - static_cast<int>(lineCount));
+        auto wrapped =
+            renderer.wrappedText(fontId, segment.c_str(), contentWidth, maxLines - static_cast<int>(lineCount));
         lineCount += static_cast<uint16_t>(wrapped.size());
       }
       height += lineCount * lineH;

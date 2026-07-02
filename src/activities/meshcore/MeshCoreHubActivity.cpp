@@ -21,6 +21,7 @@
 #include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
 #include "MeshCoreThreadActivity.h"
+#include "SilentRestart.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "utils/MeshCoreHeapLog.h"
@@ -59,8 +60,6 @@ void MeshCoreHubActivity::onChannelHeard(uint8_t channelIdx, uint8_t heardCount,
 
 // --- Lifecycle ---
 
-static constexpr const char* MESH_LOG_PATH = "/meshcore.log";
-
 void MeshCoreHubActivity::onEnter() {
   Activity::onEnter();
   MESHCORE_LOG_HEAP("Hub onEnter:start");
@@ -68,16 +67,6 @@ void MeshCoreHubActivity::onEnter() {
 #ifdef SIMULATOR
   MockSession::loadMockConfig("/meshcore_mock.json");
 #endif
-
-  // SD card debug logging — delete old log and start fresh
-  if (Storage.exists(MESH_LOG_PATH)) {
-    Storage.remove(MESH_LOG_PATH);
-  }
-  sdLogFile = Storage.open(MESH_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND);
-  if (sdLogFile) {
-    setLogFileSink(&sdLogFile);
-    LOG_INF("MESH", "SD log sink enabled: %s", MESH_LOG_PATH);
-  }
 
   store.init();  // Create top-level directories only (no companion yet)
 
@@ -215,9 +204,6 @@ void MeshCoreHubActivity::onEnter() {
 
 void MeshCoreHubActivity::onExit() {
   MESHCORE_LOG_HEAP("Hub onExit:start");
-  // Disable SD log sink and close file
-  clearLogFileSink();
-  sdLogFile.close();
 
   // Save state
   store.saveContacts(savedContacts, savedContactCount);
@@ -238,6 +224,10 @@ void MeshCoreHubActivity::onExit() {
 #endif
 
   Activity::onExit();
+
+  // Defrag heap after BLE teardown (radio + buffers + message store).
+  // WiFi activities do the same to release fragmented radio memory.
+  silentRestart();
 }
 
 void MeshCoreHubActivity::launchScanActivity() {

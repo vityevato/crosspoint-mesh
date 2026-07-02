@@ -1202,8 +1202,16 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
 
   unsigned long startMs = millis();
 
+  // Cap the unique-codepoint scratch buffer at 512 (2 KB). A single rendered
+  // unit (one chat message or one EPUB page) has at most ~100-200 distinct
+  // codepoints, so 512 is generous while keeping this a small allocation.
+  // Critically, this must NOT grow into a multi-KB contiguous block: the
+  // height rebuild runs under BLE heap fragmentation, where a large transient
+  // here would starve the ~16 KB contiguous block that compressed-font group
+  // decompression (e.g. the Cyrillic group, 16304 bytes) needs at the same
+  // moment, dropping glyphs from the page.
   // +2 reserved slots for space and hyphen injected after the main scan.
-  static constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 4096;
+  static constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 512;
   uint32_t* codepoints = new (std::nothrow) uint32_t[MAX_UNIQUE_CODEPOINTS + 2];
   if (!codepoints) {
     LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate codepoint buffer (%u bytes)", MAX_UNIQUE_CODEPOINTS * 4);

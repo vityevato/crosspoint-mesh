@@ -1,8 +1,8 @@
 #pragma once
 
-#include <cstdint>
-
 #include <MeshCore/MeshCoreTypes.h>
+
+#include <cstdint>
 
 struct ThemeMetrics;
 class GfxRenderer;
@@ -27,10 +27,5 @@ class GfxRenderer;
  * @param metrics      ThemeMetrics for verticalSpacing
  * @return Total pixel height of the message bubble
  */
-uint16_t measureMeshCoreMessageHeight(
-    const GfxRenderer& renderer,
-    int fontId,
-    int contentWidth,
-    bool isChannel,
-    const MeshCoreMessage& msg,
-    const ThemeMetrics& metrics);
+uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, int contentWidth, bool isChannel,
+                                      const MeshCoreMessage& msg, const ThemeMetrics& metrics);

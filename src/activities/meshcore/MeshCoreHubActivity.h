@@ -47,7 +47,6 @@ class MeshCoreHubActivity final : public Activity {
   MeshCoreClient client;
   MeshCoreMessageStore store;
   ButtonNavigator buttonNavigator;
-  HalFile sdLogFile;
 
   Tab currentTab = Tab::CONTACTS;
   int selectedIndex = 0;

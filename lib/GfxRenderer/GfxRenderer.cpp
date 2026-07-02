@@ -1360,13 +1360,21 @@ std::string GfxRenderer::truncatedText(const int fontId, const char* text, const
   std::string item = text;
   // U+2026 HORIZONTAL ELLIPSIS (UTF-8: 0xE2 0x80 0xA6)
   const char* ellipsis = "\xe2\x80\xa6";
-  int textWidth = getTextWidth(fontId, item.c_str(), style);
+  // For SD card fonts, measure with advance-width (in-RAM advance table) to avoid a
+  // per-character glyph load from the SD card. For builtin fonts, keep the original
+  // bounding-box metric (getTextWidth) so UI text truncation is pixel-identical to
+  // before — getGlyph is a fast flash lookup there, so there is no I/O to avoid.
+  const bool useAdvance = isSdCardFont(fontId);
+  auto measureW = [&](const char* s) {
+    return useAdvance ? getTextAdvanceX(fontId, s, style) : getTextWidth(fontId, s, style);
+  };
+  int textWidth = measureW(item.c_str());
   if (textWidth <= maxWidth) {
     // Text fits, return as is
     return item;
   }
 
-  while (!item.empty() && getTextWidth(fontId, (item + ellipsis).c_str(), style) >= maxWidth) {
+  while (!item.empty() && measureW((item + ellipsis).c_str()) >= maxWidth) {
     utf8RemoveLastChar(item);
   }
 
@@ -1381,6 +1389,15 @@ std::vector<std::string> GfxRenderer::wrappedText(const int fontId, const char* 
 
   std::string remaining = text;
   std::string currentLine;
+
+  // For SD card fonts, measure with advance-width (in-RAM advance table) to avoid
+  // per-character SD glyph loads during layout. For builtin fonts, keep the original
+  // bounding-box metric (getTextWidth) so line breaks are pixel-identical to before;
+  // their glyph lookups are fast flash reads with no I/O to avoid.
+  const bool useAdvance = isSdCardFont(fontId);
+  auto measureW = [&](const char* s) {
+    return useAdvance ? getTextAdvanceX(fontId, s, style) : getTextWidth(fontId, s, style);
+  };
 
   while (!remaining.empty()) {
     if (static_cast<int>(lines.size()) == maxLines - 1) {
@@ -1405,7 +1422,7 @@ std::vector<std::string> GfxRenderer::wrappedText(const int fontId, const char* 
 
     std::string testLine = currentLine.empty() ? word : currentLine + " " + word;
 
-    if (getTextWidth(fontId, testLine.c_str(), style) <= maxWidth) {
+    if (measureW(testLine.c_str()) <= maxWidth) {
       currentLine = testLine;
     } else {
       if (!currentLine.empty()) {
@@ -1413,7 +1430,7 @@ std::vector<std::string> GfxRenderer::wrappedText(const int fontId, const char* 
         // If the carried-over word itself exceeds maxWidth, truncate it and
         // push it as a complete line immediately — storing it in currentLine
         // would allow a subsequent short word to be appended after the ellipsis.
-        if (getTextWidth(fontId, word.c_str(), style) > maxWidth) {
+        if (measureW(word.c_str()) > maxWidth) {
           lines.push_back(truncatedText(fontId, word.c_str(), maxWidth, style));
           currentLine.clear();
           if (static_cast<int>(lines.size()) >= maxLines) return lines;
