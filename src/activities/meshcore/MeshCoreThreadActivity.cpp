@@ -125,10 +125,10 @@ void MeshCoreThreadActivity::loadVisibleBatch() {
 
   if (isChannel) {
     store.loadChannelMessages(channelIdx, startId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                              _visibleMsgs, _visibleCount);
+                              _visibleMsgs, _visibleCount, _fillerMsg);
   } else {
     store.loadDirectMessages(contactPubkey, startId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                             _visibleMsgs, _visibleCount);
+                             _visibleMsgs, _visibleCount, _fillerMsg);
   }
 
   if (_visibleCount > 0) {
@@ -144,10 +144,10 @@ void MeshCoreThreadActivity::loadVisibleBatchUp() {
   uint8_t loaded = 0;
   if (isChannel) {
     store.loadChannelMessages(channelIdx, _meta.endId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                              _visibleMsgs, loaded);
+                              _visibleMsgs, loaded, _fillerMsg);
   } else {
     store.loadDirectMessages(contactPubkey, _meta.endId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                             _visibleMsgs, loaded);
+                             _visibleMsgs, loaded, _fillerMsg);
   }
   _visibleCount = loaded;
   if (loaded > 0) {
@@ -208,10 +208,10 @@ void MeshCoreThreadActivity::scrollUpPage() {
   uint8_t loaded = 0;
   if (isChannel) {
     store.loadChannelMessages(channelIdx, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                              _visibleMsgs, loaded);
+                              _visibleMsgs, loaded, _fillerMsg);
   } else {
     store.loadDirectMessages(contactPubkey, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                             _visibleMsgs, loaded);
+                             _visibleMsgs, loaded, _fillerMsg);
   }
 
   if (loaded == 0) {
@@ -263,10 +263,10 @@ void MeshCoreThreadActivity::scrollDownByMessage() {
   uint8_t loaded = 0;
   if (isChannel) {
     store.loadChannelMessages(channelIdx, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                              _visibleMsgs, loaded);
+                              _visibleMsgs, loaded, _fillerMsg);
   } else {
     store.loadDirectMessages(contactPubkey, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                             _visibleMsgs, loaded);
+                             _visibleMsgs, loaded, _fillerMsg);
   }
 
   if (loaded == 0) {
@@ -317,10 +317,10 @@ void MeshCoreThreadActivity::scrollUpByMessage() {
   uint8_t loaded = 0;
   if (isChannel) {
     store.loadChannelMessages(channelIdx, _meta.positionId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                              _visibleMsgs, loaded);
+                              _visibleMsgs, loaded, _fillerMsg);
   } else {
     store.loadDirectMessages(contactPubkey, _meta.positionId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                             _visibleMsgs, loaded);
+                             _visibleMsgs, loaded, _fillerMsg);
   }
 
   if (loaded == 0) return;
@@ -834,6 +834,21 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
         renderer.drawText(ctx.metaFontId, 0, 0, tsBuf, true);
       }
     }
+    // Also prewarm the filler message if present
+    if (_fillerMsg.id != 0) {
+      bool showSender = (isChannel && _fillerMsg.direction != MsgDirection::SENT && _fillerMsg.senderName[0]);
+      if (showSender) {
+        renderer.drawText(ctx.bodyFontId, 0, 0, _fillerMsg.senderName, true);
+      }
+      if (_fillerMsg.text[0]) {
+        renderer.drawText(ctx.bodyFontId, 0, 0, _fillerMsg.text, true);
+      }
+      if (_fillerMsg.timestamp > 0) {
+        char tsBuf[16];
+        formatMeshCoreTimestamp(_fillerMsg.timestamp, tsBuf, sizeof(tsBuf));
+        renderer.drawText(ctx.metaFontId, 0, 0, tsBuf, true);
+      }
+    }
     return;
   }
 
@@ -851,16 +866,18 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
   int y = rect.y;
   bool rendered = false;
 
-  for (uint8_t i = 0; i < _visibleCount; ++i) {
-    if (y > rect.y + rect.height) break;
-    rendered = true;
-
-    const auto& msg = _visibleMsgs[i];
+  // ── Helper: render one message (sender → body → meta), advancing y ──
+  // clipToFit=true  → only lines that fit fully (y + lineH <= bottom) are drawn.
+  // clipToFit=false → draws lines normally, caller stops when y > bottom.
+  auto renderOneMsg = [&](const MeshCoreMessage& msg, int& yPos, bool clipToFit) {
+    const int bottom = rect.y + rect.height;
     const bool outgoing = (msg.direction == MsgDirection::SENT);
     const bool showSender = (isChannel && !outgoing && msg.senderName[0]);
 
-    // ── Sender line ──
-    if (showSender) {
+    auto fits = [&](int lineH) { return clipToFit ? (yPos + lineH <= bottom) : (yPos <= bottom); };
+
+    // Sender line
+    if (showSender && fits(ctx.bodyLineH)) {
       int senderX;
       if (outgoing) {
         int senderW = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
@@ -868,40 +885,36 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
       } else {
         senderX = rect.x + ctx.metrics.contentSidePadding;
       }
-      renderer.drawText(ctx.bodyFontId, senderX, y, msg.senderName, true);
-      // Checkerboard dither for received messages
+      renderer.drawText(ctx.bodyFontId, senderX, yPos, msg.senderName, true);
       if (!outgoing) {
         int sw = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
-        for (int py = y; py < y + ctx.bodyLineH; py++)
+        for (int py = yPos; py < yPos + ctx.bodyLineH; py++)
           for (int px = senderX; px < senderX + sw; px++)
             if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
       }
-      y += ctx.bodyLineH;
+      yPos += ctx.bodyLineH;
     }
 
-    // ── Body text ──
-    if (msg.text[0]) {
+    // Body text — line by line
+    if (msg.text[0] && fits(0)) {
       auto lines = wrapMessageBody(renderer, ctx.bodyFontId, msg.text, ctx.maxTextWidth, maxLines);
       for (const auto& line : lines) {
-        if (y > rect.y + rect.height) break;
-        if (line.empty()) {
-          y += ctx.bodyLineH;
-          continue;
+        if (!fits(ctx.bodyLineH)) break;
+        if (!line.empty()) {
+          if (outgoing) {
+            int textW = renderer.getTextWidth(ctx.bodyFontId, line.c_str());
+            renderer.drawText(ctx.bodyFontId, rect.x + rect.width - ctx.metrics.contentSidePadding - textW, yPos,
+                              line.c_str(), true);
+          } else {
+            renderer.drawText(ctx.bodyFontId, rect.x + ctx.metrics.contentSidePadding, yPos, line.c_str(), true);
+          }
         }
-        if (outgoing) {
-          int textW = renderer.getTextWidth(ctx.bodyFontId, line.c_str());
-          renderer.drawText(ctx.bodyFontId, rect.x + rect.width - ctx.metrics.contentSidePadding - textW, y,
-                            line.c_str(), true);
-        } else {
-          renderer.drawText(ctx.bodyFontId, rect.x + ctx.metrics.contentSidePadding, y, line.c_str(), true);
-        }
-        y += ctx.bodyLineH;
+        yPos += ctx.bodyLineH;
       }
     }
 
-    // ── Meta line (timestamp + hops) ──
-    if (msg.timestamp > 0) {
-      if (y > rect.y + rect.height) break;
+    // Meta line (timestamp + hops)
+    if (msg.timestamp > 0 && fits(ctx.metaLineH)) {
       char metaBuf[64];
       char tsBuf[16];
       formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
@@ -919,19 +932,29 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
       } else {
         metaX = rect.x + ctx.metrics.contentSidePadding;
       }
-      renderer.drawText(ctx.metaFontId, metaX, y, metaBuf, true);
-      // Checkerboard dither
+      renderer.drawText(ctx.metaFontId, metaX, yPos, metaBuf, true);
       int mw = renderer.getTextWidth(ctx.metaFontId, metaBuf);
-      for (int py = y; py < y + ctx.metaLineH; py++)
+      for (int py = yPos; py < yPos + ctx.metaLineH; py++)
         for (int px = metaX; px < metaX + mw; px++)
           if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      y += ctx.metaLineH;
+      yPos += ctx.metaLineH;
     }
+  };
 
-    // Vertical spacing between messages
+  // ── Main message batch ──
+  for (uint8_t i = 0; i < _visibleCount; ++i) {
+    if (y > rect.y + rect.height) break;
+    rendered = true;
+    renderOneMsg(_visibleMsgs[i], y, /*clipToFit=*/false);
+    // Vertical gap between messages (proportional to font size)
     if (y < rect.y + rect.height) {
-      y += ctx.metrics.verticalSpacing;
+      y += meshcoreMessageGapPx(ctx.bodyLineH);
     }
+  }
+
+  // ── Filler message (partial render in remaining space at bottom) ──
+  if (_fillerMsg.id != 0 && y < rect.y + rect.height) {
+    renderOneMsg(_fillerMsg, y, /*clipToFit=*/true);
   }
 
   // ── Render pass ──

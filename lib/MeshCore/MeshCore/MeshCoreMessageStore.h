@@ -50,8 +50,12 @@ class MeshCoreMessageStore {
   /// Starts at startId and loads messages filling up to maxHeightPx pixels.
   /// If up is true — loads backwards (ids <= startId), otherwise forwards (ids >= startId).
   /// On return, messages in out are always ordered by id ascending.
+  /// filler receives the next message after the main batch if one exists:
+  ///   up=false → message after the last loaded message (the one that didn't fit);
+  ///   up=true  → message after startId in the forward direction.
+  /// filler.id == 0 means no filler is available.
   bool loadChannelMessages(uint8_t channelIdx, uint32_t startId, uint16_t maxHeightPx, bool up, MeshCoreMessage* out,
-                           uint8_t& loaded);
+                           uint8_t& loaded, MeshCoreMessage& filler);
 
   /// Overload that replaces the entire message on disk by id.
   /// Reads the existing file, applies all fields from msg, then writes it back.
@@ -75,8 +79,12 @@ class MeshCoreMessageStore {
   /// Starts at startId and loads messages filling up to maxHeightPx pixels.
   /// If up is true — loads backwards (ids <= startId), otherwise forwards (ids >= startId).
   /// On return, messages in out are always ordered by id ascending.
+  /// filler receives the next message after the main batch if one exists:
+  ///   up=false → message after the last loaded message (the one that didn't fit);
+  ///   up=true  → message after startId in the forward direction.
+  /// filler.id == 0 means no filler is available.
   bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint16_t maxHeightPx, bool up,
-                          MeshCoreMessage* out, uint8_t& loaded);
+                          MeshCoreMessage* out, uint8_t& loaded, MeshCoreMessage& filler);
 
   /// Overload that replaces the entire message on disk by id.
   /// Reads the existing file, applies all fields from msg, then writes it back.
@@ -142,8 +150,9 @@ class MeshCoreMessageStore {
   /// maxHeightPx > 0 → height mode: loads per 'up' direction, stops
   ///                    when accumulated heightPx ≥ maxHeightPx.
   /// Messages in out are always ordered by id ascending.
+  /// filler: see public overload docs.
   bool loadMessages(const char* convPath, uint32_t startId, uint8_t maxCount, uint16_t maxHeightPx, bool up,
-                    MeshCoreMessage* out, uint8_t& loaded);
+                    MeshCoreMessage* out, uint8_t& loaded, MeshCoreMessage& filler);
 
   /// Read a single message by id from a conversation directory.
   bool readMessage(const char* convPath, uint32_t id, MeshCoreMessage& msg);

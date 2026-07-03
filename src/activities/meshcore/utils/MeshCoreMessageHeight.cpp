@@ -73,8 +73,8 @@ uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, i
     height += lineH;
   }
 
-  // ── Vertical spacing between consecutive messages ──
-  height += metrics.verticalSpacing;
+  // ── Vertical gap between consecutive messages (proportional to font) ──
+  height += meshcoreMessageGapPx(lineH);
 
   return height;
 }

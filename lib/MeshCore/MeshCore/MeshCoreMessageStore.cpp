@@ -244,14 +244,16 @@ bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t star
                                                MeshCoreMessage* out, uint8_t& loaded) {
   char convPath[64];
   buildConvPath(channelIdx, convPath, sizeof(convPath));
-  return loadMessages(convPath, startId, maxCount, 0, up, out, loaded);
+  MeshCoreMessage filler;
+  memset(&filler, 0, sizeof(filler));
+  return loadMessages(convPath, startId, maxCount, 0, up, out, loaded, filler);
 }
 
 bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t startId, uint16_t maxHeightPx, bool up,
-                                               MeshCoreMessage* out, uint8_t& loaded) {
+                                               MeshCoreMessage* out, uint8_t& loaded, MeshCoreMessage& filler) {
   char convPath[64];
   buildConvPath(channelIdx, convPath, sizeof(convPath));
-  return loadMessages(convPath, startId, 0, maxHeightPx, up, out, loaded);
+  return loadMessages(convPath, startId, 0, maxHeightPx, up, out, loaded, filler);
 }
 
 bool MeshCoreMessageStore::updateChannelMessage(uint8_t channelIdx, uint32_t id, uint8_t newPathLength, int8_t newSnr) {
@@ -340,14 +342,16 @@ bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t 
                                               MeshCoreMessage* out, uint8_t& loaded) {
   char convPath[64];
   buildConvPath(pubkey32, convPath, sizeof(convPath));
-  return loadMessages(convPath, startId, maxCount, 0, up, out, loaded);
+  MeshCoreMessage filler;
+  memset(&filler, 0, sizeof(filler));
+  return loadMessages(convPath, startId, maxCount, 0, up, out, loaded, filler);
 }
 
 bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint16_t maxHeightPx, bool up,
-                                              MeshCoreMessage* out, uint8_t& loaded) {
+                                              MeshCoreMessage* out, uint8_t& loaded, MeshCoreMessage& filler) {
   char convPath[64];
   buildConvPath(pubkey32, convPath, sizeof(convPath));
-  return loadMessages(convPath, startId, 0, maxHeightPx, up, out, loaded);
+  return loadMessages(convPath, startId, 0, maxHeightPx, up, out, loaded, filler);
 }
 
 bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t id, DeliveryStatus newStatus) {
@@ -369,8 +373,9 @@ bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t
 // --- Unified message loader (private) ---
 
 bool MeshCoreMessageStore::loadMessages(const char* convPath, uint32_t startId, uint8_t maxCount, uint16_t maxHeightPx,
-                                        bool up, MeshCoreMessage* out, uint8_t& loaded) {
+                                        bool up, MeshCoreMessage* out, uint8_t& loaded, MeshCoreMessage& filler) {
   loaded = 0;
+  memset(&filler, 0, sizeof(filler));
 
   ConvMeta meta;
   if (!readMeta(convPath, meta)) return false;
@@ -456,7 +461,25 @@ bool MeshCoreMessageStore::loadMessages(const char* convPath, uint32_t startId, 
         out[i] = out[loaded - 1 - i];
         out[loaded - 1 - i] = tmp;
       }
+
+      // Filler for up=true: next message after startId in forward direction.
+      // This is the message that would appear "below" startId in the viewport.
+      if (startId < UINT32_MAX && startId < meta.endId) {
+        for (uint32_t gid = startId + 1; gid <= meta.endId; ++gid) {
+          char msgPath[80];
+          snprintf(msgPath, sizeof(msgPath), "%s/%lu", msgsPath, static_cast<unsigned long>(gid));
+
+          HalFile file;
+          if (!Storage.openFileForRead("MESH", msgPath, file)) continue;
+
+          if (file.read(reinterpret_cast<uint8_t*>(&filler), sizeof(MeshCoreMessage)) == sizeof(MeshCoreMessage)) {
+            break;
+          }
+        }
+      }
     } else {
+      bool overflowed = false;
+
       for (uint32_t gid = startId; gid <= meta.endId; ++gid) {
         char msgPath[80];
         snprintf(msgPath, sizeof(msgPath), "%s/%lu", msgsPath, static_cast<unsigned long>(gid));
@@ -465,10 +488,19 @@ bool MeshCoreMessageStore::loadMessages(const char* convPath, uint32_t startId, 
         if (!Storage.openFileForRead("MESH", msgPath, file)) continue;
 
         if (file.read(reinterpret_cast<uint8_t*>(&out[loaded]), sizeof(MeshCoreMessage)) == sizeof(MeshCoreMessage)) {
-          if (accumulated + out[loaded].heightPx > maxHeightPx) break;
+          if (accumulated + out[loaded].heightPx > maxHeightPx) {
+            overflowed = true;
+            break;
+          }
           accumulated += out[loaded].heightPx;
           loaded++;
         }
+      }
+
+      // Filler for up=false: the message that was read but didn't fit
+      // (already in out[loaded] from the last read before break).
+      if (overflowed) {
+        filler = out[loaded];
       }
     }
   }

@@ -66,6 +66,10 @@ class MeshCoreThreadActivity final : public Activity {
   MeshCoreMessage _visibleMsgs[MAX_VISIBLE_BATCH] = {};
   uint8_t _visibleCount = 0;
 
+  // Filler message: the next message after the visible batch (used to fill
+  // empty space at the bottom of the viewport). id == 0 means no filler.
+  MeshCoreMessage _fillerMsg = {};
+
   // Cached conversation metadata (scroll state lives here)
   ConvMeta _meta = {};
 
