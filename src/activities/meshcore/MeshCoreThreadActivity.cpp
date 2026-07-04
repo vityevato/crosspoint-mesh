@@ -13,8 +13,6 @@
 
 #include "CrossPointSettings.h"
 #include "FontCacheManager.h"
-#include "MeshCoreBatteryPoller.h"
-#include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -73,6 +71,11 @@ MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInpu
 void MeshCoreThreadActivity::onEnter() {
   Activity::onEnter();
   MESHCORE_LOG_HEAP("Thread onEnter:start");
+
+  // Explicitly reset to Messages tab on every entry
+  currentTab = Tab::MESSAGES;
+  selectedIndex = 0;
+
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
 
@@ -87,6 +90,7 @@ void MeshCoreThreadActivity::onEnter() {
   if (!hasMeta || _meta.count == 0) {
     _visibleCount = 0;
     MESHCORE_LOG_HEAP("Thread onEnter:empty thread");
+    requestUpdate();
     return;
   }
 
@@ -103,6 +107,8 @@ void MeshCoreThreadActivity::onEnter() {
   LOG_DBG("MESH", "Thread onEnter: loaded batch — posPx=%u posId=%u firstId=%u lastId=%u accHeight=%u totalPx=%u",
           _meta.positionPx, _meta.positionId, _firstVisibleId, _lastVisibleId, _accHeight, _meta.totalPx);
   MESHCORE_LOG_HEAP("Thread onEnter:end");
+
+  requestUpdate();
 }
 
 void MeshCoreThreadActivity::onExit() {
@@ -339,24 +345,6 @@ void MeshCoreThreadActivity::scrollUpByMessage() {
 void MeshCoreThreadActivity::loop() {
   client.poll();
 
-  // Battery polling
-  if (pollMeshCoreBattery(client, lastBatteryRequestMs, lastBatteryMv)) {
-    requestUpdate();
-  }
-
-  // Poll advert completion
-  if (_advertInFlight) {
-    if (!client.isCommandPending()) {
-      _advertInFlight = false;
-      _toast.show(_advertIsFlood ? tr(STR_MESHCORE_FLOOD_ADVERT_SENT) : tr(STR_MESHCORE_ADVERT_SENT), 5000);
-      requestUpdate();
-    } else if (millis() - _advertSentTime > 6000) {
-      _advertInFlight = false;
-      _toast.show(_advertIsFlood ? tr(STR_MESHCORE_FLOOD_ADVERT_FAILED) : tr(STR_MESHCORE_ADVERT_FAILED), 5000);
-      requestUpdate();
-    }
-  }
-
   // Auto-clear expired toast messages
   if (_toast.poll()) {
     requestUpdate();
@@ -399,15 +387,6 @@ void MeshCoreThreadActivity::loop() {
     requestUpdate();
   }
 
-  // --- Status subscreen ---
-  if (showingStatus) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      showingStatus = false;
-      requestUpdate();
-    }
-    return;
-  }
-
   // --- Back ---
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     if (selectedIndex > 0) {
@@ -437,72 +416,61 @@ void MeshCoreThreadActivity::loop() {
     }
 
     if (currentTab == Tab::MENU) {
-      if (isChannel) {
-        // Channel menu: 4 items (Send Advert, Send Flood Advert, Status, Disconnect)
-        bool connected = (client.getState() == BleConnectionState::CONNECTED);
-        switch (itemIdx) {
-          case 0:  // Send Advert
-            if (connected) {
-              if (client.sendSelfAdvert(false)) {
-                _advertInFlight = true;
-                _advertIsFlood = false;
-                _advertSentTime = millis();
-                _toast.show(tr(STR_MESHCORE_SENDING), 0);
-              }
-            } else {
-              _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
-            }
-            requestUpdate();
-            return;
-          case 1:  // Send Flood Advert
-            if (connected) {
-              if (client.sendSelfAdvert(true)) {
-                _advertInFlight = true;
-                _advertIsFlood = true;
-                _advertSentTime = millis();
-                _toast.show(tr(STR_MESHCORE_SENDING), 0);
-              }
-            } else {
-              _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
-            }
-            requestUpdate();
-            return;
-          case 2:  // Status
-            if (client.getState() == BleConnectionState::CONNECTED) {
-              lastCompanion = client.getCompanion();
-            }
-            showingStatus = true;
-            requestUpdate();
-            return;
-          case 3:  // Disconnect
-            if (connected) {
-              client.disconnect();
-            }
-            finish();
-            return;
-          default:
-            break;
+      // Channel & DM menu: 3 items (Scroll to End, Clear, Unlist/Delete)
+      bool connected = (client.getState() == BleConnectionState::CONNECTED);
+      switch (itemIdx) {
+        case 0: {  // Scroll to End
+          if (_meta.count == 0) break;
+          loadVisibleBatchUp();
+          if (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight)) {
+            _meta.positionPx = _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight);
+          } else {
+            _meta.positionPx = 0;
+          }
+          _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
+          savePosition();
+          currentTab = Tab::MESSAGES;
+          selectedIndex = 1;  // enter messages area so scrolling works immediately
+          requestUpdate();
+          return;
         }
-      } else {
-        // DM menu: 2 items (Status, Disconnect)
-        bool connected = (client.getState() == BleConnectionState::CONNECTED);
-        switch (itemIdx) {
-          case 0:  // Status
-            if (client.getState() == BleConnectionState::CONNECTED) {
-              lastCompanion = client.getCompanion();
-            }
-            showingStatus = true;
-            requestUpdate();
-            return;
-          case 1:  // Disconnect
-            if (connected) {
-              client.disconnect();
-            }
-            finish();
-            return;
-          default:
-            break;
+        case 1: {  // Clear Conversation
+          if (isChannel) {
+            store.clearChannelMessages(channelIdx);
+          } else {
+            store.clearDirectMessages(contactPubkey);
+          }
+          _meta = {};
+          _visibleCount = 0;
+          _fillerMsg = {};
+          savePosition();
+          _toast.show(tr(STR_MESHCORE_CONVERSATION_CLEARED), 3000);
+          currentTab = Tab::MESSAGES;
+          selectedIndex = 0;
+          requestUpdate();
+          return;
         }
+        case 2: {  // Unlist Contact / Delete Channel
+          if (isChannel) {
+            if (connected) {
+              client.deleteChannel(channelIdx);
+            }
+            _toast.show(tr(STR_MESHCORE_CHANNEL_DELETED), 3000);
+          } else {
+            MeshCoreContact toRemove = {};
+            memcpy(toRemove.publicKey, contactPubkey, 32);
+            toRemove.isSaved = false;
+            if (connected) {
+              client.addUpdateContact(toRemove);
+            }
+            _toast.show(tr(STR_MESHCORE_CONTACT_REMOVED), 3000);
+          }
+          selectedIndex = 0;
+          requestUpdate();
+          return;
+        }
+        default:
+          break;
       }
     }
     return;
@@ -566,7 +534,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU:
-      return isChannel ? 4 : 2;  // Channel: 4 items, DM: 2 items
+      return 3;  // 3 items: Scroll to End, Clear, Unlist/Delete
     default:
       return 0;
   }
@@ -662,22 +630,6 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
     return;
   }
 
-  // --- Status popup overlay ---
-  if (showingStatus) {
-    char headerSubtitle[64];
-    _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
-    GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
-
-    const auto& comp = (client.getState() == BleConnectionState::CONNECTED) ? client.getCompanion() : lastCompanion;
-    MeshCoreStatusView::renderAsPopup(renderer, comp);
-
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-
-    renderer.displayBuffer();
-    return;
-  }
-
   // --- Normal tabbed layout ---
   char headerSubtitle[64];
   _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
@@ -749,63 +701,34 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
 void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
   bool connected = (client.getState() == BleConnectionState::CONNECTED);
 
-  if (isChannel) {
-    // Channel menu: 4 items
-    constexpr int kItemCount = 4;
-    GUI.drawList(
-        renderer, contentRect, kItemCount, selectedIndex - 1,
-        /*rowTitle*/
-        [](int index) -> std::string {
-          switch (index) {
-            case 0:
-              return tr(STR_MESHCORE_SEND_ADVERT);
-            case 1:
-              return tr(STR_MESHCORE_SEND_FLOOD_ADVERT);
-            case 2:
-              return tr(STR_MESHCORE_STATUS);
-            case 3:
-              return tr(STR_MESHCORE_DISCONNECT);
-            default:
-              return {};
-          }
-        },
-        /*rowSubtitle*/ nullptr,
-        /*rowIcon*/ nullptr,
-        /*rowValue*/ nullptr,
-        /*highlightValue*/ false,
-        /*rowDimmed*/
-        [connected](int index) -> bool {
-          // Items 0, 1, 3 require a connected companion
-          if (connected) return false;
-          return (index == 0 || index == 1 || index == 3);
-        });
-  } else {
-    // DM menu: 2 items
-    constexpr int kItemCount = 2;
-    GUI.drawList(
-        renderer, contentRect, kItemCount, selectedIndex - 1,
-        /*rowTitle*/
-        [](int index) -> std::string {
-          switch (index) {
-            case 0:
-              return tr(STR_MESHCORE_STATUS);
-            case 1:
-              return tr(STR_MESHCORE_DISCONNECT);
-            default:
-              return {};
-          }
-        },
-        /*rowSubtitle*/ nullptr,
-        /*rowIcon*/ nullptr,
-        /*rowValue*/ nullptr,
-        /*highlightValue*/ false,
-        /*rowDimmed*/
-        [connected](int index) -> bool {
-          // Item 1 requires connected companion
-          if (connected) return false;
-          return (index == 1);
-        });
-  }
+  constexpr int kItemCount = 3;
+  const char* item2Label = isChannel ? tr(STR_MESHCORE_DELETE_CHANNEL) : tr(STR_MESHCORE_REMOVE_CONTACT);
+
+  GUI.drawList(
+      renderer, contentRect, kItemCount, selectedIndex - 1,
+      /*rowTitle*/
+      [item2Label](int index) -> std::string {
+        switch (index) {
+          case 0:
+            return tr(STR_MESHCORE_SCROLL_TO_END);
+          case 1:
+            return tr(STR_MESHCORE_CLEAR_CONVERSATION);
+          case 2:
+            return item2Label;
+          default:
+            return {};
+        }
+      },
+      /*rowSubtitle*/ nullptr,
+      /*rowIcon*/ nullptr,
+      /*rowValue*/ nullptr,
+      /*highlightValue*/ false,
+      /*rowDimmed*/
+      [connected](int index) -> bool {
+        // Item 2 (unlist/delete) requires a connected companion
+        if (connected) return false;
+        return (index == 2);
+      });
 }
 
 // --- Message rendering (reads from _visibleMsgs array) ---

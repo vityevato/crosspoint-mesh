@@ -88,17 +88,6 @@ class MeshCoreThreadActivity final : public Activity {
   Tab currentTab = Tab::MESSAGES;
   int selectedIndex = 0;
 
-  // Menu navigation states
-  bool showingStatus = false;
-  MeshCoreCompanion lastCompanion = {};
-  uint32_t lastBatteryRequestMs = 0;
-  uint16_t lastBatteryMv = 0;
-
-  // Advert status feedback
-  bool _advertInFlight = false;
-  bool _advertIsFlood = false;
-  uint32_t _advertSentTime = 0;
-
   // Ephemeral toast overlay
   StatusMessageOverlay _toast;
 

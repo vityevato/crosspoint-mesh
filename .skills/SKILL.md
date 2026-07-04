@@ -189,6 +189,9 @@ return data from JSON instead of no-ops. Without the JSON file, all BLE
 operations remain no-ops (simulator has no real BLE hardware). All UI
 screens are interactive regardless.
 
+Reference client for MeshCore BLE protocol exchange and companion app
+behaviour: <https://github.com/dz0ny/meshcore-sar>
+
 ### Hardware Abstraction Layer (HAL)
 
 **CRITICAL**: Always use HAL classes, NOT SDK classes directly.

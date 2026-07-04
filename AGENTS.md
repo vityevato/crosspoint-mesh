@@ -50,7 +50,9 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
     - `expat` — XML parsing (vendored in `lib/expat/`)
     - `uzlib` — zlib decompression (vendored in `lib/uzlib/`)
 - **Internal libraries**:
-    - `lib/MeshCore/` — MeshCore BLE protocol client, message store
+    - `lib/MeshCore/` — MeshCore BLE protocol client, message store.
+      Reference client (protocol exchange, BLE companion behaviour):
+      <https://github.com/dz0ny/meshcore-sar>
     - `lib/Memory/` — `makeUniqueNoThrow` allocation helper
     - `lib/MiniBidi/` — bidirectional text layout (Arabic, Hebrew)
 - **Storage**: SD card (SdFat via `HalStorage`). No database.
