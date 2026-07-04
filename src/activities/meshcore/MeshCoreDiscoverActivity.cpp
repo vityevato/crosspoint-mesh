@@ -226,7 +226,11 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
 
     GUI.drawList(
         renderer, contentRect, discoveredNodeCount, selectedIndex,
-        [nodes](int index) { return std::string(nodes[index].name); },
+        [nodes](int index) {
+          const char* n = nodes[index].name;
+          if (n[0] == '\0') n = tr(STR_MESHCORE_UNKNOWN);
+          return std::string(n);
+        },
         [nodes](int index) {
           char buf[48];
           char keyLabel[MeshCoreContact::PUBLIC_KEY_DISPLAY_LEN];

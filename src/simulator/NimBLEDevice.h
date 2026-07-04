@@ -75,6 +75,7 @@ struct MockContact {
   char name[64] = {};
   char publicKey[65] = {};  // hex, 64 chars + null
   uint8_t type = 0;         // 0=COMPANION, 1=REPEATER, 2=ROOM_SERVER, 3=SENSOR
+  uint8_t flags = 0;        // wire format flags (bit 0 = favourite)
   uint32_t lastSeen = 0;
   uint8_t pathLength = 0;
   int8_t snr = 0;
@@ -83,7 +84,8 @@ struct MockContact {
 struct MockDiscoveredNode {
   char publicKey[65] = {};  // hex, 64 chars + null
   char name[64] = {};
-  uint8_t type = 0;  // 0=COMPANION, 1=REPEATER, 2=ROOM_SERVER, 3=SENSOR
+  uint8_t type = 0;         // 0=COMPANION, 1=REPEATER, 2=ROOM_SERVER, 3=SENSOR
+  uint8_t flags = 0;        // wire format flags (bit 0 = favourite)
   uint32_t lastSeen = 0;
   uint8_t pathLength = 0;
   int8_t snr = 0;
@@ -469,7 +471,7 @@ class NimBLERemoteCharacteristic {
     // MockContact.type is 0-based (0=COMPANION, 1=REPEATER, 2=ROOM_SERVER).
     // MeshCore wire protocol uses 1-based (1=CLIENT, 2=REPEATER, 3=ROOM).
     buf[off++] = c.type + 1;    // type (0-based → wire)
-    buf[off++] = 0;             // flags
+    buf[off++] = c.flags;       // flags (bit 0 = favourite)
     buf[off++] = c.pathLength;  // out_path_len
     memset(buf + off, 0, 64);   // out_path (64 zero bytes)
     off += 64;
@@ -666,7 +668,9 @@ class NimBLERemoteCharacteristic {
       memset(buf + 1, 0, CONTACT_PKT_LEN - 1);  // reset payload
 
       hexToBytes(node.publicKey, buf + 1, 32);
-      buf[33] = node.type;
+      // MockDiscoveredNode.type is 0-based internal enum → +1 for wire format
+      // (matches injectOneContact convention: 0=COMPANION→1=CLIENT, etc.)
+      buf[33] = node.type + 1;
       buf[35] = node.pathLength;
 
       // name: up to 32 bytes, null-terminated

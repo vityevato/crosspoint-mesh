@@ -197,6 +197,7 @@ void MockSession::parseContact(JsonObjectConst obj, MockContact& out) {
   strncpy(out.publicKey, pk, sizeof(out.publicKey) - 1);
 
   out.type = obj["type"] | 0;
+  out.flags = obj["flags"] | 0;
   out.lastSeen = obj["last_seen"] | 0U;
   out.pathLength = obj["path_length"] | 0;
   out.snr = obj["snr"] | 0;
@@ -235,6 +236,7 @@ void MockSession::parseDiscoveredNode(JsonObjectConst obj, MockDiscoveredNode& o
   strncpy(out.name, name, sizeof(out.name) - 1);
 
   out.type = obj["type"] | 0;
+  out.flags = obj["flags"] | 0;
   out.lastSeen = obj["last_seen"] | 0U;
   out.pathLength = obj["path_length"] | 0;
   out.snr = obj["snr"] | 0;

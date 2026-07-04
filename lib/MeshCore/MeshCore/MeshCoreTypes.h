@@ -50,6 +50,7 @@ struct MeshCoreContact {
   uint8_t publicKey[32] = {};                 ///< Ed25519 public key of the contact
   char name[64] = {};                         ///< Contact display name
   MeshNodeType type = MeshNodeType::UNKNOWN;  ///< Mesh node type
+  uint8_t flags = 0;                          ///< Wire format flags (bit 0 = favourite)
   uint32_t lastSeen = 0;                      ///< Last seen time (unix timestamp, sec)
   uint8_t pathLength = 0;                     ///< Number of hops to the node
   int8_t snr = 0;                             ///< SNR of last received packet (dB)
@@ -106,6 +107,6 @@ struct MeshCoreMessage {
 };
 
 // Contact store file version
-static constexpr uint8_t MESHCORE_CONTACT_FILE_VERSION = 1;
+static constexpr uint8_t MESHCORE_CONTACT_FILE_VERSION = 2;
 // Conservative max message text length for send UI
 static constexpr uint16_t MESHCORE_SEND_CHAR_LIMIT = 140;

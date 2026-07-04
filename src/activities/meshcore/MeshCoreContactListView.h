@@ -24,7 +24,11 @@ class MeshCoreContactListView {
 
     GUI.drawList(
         renderer, contentRect, contactCount, selectedIndex - 1,
-        [c = contacts](int index) { return std::string(c[index].name); },
+        [c = contacts](int index) {
+          const char* n = c[index].name;
+          if (n[0] == '\0') n = tr(STR_MESHCORE_UNKNOWN);
+          return std::string(n);
+        },
         [c = contacts](int index) {
           if (c[index].unreadCount > 0) {
             char buf[16];

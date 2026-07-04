@@ -223,7 +223,11 @@ void MeshCoreScanActivity::render(RenderLock&&) {
     // Draw scan results list
     GUI.drawList(
         renderer, Rect(0, contentTop, pageWidth, contentHeight), resultCount, selectedIndex,
-        [results](int index) { return std::string(results[index].name); },
+        [results](int index) {
+          const char* n = results[index].name;
+          if (n[0] == '\0') n = tr(STR_MESHCORE_UNKNOWN);
+          return std::string(n);
+        },
         [results](int index) {
           char subtitle[32];
           snprintf(subtitle, sizeof(subtitle), "RSSI: %d dBm", results[index].rssi);

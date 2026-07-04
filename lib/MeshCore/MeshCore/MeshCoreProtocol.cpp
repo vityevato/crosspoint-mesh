@@ -306,7 +306,8 @@ bool parseContact(const uint8_t* data, size_t len, MeshCoreContact& out) {
 
   uint8_t nodeType = data[off];
   off += 1;  // type
-  off += 1;  // flags (unused)
+  out.flags = data[off];  // bit 0 = favourite (protected from overwrite)
+  off += 1;  // flags
 
   out.pathLength = data[off];
   off += 1;

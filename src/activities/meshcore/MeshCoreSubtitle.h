@@ -25,7 +25,8 @@ inline void formatMeshCoreSubtitle(const MeshCoreClient& client, char* buf, size
       battPct = static_cast<int>(comp.batteryMv - 3200) / 10;
       if (battPct > 100) battPct = 100;
     }
-    snprintf(buf, bufSize, "%d%% %s %s", battPct, meshcore::DotSeparator, comp.name);
+    const char* name = comp.name[0] != '\0' ? comp.name : "???";
+    snprintf(buf, bufSize, "%d%% %s %s", battPct, meshcore::DotSeparator, name);
   } else {
     snprintf(buf, bufSize, "%s", tr(STR_MESHCORE_DISCONNECTED));
   }

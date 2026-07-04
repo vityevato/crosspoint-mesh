@@ -65,7 +65,11 @@ MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInpu
                                                const MeshCoreContact& contact)
     : Activity("MeshCoreThread", renderer, mappedInput), client(client), store(store), isChannel(false) {
   memcpy(contactPubkey, contact.publicKey, 32);
-  snprintf(threadName, sizeof(threadName), "%s", contact.name);
+  if (contact.name[0] != '\0') {
+    snprintf(threadName, sizeof(threadName), "%s", contact.name);
+  } else {
+    snprintf(threadName, sizeof(threadName), "%s", tr(STR_MESHCORE_UNKNOWN));
+  }
 }
 
 void MeshCoreThreadActivity::onEnter() {
@@ -113,6 +117,7 @@ void MeshCoreThreadActivity::onEnter() {
 
 void MeshCoreThreadActivity::onExit() {
   MESHCORE_LOG_HEAP("Thread onExit");
+  _pendingOp = PendingOp::IDLE;
   savePosition();
   memset(_visibleMsgs, 0, sizeof(_visibleMsgs));
   _visibleCount = 0;
@@ -350,6 +355,15 @@ void MeshCoreThreadActivity::loop() {
     requestUpdate();
   }
 
+  // ── Async BLE unlist operation state machine ──
+  if (_pendingOp != PendingOp::IDLE && !client.isCommandPending()) {
+    completeUnlistOp(client.getLastCommandResult());
+  }
+  if (_pendingOp != PendingOp::IDLE && (millis() - _pendingStartMs) > 10000) {
+    LOG_ERR("MESH", "Unlist BLE timeout (no response after 10 s)");
+    completeUnlistOp(false);
+  }
+
 #ifdef SIMULATOR
   if (handleMockKey("Thread", client.getBleClient())) {
     requestUpdate();
@@ -400,6 +414,9 @@ void MeshCoreThreadActivity::loop() {
 
   // --- Confirm ---
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    // Block all Confirm actions while a BLE operation is pending
+    if (_pendingOp != PendingOp::IDLE) return;
+
     if (selectedIndex == 0) {
       // Tab bar — cycle to next tab
       int tab = static_cast<int>(currentTab);
@@ -450,21 +467,37 @@ void MeshCoreThreadActivity::loop() {
           requestUpdate();
           return;
         }
-        case 2: {  // Unlist Contact / Delete Channel
+        case 2: {  // Unlist Contact / Delete Channel (async, waits for BLE)
+          if (!connected) {
+            // Not connected — can't send BLE command
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            break;
+          }
           if (isChannel) {
-            if (connected) {
-              client.deleteChannel(channelIdx);
+            if (!client.deleteChannel(channelIdx)) {
+              LOG_ERR("MESH", "Failed to queue channel delete");
+              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+              requestUpdate();
+              break;
             }
-            _toast.show(tr(STR_MESHCORE_CHANNEL_DELETED), 3000);
+            LOG_DBG("MESH", "Queued channel %d delete — waiting for BLE response", channelIdx);
+            _pendingOp = PendingOp::DELETING_CHANNEL;
           } else {
             MeshCoreContact toRemove = {};
             memcpy(toRemove.publicKey, contactPubkey, 32);
             toRemove.isSaved = false;
-            if (connected) {
-              client.addUpdateContact(toRemove);
+            if (!client.addUpdateContact(toRemove)) {
+              LOG_ERR("MESH", "Failed to queue contact delete");
+              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+              requestUpdate();
+              break;
             }
-            _toast.show(tr(STR_MESHCORE_CONTACT_REMOVED), 3000);
+            LOG_DBG("MESH", "Queued contact unlist — waiting for BLE response");
+            _pendingOp = PendingOp::DELETING_CONTACT;
           }
+          _pendingStartMs = millis();
+          _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
           selectedIndex = 0;
           requestUpdate();
           return;
@@ -543,6 +576,44 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
 void MeshCoreThreadActivity::provideSubtitle(const void* ctx, char* buf, size_t bufSize) {
   const auto* self = static_cast<const MeshCoreThreadActivity*>(ctx);
   formatMeshCoreSubtitle(self->client, buf, bufSize);
+}
+
+// ── Async unlist completion handler ──
+// Called from loop() when the BLE command completes or times out.
+// Mirrors Discovery's completeContactSave() exactly — also updates the
+// saved contact list in the store so the Hub picks up the change.
+
+void MeshCoreThreadActivity::completeUnlistOp(bool success) {
+  _pendingOp = PendingOp::IDLE;
+  if (success) {
+    LOG_DBG("MESH", "Unlist %s succeeded", isChannel ? "channel" : "contact");
+
+    if (!isChannel) {
+      // Load current contacts, remove this one, save back — same pattern
+      // as Discovery's completeContactSave(DELETING).
+      constexpr uint8_t kMaxContacts = 20;
+      MeshCoreContact contacts[kMaxContacts] = {};
+      uint8_t count = store.loadContacts(contacts, kMaxContacts);
+      for (uint8_t i = 0; i < count; ++i) {
+        if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
+          for (uint8_t j = i; j + 1 < count; ++j) {
+            contacts[j] = contacts[j + 1];
+          }
+          count--;
+          store.saveContacts(contacts, count);
+          LOG_INF("MESH", "Removed contact from saved list");
+          break;
+        }
+      }
+    }
+
+    setResult(ActivityResult(MeshCoreUnlistResult{isChannel}));
+    finish();
+  } else {
+    LOG_ERR("MESH", "Unlist %s failed", isChannel ? "channel" : "contact");
+    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+    requestUpdate();
+  }
 }
 
 // --- Message sending ---

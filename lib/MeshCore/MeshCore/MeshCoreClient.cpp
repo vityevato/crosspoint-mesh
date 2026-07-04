@@ -785,7 +785,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     case MeshProto::PKT_CONTACT: {
       MeshCoreContact contact = {};
       if (MeshProto::parseContact(data, len, contact)) {
-        contact.isSaved = true;
+        contact.isSaved = true;  // CMD_GET_CONTACTS returns all known contacts
         if (contactCb) contactCb(contact, false, contactCbCtx);
       }
       break;
@@ -850,8 +850,9 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
       // PUSH_CODE_NEW_ADVERT: writeContactRespFrame format (148 bytes).
       MeshCoreContact contact = {};
       if (MeshProto::parseContact(data, len, contact)) {
-        LOG_DBG("MESH", "New advert: %s", contact.name);
+        // Newly discovered node — always goes to discovered list
         contact.isSaved = false;
+        LOG_DBG("MESH", "New advert: %s flags=0x%02X", contact.name, contact.flags);
         if (contactCb) contactCb(contact, false, contactCbCtx);
       }
       break;

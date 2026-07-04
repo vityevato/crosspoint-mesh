@@ -87,71 +87,6 @@ void MeshCoreHubActivity::onEnter() {
       channels[i].unreadCount = channelUnread[i];
     }
 
-    // TEMP: one-shot test message generation for all channels (per companion)
-    char key[13];
-    MeshCoreMessageStore::bleAddrToKey(addr, key, sizeof(key));
-    char zhopaPath[64];
-    snprintf(zhopaPath, sizeof(zhopaPath), "/.crosspoint/meshcore/%s/zhopa.data", key);
-    if (key[0] != '\0' && !Storage.exists(zhopaPath)) {
-      constexpr uint16_t kTestCount = 200;
-      const uint32_t baseTime = 1740000000u;
-
-      LOG_INF("MESH", "Generating test messages for all channels...");
-
-      for (uint8_t ch = 0; ch < 8; ch++) {
-        LOG_DBG("MESH", "Channel %d: clearing old messages...", ch);
-        store.clearChannelMessages(ch);
-
-        static constexpr const char* SENDER_NAMES[] = {"Alice", "Bob", "Charlie", "Diana", "Eve"};
-        static constexpr const char* TEMPLATES[] = {
-            "%d. This is a test message to verify MeshCore thread view layout and scrolling behavior.",
-            "%d. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore.",
-            "%d. Quick test with short text.",
-            "%d. Longer message to test text wrapping over several lines in the thread view. Shows how the layout "
-            "handles extended content with proper indentation for sent and received messages.",
-        };
-
-        for (uint16_t i = 0; i < kTestCount; i++) {
-          MeshCoreMessage msg = {};
-          msg.direction = (i % 3 == 0) ? MsgDirection::SENT : MsgDirection::RECEIVED;
-          msg.type = MsgType::CHANNEL;
-          msg.channelIdx = ch;
-
-          if (msg.direction == MsgDirection::RECEIVED) {
-            snprintf(msg.senderName, sizeof(msg.senderName), "%s", SENDER_NAMES[i % 5]);
-          }
-
-          msg.timestamp = baseTime + i * 30;
-          msg.pathLength = static_cast<uint8_t>(i % 4);
-          msg.deliveryStatus = DeliveryStatus::SENT;
-          snprintf(msg.text, sizeof(msg.text), TEMPLATES[i % 4], static_cast<int>(i + 1));
-
-          // Calculate render height for batch-load scrolling support
-          const auto& tmetrics = UITheme::getInstance().getMetrics();
-          int tcontentWidth = renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
-          msg.heightPx =
-              measureMeshCoreMessageHeight(renderer, SETTINGS.getReaderFontId(), tcontentWidth, true, msg, tmetrics);
-
-          store.appendChannelMessage(ch, msg);
-        }
-
-        // Record the fontId used for height calculation in ConvMeta
-        ConvMeta chMeta;
-        if (store.getChannelMeta(ch, chMeta)) {
-          chMeta.fontId = SETTINGS.getReaderFontId();
-          store.saveChannelMeta(ch, chMeta);
-        }
-        LOG_DBG("MESH", "Channel %d: done (fontId=%d)", ch, SETTINGS.getReaderFontId());
-      }
-
-      // Write marker so this never runs again for this companion
-      HalFile marker = Storage.open(zhopaPath, O_WRONLY | O_CREAT);
-      if (marker) {
-        marker.write(reinterpret_cast<const uint8_t*>("1"), 1);
-        // DESTRUCTOR_CLOSES_FILE=1 → marker closes at scope exit
-      }
-      LOG_INF("MESH", "Test messages generated, marker written");
-    }
   }
   MESHCORE_LOG_HEAP("Hub onEnter:after store");
 
@@ -681,16 +616,13 @@ void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
   if (c.type != MeshNodeType::COMPANION) return;
 
   if (c.isSaved) {
-    // Update saved contacts with server data
+    // Update or add saved contact with full data from companion
     for (uint8_t i = 0; i < savedContactCount; ++i) {
       if (memcmp(savedContacts[i].publicKey, c.publicKey, 32) == 0) {
-        savedContacts[i].lastSeen = c.lastSeen;
-        savedContacts[i].pathLength = c.pathLength;
-        savedContacts[i].snr = c.snr;
-        savedContacts[i].type = c.type;
-        if (c.name[0] != '\0') {
-          snprintf(savedContacts[i].name, sizeof(savedContacts[i].name), "%s", c.name);
-        }
+        uint16_t prevUnread = savedContacts[i].unreadCount;
+        savedContacts[i] = c;
+        savedContacts[i].isSaved = true;          // Ensure flag
+        savedContacts[i].unreadCount = prevUnread;  // Preserve local state
         store.saveContacts(savedContacts, savedContactCount);
         return;
       }
@@ -720,20 +652,29 @@ void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
 }
 
 void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
-  // Update existing or add new discovered node
-  // PKT_ADVERTISEMENT has no timestamp — use current time as lastSeen
-  MeshCoreContact updated = node;
-  updated.lastSeen = static_cast<uint32_t>(time(nullptr));
+  // PKT_ADVERTISEMENT (0x80) — pubkey-only "seen again" beacon.
+  // Only publicKey is populated; all other fields are zeroed.
+  // Never overwrite existing name/type/pathLength with empty data.
+  char keyLabel[MeshCoreContact::PUBLIC_KEY_DISPLAY_LEN];
+  node.getPublicKeyLabel(keyLabel);
+  LOG_DBG("MESH", "Advert: key=%s name='%s' type=%d saved=%d pathLen=%d snr=%d", keyLabel, node.name, (int)node.type,
+          node.isSaved, node.pathLength, node.snr);
+
+  uint32_t now = static_cast<uint32_t>(time(nullptr));
 
   for (uint8_t i = 0; i < discoveredNodeCount; ++i) {
-    if (memcmp(discoveredNodes[i].publicKey, updated.publicKey, 32) == 0) {
-      discoveredNodes[i] = updated;
+    if (memcmp(discoveredNodes[i].publicKey, node.publicKey, 32) == 0) {
+      // Update lastSeen only — preserve name/type/pathLength from previous
+      // PKT_NEW_ADVERT (0x8A) which carried full data.
+      discoveredNodes[i].lastSeen = now;
       requestUpdate();
       return;
     }
   }
+  // New unseen pubkey — add weak entry (name will be empty until PKT_NEW_ADVERT)
   if (discoveredNodeCount < MAX_VISIBLE_CONTACTS) {
-    discoveredNodes[discoveredNodeCount] = updated;
+    discoveredNodes[discoveredNodeCount] = node;
+    discoveredNodes[discoveredNodeCount].lastSeen = now;
     discoveredNodeCount++;
     requestUpdate();
   }
@@ -766,7 +707,16 @@ void MeshCoreHubActivity::openChannelThread(uint8_t channelIdx) {
   channels[channelIdx].unreadCount = 0;
   startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, channelIdx,
                                                                   channels[channelIdx].name),
-                         [this](const ActivityResult&) { requestUpdate(); });
+                         [this, channelIdx](const ActivityResult& result) {
+                           if (auto* unlist = std::get_if<MeshCoreUnlistResult>(&result.data)) {
+                             if (unlist->isChannel) {
+                               LOG_DBG("MESH", "Hub: channel %d deleted — clearing locally, re-requesting", channelIdx);
+                               channels[channelIdx] = {};
+                               client.requestChannel(channelIdx);
+                             }
+                           }
+                           requestUpdate();
+                         });
 }
 
 void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
@@ -778,7 +728,15 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
     }
   }
   startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, contact),
-                         [this](const ActivityResult&) { requestUpdate(); });
+                         [this](const ActivityResult& result) {
+                           if (auto* unlist = std::get_if<MeshCoreUnlistResult>(&result.data)) {
+                             if (!unlist->isChannel) {
+                               LOG_DBG("MESH", "Hub: contact deleted — reloading from store");
+                               savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
+                             }
+                           }
+                           requestUpdate();
+                         });
 }
 
 void MeshCoreHubActivity::openDiscover() {

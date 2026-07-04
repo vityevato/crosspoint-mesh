@@ -79,7 +79,7 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     }
     off += 32;
 
-    buf[off++] = 0;            // type = COMPANION
+    buf[off++] = 1;            // wire type for CLIENT (= COMPANION)
     buf[off++] = 0;            // flags
     buf[off++] = n % 3;        // out_path_len — cycle 0,1,2
     memset(buf + off, 0, 64);  // out_path

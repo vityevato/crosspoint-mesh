@@ -84,6 +84,12 @@ class MeshCoreThreadActivity final : public Activity {
   int _contentAreaHeight = 0;
   bool _needsRebuild = false;
 
+  // Async BLE unlist/delete operation (mirrors Discovery's pattern)
+  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT, DELETING_CHANNEL };
+  PendingOp _pendingOp = PendingOp::IDLE;
+  uint32_t _pendingStartMs = 0;
+  void completeUnlistOp(bool success);
+
   // Tab state
   Tab currentTab = Tab::MESSAGES;
   int selectedIndex = 0;
