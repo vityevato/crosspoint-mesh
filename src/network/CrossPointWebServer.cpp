@@ -1822,6 +1822,10 @@ void CrossPointWebServer::handleFontUploadData() {
       }
 
       fontUpload.valid = true;
+      // Silence the SD log sink for the duration of the transfer: it holds a
+      // second SD write handle and flushing it per log line thrashes SdFat's
+      // single shared sector cache, truncating the file being uploaded.
+      suspendLogFileSink();
       LOG_DBG("WEB", "Font upload started: %s -> %s", filename.c_str(), path);
       break;
     }
@@ -1862,6 +1866,8 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_END: {
+      // Transfer done: allow the SD log sink to resume writing.
+      resumeLogFileSink();
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
         fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
@@ -1881,6 +1887,8 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_ABORTED: {
+      // Transfer aborted: allow the SD log sink to resume writing.
+      resumeLogFileSink();
       if (fontUpload.file) {
         fontUpload.file.close();
       }

@@ -111,6 +111,7 @@ void MeshCoreClient::deinit() {
   // Clear all active trackers
   for (auto& t : _trackers) t.active = false;
   _ourNodeHash = 0;
+  _pendingDm = {};
 
   // Interrupt any in-progress blocking connect/init so the worker can exit.
   // Only disconnect the link here — do NOT call NimBLEDevice::deleteClient()
@@ -370,6 +371,7 @@ void MeshCoreClient::disconnect() {
   cmdExpectedResponse = 0;
   rxHead = 0;
   rxTail = 0;
+  _pendingDm = {};
 
   if (state != BleConnectionState::DISCONNECTED) {
     setState(BleConnectionState::DISCONNECTED);
@@ -458,11 +460,48 @@ bool MeshCoreClient::sendChannelMessage(uint8_t channelIdx, const char* text) {
   return ok;
 }
 
-bool MeshCoreClient::sendDirectMessage(const uint8_t* pubkey32, const char* text) {
+bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const char* text, uint32_t msgId) {
   uint8_t buf[CMD_BUF_SIZE];
   uint32_t ts = static_cast<uint32_t>(millis() / 1000);
-  size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), pubkey32, ts, text);
-  return len > 0 && enqueueCmd(buf, len, MeshProto::PKT_MSG_SENT);
+  size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), contact.publicKey, ts, text, /*attempt=*/0);
+  if (len == 0) return false;
+
+  // Fill the in-flight tracker slot
+  _pendingDm = {};
+  _pendingDm.active = true;
+  _pendingDm.msgId = msgId;
+  memcpy(_pendingDm.pubkey, contact.publicKey, 32);
+  snprintf(_pendingDm.name, sizeof(_pendingDm.name), "%s", contact.name);
+  _pendingDm.type = contact.type;
+  snprintf(_pendingDm.text, sizeof(_pendingDm.text), "%s", text);
+  _pendingDm.awaitingSent = true;
+  _pendingDm.stage = 0;
+
+  // If contact has no known path (0xFF), skip direct stages entirely.
+  // Start with the first flood attempt (stage=2 → attempt=2).
+  if (contact.pathLength == 0xFF) {
+    _pendingDm.stage = 2;
+    // Rebuild the send buffer with the flood attempt byte
+    len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), contact.publicKey, ts, text, /*attempt=*/2);
+  }
+
+  return enqueueCmd(buf, len, MeshProto::PKT_MSG_SENT);
+}
+
+bool MeshCoreClient::resetPath(const MeshCoreContact& contact) {
+  // Build CMD_ADD_UPDATE_CONTACT with pathLength=0xFF and zeroed 64-byte path.
+  // This tells the companion to clear its stored route and re-learn it
+  // on the next round-trip. We pass the real name/type to avoid clobbering
+  // the contact's display name on the companion.
+  MeshCoreContact resetContact = contact;
+  resetContact.pathLength = 0xFF;
+  // buildAddUpdateContact zeros the 64-byte path — exactly what we want.
+  return addUpdateContact(resetContact);
+}
+
+void MeshCoreClient::setDeliveryCallback(DeliveryCallback cb, void* ctx) {
+  deliveryCb = cb;
+  deliveryCbCtx = ctx;
 }
 
 bool MeshCoreClient::setChannel(uint8_t idx, const char* name, const uint8_t* secret16) {
@@ -683,6 +722,14 @@ void MeshCoreClient::poll() {
     sendNextCmd();
   }
 
+  // Check DM delivery escalation timeout (lazy, ~once per poll())
+  if (_pendingDm.active && !_pendingDm.awaitingSent && state == BleConnectionState::CONNECTED) {
+    uint32_t elapsed = millis() - _pendingDm.sentAtMs;
+    if (elapsed > _pendingDm.timeoutMs) {
+      startDmEscalation();
+    }
+  }
+
   // Periodic message poll: guard against PKT_MSGS_WAITING lost to rxBuf overwrite
   // during e-ink refresh (1-2 s). Only poll when idle (no pending/queued cmds).
   if (state == BleConnectionState::CONNECTED && !cmdPending && cmdCount == 0) {
@@ -874,15 +921,44 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     case MeshProto::PKT_ACK: {
       uint8_t ackHash[4];
       if (MeshProto::parseAck(data, len, ackHash)) {
-        LOG_DBG("MESH", "ACK received");
+        uint32_t hash32;
+        memcpy(&hash32, ackHash, 4);  // RISC-V unaligned-load safe
+        LOG_DBG("MESH", "ACK received: hash=0x%08lX", (unsigned long)hash32);
+        if (_pendingDm.active && !_pendingDm.awaitingSent && _pendingDm.ackTag == hash32) {
+          LOG_INF("MESH", "DM ACK matched: msgId=%lu pubkey=%02X%02X", (unsigned long)_pendingDm.msgId,
+                  _pendingDm.pubkey[0], _pendingDm.pubkey[1]);
+          _pendingDm.active = false;
+          fireDelivery(DeliveryStatus::ACKED);
+        } else {
+          LOG_DBG("MESH", "ACK hash 0x%08lX: no matching in-flight DM (active=%d awaiting=%d ackTag=0x%08lX)",
+                  (unsigned long)hash32, (int)_pendingDm.active, (int)_pendingDm.awaitingSent,
+                  (unsigned long)_pendingDm.ackTag);
+        }
       }
       break;
     }
 
     case MeshProto::PKT_MSG_SENT: {
       uint32_t ackTag, timeout;
-      if (MeshProto::parseMsgSent(data, len, ackTag, timeout)) {
-        LOG_DBG("MESH", "Msg sent, ack tag=%lu timeout=%lu", (unsigned long)ackTag, (unsigned long)timeout);
+      bool isSentFlood = false;
+      if (MeshProto::parseMsgSent(data, len, ackTag, timeout, isSentFlood)) {
+        LOG_DBG("MESH", "Msg sent, ack tag=%lu timeout=%lu flood=%d", (unsigned long)ackTag, (unsigned long)timeout,
+                (int)isSentFlood);
+        if (_pendingDm.active && _pendingDm.awaitingSent) {
+          _pendingDm.ackTag = ackTag;
+          _pendingDm.sentFlood = isSentFlood;
+          _pendingDm.awaitingSent = false;
+          _pendingDm.sentAtMs = millis();
+          // Honour companion timeout if sensible, else use stage table fallback.
+          if (timeout > 0 && timeout < 60000) {
+            uint32_t stageT = DM_STAGE_TIMEOUT_MS[_pendingDm.stage];
+            _pendingDm.timeoutMs = (timeout > stageT) ? timeout : stageT;
+          } else {
+            _pendingDm.timeoutMs = DM_STAGE_TIMEOUT_MS[_pendingDm.stage];
+          }
+          LOG_DBG("MESH", "DM tracker: ackTag=0x%08lX stage=%d flood=%d", (unsigned long)ackTag, (int)_pendingDm.stage,
+                  (int)isSentFlood);
+        }
       }
       break;
     }
@@ -996,6 +1072,54 @@ bool MeshCoreClient::runInitSequence() {
   requestMessages();
 
   return true;
+}
+
+void MeshCoreClient::startDmEscalation() {
+  if (!_pendingDm.active || _pendingDm.awaitingSent) return;
+
+  _pendingDm.stage++;
+  if (_pendingDm.stage >= 4) {
+    LOG_INF("MESH", "DM escalation exhausted: msgId=%lu marking FAILED", (unsigned long)_pendingDm.msgId);
+    _pendingDm.active = false;
+    fireDelivery(DeliveryStatus::FAILED);
+    return;
+  }
+
+  // Before the first flood stage (stage 2), reset the companion's route
+  // to clear any stale direct route.
+  if (_pendingDm.stage == 2) {
+    LOG_INF("MESH", "DM escalation: resetting path before flood stage for %s", _pendingDm.name);
+    MeshCoreContact resetContact = {};
+    memcpy(resetContact.publicKey, _pendingDm.pubkey, 32);
+    snprintf(resetContact.name, sizeof(resetContact.name), "%s", _pendingDm.name);
+    resetContact.type = _pendingDm.type;
+    resetContact.pathLength = 0xFF;
+    resetPath(resetContact);
+  }
+
+  LOG_INF("MESH", "DM escalation: resending msgId=%lu stage=%d attempt=%d", (unsigned long)_pendingDm.msgId,
+          (int)_pendingDm.stage, (int)_pendingDm.stage);
+  resendDm(_pendingDm.stage);
+}
+
+void MeshCoreClient::resendDm(uint8_t attempt) {
+  if (!_pendingDm.active) return;
+
+  uint8_t buf[CMD_BUF_SIZE];
+  uint32_t ts = static_cast<uint32_t>(millis() / 1000);
+  size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), _pendingDm.pubkey, ts, _pendingDm.text, attempt);
+  if (len == 0) return;
+
+  _pendingDm.awaitingSent = true;
+  _pendingDm.sentAtMs = millis();
+  _pendingDm.timeoutMs = DM_STAGE_TIMEOUT_MS[_pendingDm.stage];
+  enqueueCmd(buf, len, MeshProto::PKT_MSG_SENT);
+}
+
+void MeshCoreClient::fireDelivery(DeliveryStatus status) {
+  if (deliveryCb) {
+    deliveryCb(_pendingDm.msgId, _pendingDm.pubkey, status, deliveryCbCtx);
+  }
 }
 
 void MeshCoreClient::workerTaskFunc(void* param) {

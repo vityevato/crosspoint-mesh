@@ -72,7 +72,8 @@ class MeshCoreMessageStore {
   /// Side effect: updates ConvMeta (count, endId, totalPx).
   /// If the thread is at capacity, drops the oldest message first
   /// (which also adjusts positionPx).
-  bool appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg);
+  /// On success, writes the assigned message id to *outId if non-null.
+  bool appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg, uint32_t* outId = nullptr);
   bool loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint8_t maxCount, bool up, MeshCoreMessage* out,
                           uint8_t& loaded);
   /// Overload that loads messages by pixel height rather than count.

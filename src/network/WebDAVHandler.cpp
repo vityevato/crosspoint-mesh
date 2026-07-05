@@ -80,6 +80,10 @@ void WebDAVHandler::raw(WebServer& server, const String& uri, HTTPRaw& raw) {
     String tempPath = _putPath + ".davtmp";
     Storage.remove(tempPath.c_str());
     _putOk = Storage.openFileForWrite("DAV", tempPath, _putFile);
+    // Silence the SD log sink for the duration of the transfer: it holds a
+    // second SD write handle and flushing it per log line thrashes SdFat's
+    // single shared sector cache, truncating the file being uploaded.
+    if (_putOk) suspendLogFileSink();
     LOG_DBG("DAV", "PUT START: %s", _putPath.c_str());
 
   } else if (raw.status == RAW_WRITE) {
@@ -92,6 +96,8 @@ void WebDAVHandler::raw(WebServer& server, const String& uri, HTTPRaw& raw) {
     }
 
   } else if (raw.status == RAW_END) {
+    // Transfer done (or aborted early): allow the SD log sink to resume.
+    resumeLogFileSink();
     if (_putFile) _putFile.close();
     if (_putOk) {
       String tempPath = _putPath + ".davtmp";
@@ -108,6 +114,8 @@ void WebDAVHandler::raw(WebServer& server, const String& uri, HTTPRaw& raw) {
     LOG_DBG("DAV", "PUT END: %u bytes, ok=%d", raw.totalSize, _putOk);
 
   } else if (raw.status == RAW_ABORTED) {
+    // Transfer aborted: allow the SD log sink to resume.
+    resumeLogFileSink();
     if (_putFile) _putFile.close();
     String tempPath = _putPath + ".davtmp";
     Storage.remove(tempPath.c_str());

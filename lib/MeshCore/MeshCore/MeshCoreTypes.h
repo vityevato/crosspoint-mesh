@@ -52,10 +52,13 @@ struct MeshCoreContact {
   MeshNodeType type = MeshNodeType::UNKNOWN;  ///< Mesh node type
   uint8_t flags = 0;                          ///< Wire format flags (bit 0 = favourite)
   uint32_t lastSeen = 0;                      ///< Last seen time (unix timestamp, sec)
-  uint8_t pathLength = 0;                     ///< Number of hops to the node
-  int8_t snr = 0;                             ///< SNR of last received packet (dB)
-  bool isSaved = false;                       ///< Whether the contact is saved in the address book
-  uint16_t unreadCount = 0;                   ///< Number of unread messages
+  /// Number of hops to the node. 0xFF = no known path / flood (reset sentinel),
+  /// 0 = zero-hop direct neighbour, > 0 = hop count. Path bytes themselves are
+  /// owned by the companion firmware — the app never stores route bytes.
+  uint8_t pathLength = 0xFF;
+  int8_t snr = 0;            ///< SNR of last received packet (dB)
+  bool isSaved = false;      ///< Whether the contact is saved in the address book
+  uint16_t unreadCount = 0;  ///< Number of unread messages
 
   static constexpr uint8_t PUBLIC_KEY_DISPLAY_LEN = 11;  // "AABB..CCDD\0"
 

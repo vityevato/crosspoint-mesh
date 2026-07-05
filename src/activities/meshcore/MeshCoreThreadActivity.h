@@ -14,6 +14,8 @@
 
 struct Rect;
 
+class MeshCoreHubActivity;
+
 /**
  * MeshCoreThreadActivity shows a pixel-paginated message thread for either a
  * LoRa channel (group chat) or a direct message conversation with a
@@ -37,11 +39,12 @@ class MeshCoreThreadActivity final : public Activity {
  public:
   // Channel thread constructor
   MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, MeshCoreClient& client,
-                         MeshCoreMessageStore& store, uint8_t channelIdx, const char* channelName);
+                         MeshCoreMessageStore& store, uint8_t channelIdx, const char* channelName,
+                         MeshCoreHubActivity* hub);
 
   // Direct message thread constructor
   MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, MeshCoreClient& client,
-                         MeshCoreMessageStore& store, const MeshCoreContact& contact);
+                         MeshCoreMessageStore& store, const MeshCoreContact& contact, MeshCoreHubActivity* hub);
 
   void onEnter() override;
   void onExit() override;
@@ -49,11 +52,19 @@ class MeshCoreThreadActivity final : public Activity {
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return true; }
 
+  /// Called by Hub when a delivery callback fires for this conversation.
+  /// Reloads visible messages from store and triggers a repaint.
+  void onDeliveryUpdate(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status);
+
+  /// Expose pubkey for Hub to match delivery callbacks to this conversation.
+  const uint8_t* contactPubkeyForDelivery() const { return contactPubkey; }
+
  private:
   enum class Tab : uint8_t { MESSAGES = 0, MENU, TAB_COUNT };
 
   MeshCoreClient& client;
   MeshCoreMessageStore& store;
+  MeshCoreHubActivity* _hub = nullptr;
   ButtonNavigator buttonNavigator;
 
   bool isChannel = false;
@@ -109,6 +120,12 @@ class MeshCoreThreadActivity final : public Activity {
   void scrollUpPage();
   void scrollDownByMessage();
   void scrollUpByMessage();
+
+  /** Menu action: jump to end of conversation. */
+  void scrollToEnd();
+  /** Menu action: clear all messages in this conversation. */
+  void clearConversation();
+
   void savePosition();
   void sendMessage();
 
@@ -121,5 +138,4 @@ class MeshCoreThreadActivity final : public Activity {
 
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);
-
 };

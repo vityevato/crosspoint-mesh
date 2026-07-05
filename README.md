@@ -51,14 +51,16 @@ single device. Community-built, fully hackable, free forever.
   - **Channels** — join and send messages on public channels, hashtag channels, and encrypted
     private channels (up to 8)
   - **Contacts & direct messages** — view saved contacts with unread counts,
-    send private messages with paginated conversation history
+    send private messages with paginated conversation history, per-message delivery
+    status (Sent / Delivered / Failed), bounded retry escalation (direct → flood),
+    and manual route reset for stale paths
   - **Menu tab** — Discovery Nodes (browse nearby mesh nodes and add as contacts),
     Send Advert / Send Flood Advert (broadcast presence on the mesh),
     Status (companion device info), Disconnect
   - **SD persistence** — messages, contacts, and unread counts survive reboots via SD card
     storage
   - **Desktop simulator** — test all MeshCore UI without hardware using mock data
-    (`fs_/meshcore_mock.json`) and hotkeys 1-8
+    (`fs_/meshcore_mock.json`) and hotkeys 1-9
 
 ### Coming soon:
 
@@ -222,6 +224,7 @@ Mock hotkeys for injecting BLE events:
 | 6 | Inject companion status update |
 | 7 | Inject advert success (PKT_OK) |
 | 8 | Inject flood advert success (PKT_OK) |
+| 9 | Inject DM delivery ACK (PKT_ACK) |
 
 See [CLAUDE.md](./CLAUDE.md) for detailed simulator architecture
 and the mock session lifecycle.

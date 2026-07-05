@@ -84,8 +84,8 @@ struct MockContact {
 struct MockDiscoveredNode {
   char publicKey[65] = {};  // hex, 64 chars + null
   char name[64] = {};
-  uint8_t type = 0;         // 0=COMPANION, 1=REPEATER, 2=ROOM_SERVER, 3=SENSOR
-  uint8_t flags = 0;        // wire format flags (bit 0 = favourite)
+  uint8_t type = 0;   // 0=COMPANION, 1=REPEATER, 2=ROOM_SERVER, 3=SENSOR
+  uint8_t flags = 0;  // wire format flags (bit 0 = favourite)
   uint32_t lastSeen = 0;
   uint8_t pathLength = 0;
   int8_t snr = 0;
@@ -232,6 +232,7 @@ struct PendingEcho {
   uint8_t channelIdx = 0;
   uint8_t pubkeyPrefix[6] = {};
   char text[MOCK_MAX_TEXT_LEN] = {};
+  uint32_t ackTag = 0;  ///< ackTag from PKT_MSG_SENT, for auto-ACK after DM echo
 };
 
 inline PendingEcho sPendingEcho;
@@ -635,16 +636,45 @@ class NimBLERemoteCharacteristic {
 
   // Build and inject PKT_MSG_SENT (0x06, 10 bytes).
   // Acknowledges that the companion received the message.
+  // Uses an incrementing ackTag so the real MeshCoreClient can match PKT_ACK.
   void injectMsgSent() {
     auto cb = effectiveNotifyCb();
     if (!cb) return;
 
+    // Generate a non-zero ackTag so DM delivery tracking works.
+    // Toggle isSentFlood on the first send (attempt 0).
+    static uint32_t sAckTag = 1;
+    uint32_t ackTag = sAckTag++;
+    if (sAckTag == 0) sAckTag = 1;  // wrap, but never use 0
+
+    // Check the attempt byte (data[2] from the wire format) to decide flood.
+    // The mock doesn't see the wire bytes here, so use a simple toggle.
+    static uint8_t sFloodToggle = 0;
+    uint8_t isFlood = sFloodToggle;
+    sFloodToggle = sFloodToggle ? 0 : 1;
+
     uint8_t buf[10] = {};
     buf[0] = 0x06;  // PKT_MSG_SENT
-    // buf[1] = 0;  // isSentFlood
-    // buf[2..5] = 0;  // ack_tag
-    // buf[6..9] = 0;  // est_timeout
+    buf[1] = isFlood;
+    memcpy(buf + 2, &ackTag, 4);
+    // buf[6..9] = 0;  // est_timeout (0 = use default)
     cb(this, buf, 10, true);
+    sPendingEcho.ackTag = ackTag;  // store for later ACK injection (hotkey 9 or auto)
+    LOG_DBG("MOCK", "injectMsgSent: ackTag=0x%08lX flood=%d", (unsigned long)ackTag, (int)isFlood);
+  }
+
+  // Inject PKT_ACK (0x82, 9 bytes) with a matching ackHash.
+  // ackTag must match the ackTag from the last PKT_MSG_SENT.
+  void injectAck(uint32_t ackTag) {
+    auto cb = effectiveNotifyCb();
+    if (!cb) return;
+
+    uint8_t buf[9] = {};
+    buf[0] = 0x82;                // PKT_ACK
+    memcpy(buf + 1, &ackTag, 4);  // ackHash = ackTag (companion echoes it back)
+    // buf[5..8] = 0;  // tripTimeMs
+    cb(this, buf, 9, true);
+    LOG_INF("MOCK", "injectAck: ackHash=0x%08lX", (unsigned long)ackTag);
   }
 
   // Build and inject PKT_NEW_ADVERT (0x8A) for each discovered node.
@@ -896,6 +926,16 @@ inline void pollMock(NimBLEClient* client, uint32_t nowMs) {
     off += textLen;
     client->injectPacket(buf, off);
     LOG_INF("MOCK", "echo DM msg: %.40s", echoText);
+
+    // Inject PKT_ACK after the DM echo so delivery tracking marks it ACKED.
+    uint32_t savedAckTag = sPendingEcho.ackTag;
+    if (savedAckTag != 0) {
+      uint8_t ackBuf[9] = {};
+      ackBuf[0] = 0x82;  // PKT_ACK
+      memcpy(ackBuf + 1, &savedAckTag, 4);
+      client->injectPacket(ackBuf, sizeof(ackBuf));
+      LOG_INF("MOCK", "echo DM ACK: ackHash=0x%08lX", (unsigned long)savedAckTag);
+    }
   } else if (sPendingEcho.type == PendingEchoType::ADD_CONTACT_OK) {
     // Delayed PKT_OK for CMD_ADD_UPDATE_CONTACT (DELAY_OK mode)
     uint8_t ok = 0x00;

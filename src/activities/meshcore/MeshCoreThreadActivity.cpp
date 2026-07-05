@@ -12,6 +12,7 @@
 
 #include "CrossPointSettings.h"
 #include "FontCacheManager.h"
+#include "MeshCoreHubActivity.h"
 #include "MeshCoreSubtitle.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -49,10 +50,11 @@ struct ThreadRenderCtx {
 // Channel thread constructor
 MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                MeshCoreClient& client, MeshCoreMessageStore& store, uint8_t channelIdx,
-                                               const char* channelName)
+                                               const char* channelName, MeshCoreHubActivity* hub)
     : Activity("MeshCoreThread", renderer, mappedInput),
       client(client),
       store(store),
+      _hub(hub),
       isChannel(true),
       channelIdx(channelIdx) {
   snprintf(threadName, sizeof(threadName), "%s", channelName);
@@ -61,8 +63,8 @@ MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInpu
 // Direct message constructor
 MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                MeshCoreClient& client, MeshCoreMessageStore& store,
-                                               const MeshCoreContact& contact)
-    : Activity("MeshCoreThread", renderer, mappedInput), client(client), store(store), isChannel(false) {
+                                               const MeshCoreContact& contact, MeshCoreHubActivity* hub)
+    : Activity("MeshCoreThread", renderer, mappedInput), client(client), store(store), _hub(hub), isChannel(false) {
   memcpy(contactPubkey, contact.publicKey, 32);
   if (contact.name[0] != '\0') {
     snprintf(threadName, sizeof(threadName), "%s", contact.name);
@@ -71,9 +73,24 @@ MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInpu
   }
 }
 
+void MeshCoreThreadActivity::onDeliveryUpdate(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status) {
+  // The Hub already wrote the new status to the store.
+  // Reload meta and re-load visible messages so the UI reflects the change.
+  ConvMeta currentMeta;
+  if (store.getDirectMeta(contactPubkey, currentMeta)) {
+    _meta = currentMeta;
+    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
+  }
+  requestUpdate();
+  LOG_INF("MESH", "Thread DM delivery: msgId=%lu status=%d", (unsigned long)msgId, (int)status);
+}
+
 void MeshCoreThreadActivity::onEnter() {
   Activity::onEnter();
   MESHCORE_LOG_HEAP("Thread onEnter:start");
+
+  // Register with Hub for delivery callbacks (Hub writes to store + forwards here)
+  if (_hub) _hub->setActiveThread(this);
 
   // Explicitly reset to Messages tab on every entry
   currentTab = Tab::MESSAGES;
@@ -117,6 +134,8 @@ void MeshCoreThreadActivity::onEnter() {
 void MeshCoreThreadActivity::onExit() {
   MESHCORE_LOG_HEAP("Thread onExit");
   _pendingOp = PendingOp::IDLE;
+  // Unregister from Hub delivery forwarding
+  if (_hub) _hub->clearActiveThread(this);
   savePosition();
   memset(_visibleMsgs, 0, sizeof(_visibleMsgs));
   _visibleCount = 0;
@@ -129,8 +148,8 @@ bool MeshCoreThreadActivity::loadMessages(uint32_t startId, bool up) {
     store.loadChannelMessages(channelIdx, startId, static_cast<uint16_t>(_contentAreaHeight), up, _visibleMsgs, loaded,
                               _fillerMsg);
   } else {
-    store.loadDirectMessages(contactPubkey, startId, static_cast<uint16_t>(_contentAreaHeight), up, _visibleMsgs, loaded,
-                             _fillerMsg);
+    store.loadDirectMessages(contactPubkey, startId, static_cast<uint16_t>(_contentAreaHeight), up, _visibleMsgs,
+                             loaded, _fillerMsg);
   }
   _visibleCount = loaded;
   if (loaded > 0) {
@@ -182,9 +201,9 @@ void MeshCoreThreadActivity::scrollDownPage() {
   //           _meta.positionId);
   //   loadVisibleBatchUp();
   // } else {
-    LOG_DBG("MESH", "scrollDownPage: advancing (posPx=%u posId=%u)", _meta.positionPx, _meta.positionId);
-    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
-    savePosition();
+  LOG_DBG("MESH", "scrollDownPage: advancing (posPx=%u posId=%u)", _meta.positionPx, _meta.positionId);
+  loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
+  savePosition();
   requestUpdate();
 }
 
@@ -229,6 +248,37 @@ void MeshCoreThreadActivity::savePosition() {
   }
 }
 
+void MeshCoreThreadActivity::scrollToEnd() {
+  if (_meta.count == 0) return;
+  loadMessages(_meta.endId, /*up=*/true);
+  if (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight)) {
+    _meta.positionPx = _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight);
+  } else {
+    _meta.positionPx = 0;
+  }
+  _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
+  savePosition();
+  currentTab = Tab::MESSAGES;
+  selectedIndex = 1;
+  requestUpdate();
+}
+
+void MeshCoreThreadActivity::clearConversation() {
+  if (isChannel) {
+    store.clearChannelMessages(channelIdx);
+  } else {
+    store.clearDirectMessages(contactPubkey);
+  }
+  _meta = {};
+  _visibleCount = 0;
+  _fillerMsg = {};
+  savePosition();
+  _toast.show(tr(STR_MESHCORE_CONVERSATION_CLEARED), 3000);
+  currentTab = Tab::MESSAGES;
+  selectedIndex = 0;
+  requestUpdate();
+}
+
 void MeshCoreThreadActivity::scrollDownByMessage() {
   LOG_DBG("MESH", "scrollDownByMsg: posPx=%u accH=%u lastId=%u endId=%u", _meta.positionPx, _accHeight, _lastVisibleId,
           _meta.endId);
@@ -247,9 +297,8 @@ void MeshCoreThreadActivity::scrollDownByMessage() {
   }
 
   _meta.positionId = _firstVisibleId;
-  _meta.positionPx = (_meta.positionPx >= _accHeight) 
-  ? _meta.positionPx - _accHeight + _visibleMsgs[_visibleCount - 1].heightPx 
-  : 0;
+  _meta.positionPx =
+      (_meta.positionPx >= _accHeight) ? _meta.positionPx - _accHeight + _visibleMsgs[_visibleCount - 1].heightPx : 0;
   LOG_DBG("MESH", "scrollDownByMsg: final posPx=%u posId=%u", _meta.positionPx, _meta.positionId);
 
   savePosition();
@@ -379,48 +428,22 @@ void MeshCoreThreadActivity::loop() {
     }
 
     if (currentTab == Tab::MENU) {
-      // Channel & DM menu: 3 items (Scroll to End, Clear, Unlist/Delete)
-      bool connected = (client.getState() == BleConnectionState::CONNECTED);
-      switch (itemIdx) {
-        case 0: {  // Scroll to End
-          if (_meta.count == 0) break;
-          loadMessages(_meta.endId, /*up=*/true);
-          if (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight)) {
-            _meta.positionPx = _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight);
-          } else {
-            _meta.positionPx = 0;
-          }
-          _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
-          savePosition();
-          currentTab = Tab::MESSAGES;
-          selectedIndex = 1;  // enter messages area so scrolling works immediately
-          requestUpdate();
-          return;
-        }
-        case 1: {  // Clear Conversation
-          if (isChannel) {
-            store.clearChannelMessages(channelIdx);
-          } else {
-            store.clearDirectMessages(contactPubkey);
-          }
-          _meta = {};
-          _visibleCount = 0;
-          _fillerMsg = {};
-          savePosition();
-          _toast.show(tr(STR_MESHCORE_CONVERSATION_CLEARED), 3000);
-          currentTab = Tab::MESSAGES;
-          selectedIndex = 0;
-          requestUpdate();
-          return;
-        }
-        case 2: {  // Unlist Contact / Delete Channel (async, waits for BLE)
-          if (!connected) {
-            // Not connected — can't send BLE command
-            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-            requestUpdate();
-            break;
-          }
-          if (isChannel) {
+      if (isChannel) {
+        // Channel menu: 0=Scroll to End, 1=Clear, 2=Delete Channel
+        bool connected = (client.getState() == BleConnectionState::CONNECTED);
+        switch (itemIdx) {
+          case 0:  // Scroll to End
+            scrollToEnd();
+            return;
+          case 1:  // Clear Conversation
+            clearConversation();
+            return;
+          case 2: {  // Delete Channel (async, waits for BLE)
+            if (!connected) {
+              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+              requestUpdate();
+              break;
+            }
             if (!client.deleteChannel(channelIdx)) {
               LOG_ERR("MESH", "Failed to queue channel delete");
               _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
@@ -429,7 +452,62 @@ void MeshCoreThreadActivity::loop() {
             }
             LOG_DBG("MESH", "Queued channel %d delete — waiting for BLE response", channelIdx);
             _pendingOp = PendingOp::DELETING_CHANNEL;
-          } else {
+            _pendingStartMs = millis();
+            _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
+            selectedIndex = 0;
+            requestUpdate();
+            return;
+          }
+          default:
+            break;
+        }
+      } else {
+        // DM menu: 0=Reset Path, 1=Scroll to End, 2=Clear, 3=Unlist
+        bool connected = (client.getState() == BleConnectionState::CONNECTED);
+        switch (itemIdx) {
+          case 0: {  // Reset Path
+            if (!connected) {
+              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+              requestUpdate();
+              break;
+            }
+            // Load the contact from the store to get current pathLength
+            constexpr uint8_t kMaxContacts = 20;
+            MeshCoreContact contacts[kMaxContacts] = {};
+            uint8_t count = store.loadContacts(contacts, kMaxContacts);
+            bool hasPath = false;
+            MeshCoreContact found = {};
+            for (uint8_t i = 0; i < count; ++i) {
+              if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
+                found = contacts[i];
+                hasPath = (found.pathLength != 0xFF);
+                break;
+              }
+            }
+            if (!hasPath) {
+              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+              requestUpdate();
+              break;
+            }
+            client.resetPath(found);
+            _toast.show(tr(STR_PATH_RESET), 3000);
+            currentTab = Tab::MESSAGES;
+            selectedIndex = 0;
+            requestUpdate();
+            return;
+          }
+          case 1:  // Scroll to End
+            scrollToEnd();
+            return;
+          case 2:  // Clear Conversation
+            clearConversation();
+            return;
+          case 3: {  // Unlist Contact (async, waits for BLE)
+            if (!connected) {
+              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+              requestUpdate();
+              break;
+            }
             MeshCoreContact toRemove = {};
             memcpy(toRemove.publicKey, contactPubkey, 32);
             toRemove.isSaved = false;
@@ -441,15 +519,15 @@ void MeshCoreThreadActivity::loop() {
             }
             LOG_DBG("MESH", "Queued contact unlist — waiting for BLE response");
             _pendingOp = PendingOp::DELETING_CONTACT;
+            _pendingStartMs = millis();
+            _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
+            selectedIndex = 0;
+            requestUpdate();
+            return;
           }
-          _pendingStartMs = millis();
-          _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
-          selectedIndex = 0;
-          requestUpdate();
-          return;
+          default:
+            break;
         }
-        default:
-          break;
       }
     }
     return;
@@ -513,7 +591,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU:
-      return 3;  // 3 items: Scroll to End, Clear, Unlist/Delete
+      return isChannel ? 3 : 4;  // Channel: 3 items; DM: 4 items (+Reset Path)
     default:
       return 0;
   }
@@ -578,35 +656,57 @@ void MeshCoreThreadActivity::sendMessage() {
                              return;
                            }
 
+                           // For DMs: append to store FIRST to obtain the assigned id,
+                           // then send with that id for delivery tracking.
+                           MeshCoreMessage msg = {};
+                           msg.direction = MsgDirection::SENT;
+                           msg.type = isChannel ? MsgType::CHANNEL : MsgType::DIRECT;
+                           msg.channelIdx = channelIdx;
+                           msg.timestamp = static_cast<uint32_t>(millis() / 1000);
+                           msg.deliveryStatus = DeliveryStatus::SENT;
+                           snprintf(msg.text, sizeof(msg.text), "%s", text.c_str());
+
+                           // Compute rendered height for batch-load scrolling
+                           const auto& tmetrics = UITheme::getInstance().getMetrics();
+                           int tcontentWidth = renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
+                           msg.heightPx = measureMeshCoreMessageHeight(renderer, SETTINGS.getReaderFontId(),
+                                                                       tcontentWidth, isChannel, msg, tmetrics);
+
                            bool sent = false;
                            if (isChannel) {
                              sent = client.sendChannelMessage(channelIdx, text.c_str());
+                             if (sent) store.appendChannelMessage(channelIdx, msg);
                            } else {
-                             sent = client.sendDirectMessage(contactPubkey, text.c_str());
+                             // Append first to obtain the assigned id
+                             uint32_t msgId = 0;
+                             if (store.appendDirectMessage(contactPubkey, msg, &msgId)) {
+                               // Now send with the store-assigned id for delivery tracking.
+                               // Load the real contact from the store to get pathLength
+                               // (0xFF = no path → start at flood; otherwise → direct).
+                               MeshCoreContact contact = {};
+                               memcpy(contact.publicKey, contactPubkey, 32);
+                               snprintf(contact.name, sizeof(contact.name), "%s", threadName);
+                               // Try to load saved contact for pathLength
+                               constexpr uint8_t kMaxSend = 20;
+                               MeshCoreContact saved[kMaxSend] = {};
+                               uint8_t savedCount = store.loadContacts(saved, kMaxSend);
+                               for (uint8_t i = 0; i < savedCount; ++i) {
+                                 if (memcmp(saved[i].publicKey, contactPubkey, 32) == 0) {
+                                   contact.pathLength = saved[i].pathLength;
+                                   contact.type = saved[i].type;
+                                   break;
+                                 }
+                               }
+                               sent = client.sendDirectMessage(contact, text.c_str(), msgId);
+                               if (!sent) {
+                                 // Send failed — update the persisted record to FAILED
+                                 store.updateDirectMessage(contactPubkey, msgId, DeliveryStatus::FAILED);
+                               }
+                             }
                            }
 
                            if (sent) {
                              LOG_INF("MESH", "Message queued");
-                             // Build a local copy for display
-                             MeshCoreMessage msg = {};
-                             msg.direction = MsgDirection::SENT;
-                             msg.type = isChannel ? MsgType::CHANNEL : MsgType::DIRECT;
-                             msg.channelIdx = channelIdx;
-                             msg.timestamp = static_cast<uint32_t>(millis() / 1000);
-                             msg.deliveryStatus = DeliveryStatus::SENT;
-                             snprintf(msg.text, sizeof(msg.text), "%s", text.c_str());
-
-                             // Compute rendered height for batch-load scrolling
-                             const auto& tmetrics = UITheme::getInstance().getMetrics();
-                             int tcontentWidth = renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
-                             msg.heightPx = measureMeshCoreMessageHeight(renderer, SETTINGS.getReaderFontId(),
-                                                                         tcontentWidth, isChannel, msg, tmetrics);
-
-                             if (isChannel) {
-                               store.appendChannelMessage(channelIdx, msg);
-                             } else {
-                               store.appendDirectMessage(contactPubkey, msg);
-                             }
                              // Reload meta and batch-load from end
                              if (isChannel) {
                                store.getChannelMeta(channelIdx, _meta);
@@ -718,33 +818,61 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
 void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
   bool connected = (client.getState() == BleConnectionState::CONNECTED);
 
-  constexpr int kItemCount = 3;
-  const char* item2Label = isChannel ? tr(STR_MESHCORE_DELETE_CHANNEL) : tr(STR_MESHCORE_REMOVE_CONTACT);
+  constexpr int kChannelItemCount = 3;
+  constexpr int kDmItemCount = 4;
+  int kItemCount = isChannel ? kChannelItemCount : kDmItemCount;
+
+  // Menu item labels — table-driven to avoid duplicating the shared
+  // entries (Scroll to End, Clear Conversation) across two switches.
+  static constexpr StrId kChannelTitles[] = {
+      StrId::STR_MESHCORE_SCROLL_TO_END,
+      StrId::STR_MESHCORE_CLEAR_CONVERSATION,
+      StrId::STR_MESHCORE_DELETE_CHANNEL,
+  };
+  static constexpr StrId kDmTitles[] = {
+      StrId::STR_PATH_RESET,
+      StrId::STR_MESHCORE_SCROLL_TO_END,
+      StrId::STR_MESHCORE_CLEAR_CONVERSATION,
+      StrId::STR_MESHCORE_REMOVE_CONTACT,
+  };
+  const auto& titles = isChannel ? kChannelTitles : kDmTitles;
 
   GUI.drawList(
       renderer, contentRect, kItemCount, selectedIndex - 1,
       /*rowTitle*/
-      [item2Label](int index) -> std::string {
-        switch (index) {
-          case 0:
-            return tr(STR_MESHCORE_SCROLL_TO_END);
-          case 1:
-            return tr(STR_MESHCORE_CLEAR_CONVERSATION);
-          case 2:
-            return item2Label;
-          default:
-            return {};
-        }
+      [&titles, kItemCount](int index) -> std::string {
+        if (index < 0 || index >= kItemCount) return {};
+        return I18n::getInstance().get(titles[index]);
       },
       /*rowSubtitle*/ nullptr,
       /*rowIcon*/ nullptr,
       /*rowValue*/ nullptr,
       /*highlightValue*/ false,
       /*rowDimmed*/
-      [connected](int index) -> bool {
-        // Item 2 (unlist/delete) requires a connected companion
-        if (connected) return false;
-        return (index == 2);
+      [this, connected](int index) -> bool {
+        if (isChannel) {
+          // Channel: item 2 (unlist/delete) requires connected companion
+          if (!connected) return (index == 2);
+          return false;
+        } else {
+          // DM: item 0 (Reset Path) requires connected + has path;
+          // item 3 (unlist) requires connected
+          if (index == 0) {
+            if (!connected) return true;
+            // Check if contact has a path by loading from store
+            constexpr uint8_t kMaxDim = 20;
+            MeshCoreContact contacts[kMaxDim] = {};
+            uint8_t count = store.loadContacts(contacts, kMaxDim);
+            for (uint8_t i = 0; i < count; ++i) {
+              if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
+                return (contacts[i].pathLength == 0xFF);  // dim if no path
+              }
+            }
+            return true;  // contact not found → dim
+          }
+          if (!connected) return (index == 3);
+          return false;
+        }
       });
 }
 
@@ -842,14 +970,28 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
       }
     }
 
-    // Meta line (timestamp + hops)
+    // Meta line (timestamp + delivery status or hops)
     if (msg.timestamp > 0 && fits(ctx.metaLineH)) {
       char metaBuf[64];
       char tsBuf[16];
       formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
-      char hopBuf[12];
+      char hopBuf[20];
       if (isChannel && outgoing) {
         meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
+      } else if (!isChannel && outgoing) {
+        // Show delivery status instead of hop count for outgoing DMs
+        switch (msg.deliveryStatus) {
+          case DeliveryStatus::ACKED:
+            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_ACKED));
+            break;
+          case DeliveryStatus::FAILED:
+            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_FAILED));
+            break;
+          case DeliveryStatus::SENT:
+          default:
+            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_SENT));
+            break;
+        }
       } else {
         meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
       }

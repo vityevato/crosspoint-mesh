@@ -1,5 +1,6 @@
 #include "MeshCoreMessageStore.h"
 
+#include <Arduino.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Serialization.h>
@@ -289,7 +290,7 @@ bool MeshCoreMessageStore::clearDirectMessages(const uint8_t* pubkey32) {
   return true;
 }
 
-bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg) {
+bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const MeshCoreMessage& msg, uint32_t* outId) {
   char convPath[64];
   buildConvPath(pubkey32, convPath, sizeof(convPath));
 
@@ -335,6 +336,9 @@ bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const Me
   meta.count++;
   meta.endId = newId;
   meta.totalPx += msgWithId.heightPx;
+
+  if (outId) *outId = newId;
+
   return writeMeta(convPath, meta);
 }
 
@@ -360,6 +364,10 @@ bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t
 
   MeshCoreMessage msg;
   if (!readMessage(convPath, id, msg)) return false;
+  if (msg.deliveryStatus != newStatus) {
+    // Update timestamp to reflect the status-change time
+    msg.timestamp = static_cast<uint32_t>(millis() / 1000);
+  }
   msg.deliveryStatus = newStatus;
   return writeMessage(convPath, id, msg);
 }

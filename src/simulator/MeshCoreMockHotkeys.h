@@ -256,6 +256,26 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     return true;
   }
 
+  if (wasKeyPressedThisFrame(SDL_SCANCODE_9)) {
+    // Inject PKT_ACK (0x82) with the last ackTag from injectMsgSent().
+    // This lets you manually trigger DM delivery → ACKED in the UI.
+    if (!bleClient || !bleClient->isConnected()) return false;
+    uint8_t buf[9] = {};
+    buf[0] = 0x82;  // PKT_ACK
+    if (sPendingEcho.ackTag != 0) {
+      memcpy(buf + 1, &sPendingEcho.ackTag, 4);
+      bleClient->injectPacket(buf, sizeof(buf));
+      LOG_INF("MOCK", "[%s] key 9: inject PKT_ACK ackHash=0x%08lX", (unsigned long)sPendingEcho.ackTag);
+    } else {
+      // No pending ackTag — inject with ackHash=1 (most recent send)
+      uint32_t fallback = 1;
+      memcpy(buf + 1, &fallback, 4);
+      bleClient->injectPacket(buf, sizeof(buf));
+      LOG_INF("MOCK", "[%s] key 9: inject PKT_ACK fallback ackHash=0x%08lX", (unsigned long)fallback);
+    }
+    return true;
+  }
+
   return false;
 }
 

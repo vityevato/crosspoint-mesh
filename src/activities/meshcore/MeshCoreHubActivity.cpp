@@ -58,6 +58,10 @@ void MeshCoreHubActivity::onChannelHeard(uint8_t channelIdx, uint8_t heardCount,
   static_cast<MeshCoreHubActivity*>(ctx)->handleChannelHeard(channelIdx, heardCount);
 }
 
+void MeshCoreHubActivity::onDeliveryStatic(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status, void* ctx) {
+  static_cast<MeshCoreHubActivity*>(ctx)->handleDelivery(msgId, pubkey32, status);
+}
+
 // --- Lifecycle ---
 
 void MeshCoreHubActivity::onEnter() {
@@ -86,7 +90,6 @@ void MeshCoreHubActivity::onEnter() {
     for (int i = 0; i < 8; ++i) {
       channels[i].unreadCount = channelUnread[i];
     }
-
   }
   MESHCORE_LOG_HEAP("Hub onEnter:after store");
 
@@ -96,6 +99,7 @@ void MeshCoreHubActivity::onEnter() {
   client.setAdvertCallback(onAdvertReceived, this);
   client.setChannelCallback(onChannelReceived, this);
   client.setChannelHeardCallback(onChannelHeard, this);
+  client.setDeliveryCallback(onDeliveryStatic, this);  // persistent — never cleared
 
   if (hasAddr && addr[0] != '\0') {
     client.setAutoReconnectAddress(addr, addrType);
@@ -621,7 +625,7 @@ void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
       if (memcmp(savedContacts[i].publicKey, c.publicKey, 32) == 0) {
         uint16_t prevUnread = savedContacts[i].unreadCount;
         savedContacts[i] = c;
-        savedContacts[i].isSaved = true;          // Ensure flag
+        savedContacts[i].isSaved = true;            // Ensure flag
         savedContacts[i].unreadCount = prevUnread;  // Preserve local state
         store.saveContacts(savedContacts, savedContactCount);
         return;
@@ -701,12 +705,25 @@ void MeshCoreHubActivity::handleChannelHeard(uint8_t channelIdx, uint8_t heardCo
   }
 }
 
+void MeshCoreHubActivity::handleDelivery(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status) {
+  // Always persist delivery status to the store — works regardless of
+  // whether a Thread activity is currently open.
+  store.updateDirectMessage(pubkey32, msgId, status);
+  LOG_INF("MESH", "Delivery: msgId=%lu status=%d", (unsigned long)msgId, (int)status);
+
+  // If a Thread activity is open and this delivery is for its conversation,
+  // forward the update so it can reload messages and repaint.
+  if (_activeThread && memcmp(pubkey32, _activeThread->contactPubkeyForDelivery(), 32) == 0) {
+    _activeThread->onDeliveryUpdate(msgId, pubkey32, status);
+  }
+}
+
 // --- Navigation ---
 
 void MeshCoreHubActivity::openChannelThread(uint8_t channelIdx) {
   channels[channelIdx].unreadCount = 0;
   startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, channelIdx,
-                                                                  channels[channelIdx].name),
+                                                                  channels[channelIdx].name, this),
                          [this, channelIdx](const ActivityResult& result) {
                            if (auto* unlist = std::get_if<MeshCoreUnlistResult>(&result.data)) {
                              if (unlist->isChannel) {
@@ -727,7 +744,7 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
       break;
     }
   }
-  startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, contact),
+  startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, contact, this),
                          [this](const ActivityResult& result) {
                            if (auto* unlist = std::get_if<MeshCoreUnlistResult>(&result.data)) {
                              if (!unlist->isChannel) {

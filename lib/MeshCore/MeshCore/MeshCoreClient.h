@@ -31,6 +31,9 @@ class MeshCoreClient {
   // hashes (first byte of each repeater public key).
   using ChannelHeardCallback = void (*)(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx);
 
+  /// Fired when a direct message's delivery status changes (ACKED or FAILED).
+  using DeliveryCallback = void (*)(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status, void* ctx);
+
   MeshCoreClient();
   ~MeshCoreClient();
 
@@ -60,11 +63,17 @@ class MeshCoreClient {
   bool requestBattery();
   bool requestMessages();
   bool sendChannelMessage(uint8_t channelIdx, const char* text);
-  bool sendDirectMessage(const uint8_t* pubkey32, const char* text);
+  /// Send a direct message. contact is copied into the in-flight tracker.
+  /// msgId is the store-assigned id, used to correlate delivery callbacks.
+  bool sendDirectMessage(const MeshCoreContact& contact, const char* text, uint32_t msgId);
   bool setChannel(uint8_t idx, const char* name, const uint8_t* secret16);
   bool deleteChannel(uint8_t idx);
   bool addUpdateContact(const MeshCoreContact& contact);
   bool sendSelfAdvert(bool flood);
+  /// Reset the companion's stored route for a contact by sending
+  /// CMD_ADD_UPDATE_CONTACT with pathLength=0xFF (no path).
+  /// The companion will re-learn the route on the next round-trip.
+  bool resetPath(const MeshCoreContact& contact);
 
   bool isCommandPending() const { return cmdPending; }
   /// Result of the last completed command. Reset on disconnect.
@@ -108,6 +117,10 @@ class MeshCoreClient {
   /// is an array of first-byte-of-public-key routing hashes. Use to
   /// update the message's pathLength in the store for live UI feedback.
   void setChannelHeardCallback(ChannelHeardCallback cb, void* ctx);
+
+  /// Called when a direct message's delivery status changes.
+  /// Fires on ACK (PKT_ACK received) or FAILED (all escalation stages exhausted).
+  void setDeliveryCallback(DeliveryCallback cb, void* ctx);
 
   // Must be called from activity loop() to process responses and timeouts
   void poll();
@@ -187,6 +200,37 @@ class MeshCoreClient {
   void* pinCbCtx = nullptr;
   ChannelHeardCallback heardCb = nullptr;
   void* heardCbCtx = nullptr;
+  DeliveryCallback deliveryCb = nullptr;
+  void* deliveryCbCtx = nullptr;
+
+  // ── In-flight DM delivery tracker (single slot, runtime-only) ──
+  // Tracks one outstanding direct message awaiting PKT_MSG_SENT + PKT_ACK.
+  // These fields are never serialized — only deliveryStatus (persisted per
+  // message record) is written to SD. ackTag, sentAtMs, stage, and sentFlood
+  // are meaningless across a reboot (millis() resets, ACK slots reset).
+  struct PendingDm {
+    bool active = false;
+    uint32_t msgId = 0;       // store-assigned id, to update DeliveryStatus
+    uint8_t pubkey[32] = {};  // recipient, for resend / store update
+    char name[64] = {};       // contact name, needed to reset route
+    MeshNodeType type = MeshNodeType::UNKNOWN;
+    char text[MAX_MSG_TEXT_LEN] = {};  // copy, for resend
+    uint32_t ackTag = 0;               // expectedAck from PKT_MSG_SENT
+    uint32_t sentAtMs = 0;             // millis() of last send
+    uint32_t timeoutMs = 0;            // max(stageTable, companionEstimate)
+    uint8_t stage = 0;                 // escalation stage 0..3
+    bool awaitingSent = false;         // true until PKT_MSG_SENT arrives
+    bool sentFlood = false;            // last isSentFlood, for UI/logging
+  };
+  PendingDm _pendingDm = {};
+
+  // Escalation timeouts per stage (direct stages 0-1, flood stages 2-3).
+  static constexpr uint32_t DM_STAGE_TIMEOUT_MS[4] = {3000, 7000, 5000, 15000};
+  static constexpr uint32_t DM_FALLBACK_TIMEOUT_MS = 30000;
+
+  void startDmEscalation();
+  void resendDm(uint8_t attempt);
+  void fireDelivery(DeliveryStatus status);
 
   // Tracker for "heard by N repeaters" on outgoing channel messages.
   // Each call to sendChannelMessage() registers a pending tracker keyed by the

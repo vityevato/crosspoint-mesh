@@ -114,8 +114,9 @@ size_t buildSetChannel(uint8_t* out, size_t maxLen, uint8_t channelIdx, const ch
 // CMD_SEND_CHANNEL_MESSAGE: 0x03 0x00 <idx> <ts[4]> <text>
 size_t buildSendChannelMsg(uint8_t* out, size_t maxLen, uint8_t channelIdx, uint32_t timestamp, const char* text);
 
-// CMD_SEND_DM: 0x02 <txt_type=0> <attempt=0> <ts[4]> <pubkey_prefix[6]> <text>
-size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, uint32_t timestamp, const char* text);
+// CMD_SEND_DM: 0x02 <txt_type=0> <attempt> <ts[4]> <pubkey_prefix[6]> <text>
+size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, uint32_t timestamp, const char* text,
+                          uint8_t attempt = 0);
 
 // CMD_SEND_SELF_ADVERT: 0x07 [flood:1 byte] — 0 = zero-hop, 1 = flood
 size_t buildSendSelfAdvert(uint8_t* out, size_t maxLen, bool flood);
@@ -143,7 +144,8 @@ bool parseChannelMessage(const uint8_t* data, size_t len, MeshCoreMessage& out);
 
 bool parseContactMessage(const uint8_t* data, size_t len, MeshCoreMessage& out);
 
-bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck, uint32_t& suggestedTimeoutMs);
+bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck, uint32_t& suggestedTimeoutMs,
+                  bool& isSentFlood);
 
 bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]);
 

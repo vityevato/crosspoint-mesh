@@ -11,6 +11,8 @@
 
 struct Rect;
 
+class MeshCoreThreadActivity;
+
 /**
  * MeshCoreHubActivity is the central entry point for all MeshCore
  * functionality. It owns the BLE client and message store for its
@@ -80,6 +82,10 @@ class MeshCoreHubActivity final : public Activity {
   MeshCoreContact discoveredNodes[MAX_VISIBLE_CONTACTS] = {};
   uint8_t discoveredNodeCount = 0;
 
+  // The currently-open Thread activity, set by Thread::onEnter().
+  // Used to forward delivery callbacks for UI updates.
+  MeshCoreThreadActivity* _activeThread = nullptr;
+
   // Callbacks (static -> instance via context pointer)
   static void onStateChanged(BleConnectionState state, void* ctx);
   static void onMessageReceived(const MeshCoreMessage& msg, void* ctx);
@@ -87,6 +93,7 @@ class MeshCoreHubActivity final : public Activity {
   static void onAdvertReceived(const MeshCoreContact& node, void* ctx);
   static void onChannelReceived(const MeshCoreChannel& ch, void* ctx);
   static void onChannelHeard(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx);
+  static void onDeliveryStatic(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status, void* ctx);
 
   void handleStateChange(BleConnectionState state);
   void handleMessage(const MeshCoreMessage& msg);
@@ -94,6 +101,7 @@ class MeshCoreHubActivity final : public Activity {
   void handleAdvert(const MeshCoreContact& node);
   void handleChannel(const MeshCoreChannel& ch);
   void handleChannelHeard(uint8_t channelIdx, uint8_t heardCount);
+  void handleDelivery(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status);
 
   void renderChannelList(const Rect& contentRect);
   void renderContactList(const Rect& contentRect);
@@ -101,6 +109,16 @@ class MeshCoreHubActivity final : public Activity {
 
   void openChannelThread(uint8_t channelIdx);
   void openContactThread(const MeshCoreContact& contact);
+
+ public:
+  /// Called by Thread::onEnter() to register for delivery UI updates.
+  void setActiveThread(MeshCoreThreadActivity* t) { _activeThread = t; }
+  /// Called by Thread::onExit() to unregister.
+  void clearActiveThread(const MeshCoreThreadActivity* t) {
+    if (_activeThread == t) _activeThread = nullptr;
+  }
+
+ private:
   // cppcheck-suppress unusedPrivateFunction; used in issue 2-AFK
   void openDiscover();
   void launchScanActivity();

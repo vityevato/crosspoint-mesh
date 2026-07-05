@@ -85,10 +85,11 @@ size_t buildSendChannelMsg(uint8_t* out, size_t maxLen, uint8_t channelIdx, uint
   return needed;
 }
 
-size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, uint32_t timestamp, const char* text) {
+size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, uint32_t timestamp, const char* text,
+                          uint8_t attempt) {
   size_t textLen = strlen(text);
   // Companion CMD_SEND_TXT_MSG format:
-  // [0] cmd, [1] txt_type=0, [2] attempt=0, [3..6] ts, [7..12] pubkey_prefix(6), [13..] text
+  // [0] cmd, [1] txt_type=0, [2] attempt, [3..6] ts, [7..12] pubkey_prefix(6), [13..] text
   const size_t needed = 13 + textLen;
   if (maxLen < needed) {
     LOG_ERR("MESH", "buildSendDirectMsg: buffer too small");
@@ -96,7 +97,7 @@ size_t buildSendDirectMsg(uint8_t* out, size_t maxLen, const uint8_t* pubkey32, 
   }
   out[0] = CMD_SEND_DM;
   out[1] = 0;  // txt_type = TXT_TYPE_PLAIN = 0
-  out[2] = 0;  // attempt = 0 (first attempt)
+  out[2] = attempt;
   memcpy(out + 3, &timestamp, 4);
   memcpy(out + 7, pubkey32, 6);  // companion looks up by 6-byte pubkey prefix
   memcpy(out + 13, text, textLen);
@@ -305,9 +306,9 @@ bool parseContact(const uint8_t* data, size_t len, MeshCoreContact& out) {
   off += 32;
 
   uint8_t nodeType = data[off];
-  off += 1;  // type
+  off += 1;               // type
   out.flags = data[off];  // bit 0 = favourite (protected from overwrite)
-  off += 1;  // flags
+  off += 1;               // flags
 
   out.pathLength = data[off];
   off += 1;
@@ -419,14 +420,16 @@ bool parseContactMessage(const uint8_t* data, size_t len, MeshCoreMessage& out) 
   return true;
 }
 
-bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck, uint32_t& suggestedTimeoutMs) {
+bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck, uint32_t& suggestedTimeoutMs,
+                  bool& isSentFlood) {
   // Companion RESP_CODE_SENT layout:
   // [0] code, [1] isSentFlood, [2..5] ack_tag, [6..9] est_timeout
   if (len < 10) {
     LOG_ERR("MESH", "parseMsgSent: too short (%d)", (int)len);
     return false;
   }
-  memcpy(&expectedAck, data + 2, 4);  // skip isSentFlood at [1]
+  isSentFlood = (data[1] != 0);
+  memcpy(&expectedAck, data + 2, 4);
   memcpy(&suggestedTimeoutMs, data + 6, 4);
   return true;
 }
