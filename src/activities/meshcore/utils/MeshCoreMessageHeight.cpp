@@ -7,73 +7,86 @@
 
 #include "components/themes/BaseTheme.h"
 
+// ── Shared word-wrap helper ──
+
+std::vector<std::string> wrapMessageBody(const GfxRenderer& renderer, int fontId, const char* text, int maxWidth,
+                                         int maxLines) {
+  std::vector<std::string> result;
+  if (!text || !*text) return result;
+
+  // Fast path: no newlines → delegate directly to wrappedText (no extra copy)
+  bool hasNewline = false;
+  for (const char* p = text; *p; ++p) {
+    if (*p == '\n') {
+      hasNewline = true;
+      break;
+    }
+  }
+  if (!hasNewline) {
+    return renderer.wrappedText(fontId, text, maxWidth, maxLines);
+  }
+
+  // Slow path: split on \n and word-wrap each segment
+  const char* segStart = text;
+  const char* p = text;
+  while (*p && static_cast<int>(result.size()) < maxLines) {
+    if (*p == '\n') {
+      // Handle \r\n: adjust end to exclude preceding \r
+      const char* segEnd = (p > segStart && *(p - 1) == '\r') ? p - 1 : p;
+      size_t segLen = segEnd - segStart;
+      if (segLen == 0) {
+        result.emplace_back();  // empty line marker
+      } else {
+        std::string segment(segStart, segLen);
+        auto wrapped =
+            renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
+        auto n = std::min(wrapped.size(), static_cast<size_t>(std::max(0, maxLines - static_cast<int>(result.size()))));
+        result.insert(result.end(), std::make_move_iterator(wrapped.begin()),
+                      std::make_move_iterator(wrapped.begin() + n));
+      }
+      segStart = p + 1;  // skip past \n
+    }
+    ++p;
+  }
+
+  // Trailing segment after the last \n (or whole text if no \n ended the loop)
+  if (segStart < p && static_cast<int>(result.size()) < maxLines) {
+    size_t segLen = p - segStart;
+    std::string segment(segStart, segLen);
+    auto wrapped = renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
+    result.insert(result.end(), std::make_move_iterator(wrapped.begin()), std::make_move_iterator(wrapped.end()));
+  }
+
+  return result;
+}
+
+// ── Height measurement (uses wrapMessageBody to avoid duplication) ──
+
 uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, int contentWidth, bool isChannel,
                                       const MeshCoreMessage& msg, const ThemeMetrics& metrics) {
+  (void)metrics;
   constexpr int maxLines = 100;
   const uint16_t lineH = renderer.getLineHeight(fontId);
   uint16_t height = 0;
 
   // ── Sender name line ──
-  // Only for channel messages received from others with a known sender
   bool showSender = (isChannel && msg.direction != MsgDirection::SENT && msg.senderName[0]);
   if (showSender) {
     height += lineH;
   }
 
-  // ── Body text ──
-  // Word-wrap and count lines, handling \n as hard line breaks
+  // ── Body text — uses shared wrapMessageBody to count lines ──
   if (msg.text[0]) {
-    // Check for newlines
-    bool hasNewline = false;
-    for (const char* p = msg.text; *p; ++p) {
-      if (*p == '\n') {
-        hasNewline = true;
-        break;
-      }
-    }
-
-    if (hasNewline) {
-      // Split on \n and wrap each segment
-      uint16_t lineCount = 0;
-      const char* segStart = msg.text;
-      const char* p = msg.text;
-      while (*p) {
-        if (*p == '\n') {
-          size_t segLen = (p > segStart && *(p - 1) == '\r') ? (p - 1 - segStart) : (p - segStart);
-          if (segLen == 0) {
-            lineCount++;  // empty line
-          } else {
-            std::string segment(segStart, segLen);
-            auto wrapped =
-                renderer.wrappedText(fontId, segment.c_str(), contentWidth, maxLines - static_cast<int>(lineCount));
-            lineCount += static_cast<uint16_t>(wrapped.size());
-          }
-          segStart = p + 1;
-        }
-        ++p;
-      }
-      // Trailing segment after last \n
-      if (*segStart) {
-        size_t segLen = p - segStart;
-        std::string segment(segStart, segLen);
-        auto wrapped =
-            renderer.wrappedText(fontId, segment.c_str(), contentWidth, maxLines - static_cast<int>(lineCount));
-        lineCount += static_cast<uint16_t>(wrapped.size());
-      }
-      height += lineCount * lineH;
-    } else {
-      // No newlines — simple word-wrap
-      auto lines = renderer.wrappedText(fontId, msg.text, contentWidth, maxLines);
-      height += static_cast<uint16_t>(lines.size()) * lineH;
-    }
+    auto lines = wrapMessageBody(renderer, fontId, msg.text, contentWidth, maxLines);
+    height += static_cast<uint16_t>(lines.size()) * lineH;
   }
 
-  // ── Meta line (timestamp + hop count / heard repeats) ──
+  // ── Meta line ──
   if (msg.timestamp > 0) {
     height += lineH;
   }
 
-  // ── Vertical gap between consecutive messages (proportional to font) ──
+  // ── Vertical gap between consecutive messages ──
   height += meshcoreMessageGapPx(lineH);
 
   return height;

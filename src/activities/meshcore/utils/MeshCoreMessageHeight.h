@@ -3,6 +3,8 @@
 #include <MeshCore/MeshCoreTypes.h>
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 struct ThemeMetrics;
 class GfxRenderer;
@@ -15,12 +17,22 @@ class GfxRenderer;
 inline uint16_t meshcoreMessageGapPx(int lineHeight) { return static_cast<uint16_t>(lineHeight); }
 
 /**
+ * Word-wrap message body text, respecting \n as hard line breaks.
+ * Normalizes \r\n → \n.  Preserves empty lines from consecutive newlines.
+ * This is the single source of truth for \n-aware word-wrapping — both
+ * the render code and the height-measurement code call this function so
+ * they can never diverge.
+ */
+std::vector<std::string> wrapMessageBody(const GfxRenderer& renderer, int fontId, const char* text, int maxWidth,
+                                         int maxLines);
+
+/**
  * Measure the total pixel height of a single MeshCore message bubble
  * given the active font and content area width.
  *
  * Accounts for:
  *  - sender name line (channel messages from others)
- *  - word-wrapped body text (handles \n line breaks)
+ *  - word-wrapped body text (handles \n line breaks via wrapMessageBody)
  *  - meta line (timestamp + hop count)
  *  - vertical gap between consecutive messages (meshcoreMessageGapPx)
  *

@@ -98,8 +98,12 @@ class MeshCoreThreadActivity final : public Activity {
   StatusMessageOverlay _toast;
 
   int contentHeight() const;
-  void loadVisibleBatch();
-  void loadVisibleBatchUp();
+
+  /**
+   * Load a batch of messages from the store and calculate _accHeight.
+   * @return true if any messages were loaded.
+   */
+  bool loadMessages(uint32_t startId, bool up);
   void drawVisibleMessages(const GfxRenderer& renderer, Rect rect, bool useReaderFontSettings, bool scanOnly = false);
   void scrollDownPage();
   void scrollUpPage();
@@ -118,8 +122,4 @@ class MeshCoreThreadActivity final : public Activity {
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);
 
-  /// Word-wrap message body text, respecting \n as hard line breaks.
-  /// Normalizes \r\n → \n. Preserves empty lines from consecutive newlines.
-  static std::vector<std::string> wrapMessageBody(const GfxRenderer& renderer, int fontId, const char* text,
-                                                  int maxWidth, int maxLines);
 };

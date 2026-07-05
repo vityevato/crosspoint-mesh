@@ -8,7 +8,6 @@
 #endif
 
 #include <cstring>
-#include <iterator>
 #include <string>
 
 #include "CrossPointSettings.h"
@@ -106,7 +105,7 @@ void MeshCoreThreadActivity::onEnter() {
     LOG_DBG("MESH", "Thread onEnter: font mismatch (meta=%d current=%d) — queuing rebuild", _meta.fontId, _bodyFontId);
     _needsRebuild = true;
   } else {
-    loadVisibleBatch();
+    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
   }
   LOG_DBG("MESH", "Thread onEnter: loaded batch — posPx=%u posId=%u firstId=%u lastId=%u accHeight=%u totalPx=%u",
           _meta.positionPx, _meta.positionId, _firstVisibleId, _lastVisibleId, _accHeight, _meta.totalPx);
@@ -124,48 +123,31 @@ void MeshCoreThreadActivity::onExit() {
   Activity::onExit();
 }
 
-void MeshCoreThreadActivity::loadVisibleBatch() {
-  _visibleCount = 0;
-  _firstVisibleId = 0;
-  _lastVisibleId = 0;
-
-  if (_meta.count == 0) return;
-
-  uint32_t startId = _meta.positionId > 0 ? _meta.positionId : _meta.startId;
-  LOG_DBG("MESH", "loadVisibleBatch: startId=%u height=%d count=%u", startId, _contentAreaHeight, _meta.count);
-
-  if (isChannel) {
-    store.loadChannelMessages(channelIdx, startId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                              _visibleMsgs, _visibleCount, _fillerMsg);
-  } else {
-    store.loadDirectMessages(contactPubkey, startId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                             _visibleMsgs, _visibleCount, _fillerMsg);
-  }
-
-  if (_visibleCount > 0) {
-    _firstVisibleId = _visibleMsgs[0].id;
-    _lastVisibleId = _visibleMsgs[_visibleCount - 1].id;
-    LOG_DBG("MESH", "loadVisibleBatch: loaded %d msgs [%u..%u]", _visibleCount, _firstVisibleId, _lastVisibleId);
-  } else {
-    LOG_DBG("MESH", "loadVisibleBatch: no messages loaded");
-  }
-}
-
-void MeshCoreThreadActivity::loadVisibleBatchUp() {
+bool MeshCoreThreadActivity::loadMessages(uint32_t startId, bool up) {
   uint8_t loaded = 0;
   if (isChannel) {
-    store.loadChannelMessages(channelIdx, _meta.endId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                              _visibleMsgs, loaded, _fillerMsg);
+    store.loadChannelMessages(channelIdx, startId, static_cast<uint16_t>(_contentAreaHeight), up, _visibleMsgs, loaded,
+                              _fillerMsg);
   } else {
-    store.loadDirectMessages(contactPubkey, _meta.endId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                             _visibleMsgs, loaded, _fillerMsg);
+    store.loadDirectMessages(contactPubkey, startId, static_cast<uint16_t>(_contentAreaHeight), up, _visibleMsgs, loaded,
+                             _fillerMsg);
   }
   _visibleCount = loaded;
   if (loaded > 0) {
     _firstVisibleId = _visibleMsgs[0].id;
     _lastVisibleId = _visibleMsgs[loaded - 1].id;
-    LOG_DBG("MESH", "loadVisibleBatchUp: loaded %d msgs [%u..%u]", loaded, _firstVisibleId, _lastVisibleId);
+    _accHeight = 0;
+    for (uint8_t i = 0; i < loaded; ++i) {
+      _accHeight += _visibleMsgs[i].heightPx;
+      if (_accHeight > static_cast<uint16_t>(_contentAreaHeight)) {
+        _accHeight -= _visibleMsgs[i].heightPx;
+        _lastVisibleId = _visibleMsgs[i - 1].id;
+        break;
+      }
+    }
+    return true;
   }
+  return false;
 }
 
 int MeshCoreThreadActivity::contentHeight() const {
@@ -191,19 +173,18 @@ void MeshCoreThreadActivity::scrollDownPage() {
 
   _meta.positionId = _lastVisibleId + 1;
   _meta.positionPx += _accHeight;
-  if (_meta.positionPx > _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)) {
-    _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
-                           ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
-                           : 0;
-    _meta.positionId = _meta.endId;
-    LOG_DBG("MESH", "scrollDownPage: clamped to end, loading Up (posPx=%u posId=%u)", _meta.positionPx,
-            _meta.positionId);
-    loadVisibleBatchUp();
-  } else {
+  // if (_meta.positionPx > _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)) {
+  //   _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
+  //                          ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
+  //                          : 0;
+  //   _meta.positionId = _meta.endId;
+  //   LOG_DBG("MESH", "scrollDownPage: clamped to end, loading Up (posPx=%u posId=%u)", _meta.positionPx,
+  //           _meta.positionId);
+  //   loadVisibleBatchUp();
+  // } else {
     LOG_DBG("MESH", "scrollDownPage: advancing (posPx=%u posId=%u)", _meta.positionPx, _meta.positionId);
-    loadVisibleBatch();
-  }
-  savePosition();
+    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
+    savePosition();
   requestUpdate();
 }
 
@@ -216,36 +197,23 @@ void MeshCoreThreadActivity::scrollUpPage() {
   }
 
   uint32_t newStartId = _meta.positionId > 0 ? _meta.positionId - 1 : _meta.startId;
-  uint8_t loaded = 0;
-  if (isChannel) {
-    store.loadChannelMessages(channelIdx, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                              _visibleMsgs, loaded, _fillerMsg);
-  } else {
-    store.loadDirectMessages(contactPubkey, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                             _visibleMsgs, loaded, _fillerMsg);
-  }
+  loadMessages(newStartId, /*up=*/true);
 
-  if (loaded == 0) {
+  if (_visibleCount == 0) {
     LOG_DBG("MESH", "scrollUpPage: no messages loaded from newStartId=%u", newStartId);
     return;
   }
 
-  _visibleCount = loaded;
-  _firstVisibleId = _visibleMsgs[0].id;
-  _lastVisibleId = _visibleMsgs[loaded - 1].id;
-  LOG_DBG("MESH", "scrollUpPage: loaded %d msgs [%u..%u] (new posPx calculation: %u - %u)", loaded, _firstVisibleId,
-          _lastVisibleId, _meta.positionPx, _accHeight);
+  LOG_DBG("MESH", "scrollUpPage: loaded %d msgs [%u..%u] (new posPx calculation: %u - %u)", _visibleCount,
+          _firstVisibleId, _lastVisibleId, _meta.positionPx, _accHeight);
 
   _meta.positionId = _firstVisibleId;
 
-  // Subtract heights of all visible messages except the last one
-  {
-    uint16_t exceptLastHeight = 0;
-    for (uint8_t i = 0; i < loaded - 1; ++i) {
-      exceptLastHeight += _visibleMsgs[i].heightPx;
-    }
-    _meta.positionPx = (_meta.positionPx >= exceptLastHeight) ? _meta.positionPx - exceptLastHeight : 0;
-  }
+  // Subtract _accHeight (total visible content height from the last render before
+  // this scroll) — symmetric with scrollDownPage which adds _accHeight.
+  // Using "all-but-last" here was asymmetric and caused positionPx drift,
+  // leaving the scrollbar stuck mid-way after scrolling all the way up.
+  _meta.positionPx = (_meta.positionPx >= _accHeight) ? _meta.positionPx - _accHeight : 0;
 
   LOG_DBG("MESH", "scrollUpPage: final posPx=%u posId=%u", _meta.positionPx, _meta.positionId);
 
@@ -271,28 +239,17 @@ void MeshCoreThreadActivity::scrollDownByMessage() {
   _meta.positionPx += _accHeight;
 
   uint32_t newStartId = _meta.positionId > 0 ? _meta.positionId : _meta.startId;
-  uint8_t loaded = 0;
-  if (isChannel) {
-    store.loadChannelMessages(channelIdx, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                              _visibleMsgs, loaded, _fillerMsg);
-  } else {
-    store.loadDirectMessages(contactPubkey, newStartId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/true,
-                             _visibleMsgs, loaded, _fillerMsg);
-  }
+  loadMessages(newStartId, /*up=*/true);
 
-  if (loaded == 0) {
+  if (_visibleCount == 0) {
     LOG_DBG("MESH", "scrollDownByMsg: no messages loaded from newStartId=%u", newStartId);
     return;
   }
 
-  _visibleCount = loaded;
-  _firstVisibleId = _visibleMsgs[0].id;
-  _lastVisibleId = _visibleMsgs[loaded - 1].id;
-  LOG_DBG("MESH", "scrollDownByMsg: loaded %d msgs [%u..%u] (new posPx calculation: %u - %u)", loaded, _firstVisibleId,
-          _lastVisibleId, _meta.positionPx, _accHeight);
-
   _meta.positionId = _firstVisibleId;
-  // _meta.positionPx = (_meta.positionPx >= _accHeight) ? _meta.positionPx - _accHeight : 0;
+  _meta.positionPx = (_meta.positionPx >= _accHeight) 
+  ? _meta.positionPx - _accHeight + _visibleMsgs[_visibleCount - 1].heightPx 
+  : 0;
   LOG_DBG("MESH", "scrollDownByMsg: final posPx=%u posId=%u", _meta.positionPx, _meta.positionId);
 
   savePosition();
@@ -304,7 +261,7 @@ void MeshCoreThreadActivity::scrollDownByMessage() {
                            : 0;
   }
 
-  loadVisibleBatch();
+  loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
   savePosition();
   requestUpdate();
 }
@@ -325,20 +282,9 @@ void MeshCoreThreadActivity::scrollUpByMessage() {
   if (prevLoaded == 0) return;
 
   _meta.positionId = prevMsg.id;
-  uint8_t loaded = 0;
-  if (isChannel) {
-    store.loadChannelMessages(channelIdx, _meta.positionId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                              _visibleMsgs, loaded, _fillerMsg);
-  } else {
-    store.loadDirectMessages(contactPubkey, _meta.positionId, static_cast<uint16_t>(_contentAreaHeight), /*up=*/false,
-                             _visibleMsgs, loaded, _fillerMsg);
-  }
+  loadMessages(_meta.positionId, /*up=*/false);
 
-  if (loaded == 0) return;
-
-  _visibleCount = loaded;
-  _firstVisibleId = _visibleMsgs[0].id;
-  _lastVisibleId = _visibleMsgs[loaded - 1].id;
+  if (_visibleCount == 0) return;
 
   _meta.positionPx = (_meta.positionPx >= prevMsg.heightPx) ? _meta.positionPx - prevMsg.heightPx : 0;
   _meta.positionId = _firstVisibleId;
@@ -385,19 +331,19 @@ void MeshCoreThreadActivity::loop() {
             currentMeta.count, _meta.fontId, currentMeta.fontId, wasAtEnd);
     _meta = currentMeta;
     if (wasAtEnd) {
-      loadVisibleBatchUp();
+      loadMessages(_meta.endId, /*up=*/true);
       _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
                              ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
                              : 0;
       _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
     } else {
-      loadVisibleBatch();
+      loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
     }
     requestUpdate();
   } else if (hasMeta && currentMeta.count < _meta.count) {
     // Truncation happened (oldest messages dropped)
     _meta = currentMeta;
-    loadVisibleBatch();
+    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
     requestUpdate();
   }
 
@@ -438,7 +384,7 @@ void MeshCoreThreadActivity::loop() {
       switch (itemIdx) {
         case 0: {  // Scroll to End
           if (_meta.count == 0) break;
-          loadVisibleBatchUp();
+          loadMessages(_meta.endId, /*up=*/true);
           if (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight)) {
             _meta.positionPx = _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight);
           } else {
@@ -667,7 +613,7 @@ void MeshCoreThreadActivity::sendMessage() {
                              } else {
                                store.getDirectMeta(contactPubkey, _meta);
                              }
-                             loadVisibleBatchUp();
+                             loadMessages(_meta.endId, /*up=*/true);
                              _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
                                                     ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
                                                     : 0;
@@ -696,7 +642,7 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
     GUI.drawPopup(renderer, tr(STR_MESHCORE_RECALC_LAYOUT));
     renderer.displayBuffer();
     _rebuildMessageHeights();
-    loadVisibleBatch();
+    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
     requestUpdate();
     return;
   }
@@ -844,17 +790,6 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
       }
     }
     return;
-  }
-
-  // Accumulate height of messages before the visible batch to compute partial offset
-  _accHeight = 0;
-  for (uint8_t i = 0; i < _visibleCount; ++i) {
-    _accHeight += _visibleMsgs[i].heightPx;
-    if (_accHeight > static_cast<uint16_t>(_contentAreaHeight)) {
-      _accHeight -= _visibleMsgs[i].heightPx;
-      _lastVisibleId = _visibleMsgs[i - 1].id;
-      break;
-    }
   }
 
   int y = rect.y;
@@ -1024,57 +959,4 @@ void MeshCoreThreadActivity::_rebuildMessageHeights() {
 
   LOG_DBG("MESH", "Heights rebuilt: %u msgs, %u ms, totalPx=%u fontId=%d (old=%d)", _meta.count, millis() - t0,
           _meta.totalPx, _bodyFontId, oldFontId);
-}
-
-// --- Word-wrap helper (moved from BaseTheme) ---
-
-std::vector<std::string> MeshCoreThreadActivity::wrapMessageBody(const GfxRenderer& renderer, int fontId,
-                                                                 const char* text, int maxWidth, int maxLines) {
-  std::vector<std::string> result;
-  if (!text || !*text) return result;
-
-  // Fast path: no newlines → delegate directly to wrappedText (no extra copy)
-  bool hasNewline = false;
-  for (const char* p = text; *p; ++p) {
-    if (*p == '\n') {
-      hasNewline = true;
-      break;
-    }
-  }
-  if (!hasNewline) {
-    return renderer.wrappedText(fontId, text, maxWidth, maxLines);
-  }
-
-  // Slow path: split on \n and word-wrap each segment
-  const char* segStart = text;
-  const char* p = text;
-  while (*p && static_cast<int>(result.size()) < maxLines) {
-    if (*p == '\n') {
-      // Handle \r\n: adjust end to exclude preceding \r
-      const char* segEnd = (p > segStart && *(p - 1) == '\r') ? p - 1 : p;
-      size_t segLen = segEnd - segStart;
-      if (segLen == 0) {
-        result.emplace_back();  // empty line marker
-      } else {
-        std::string segment(segStart, segLen);
-        auto wrapped =
-            renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
-        auto n = std::min(wrapped.size(), static_cast<size_t>(std::max(0, maxLines - static_cast<int>(result.size()))));
-        result.insert(result.end(), std::make_move_iterator(wrapped.begin()),
-                      std::make_move_iterator(wrapped.begin() + n));
-      }
-      segStart = p + 1;  // skip past \n
-    }
-    ++p;
-  }
-
-  // Trailing segment after the last \n (or whole text if no \n ended the loop)
-  if (segStart < p && static_cast<int>(result.size()) < maxLines) {
-    size_t segLen = p - segStart;
-    std::string segment(segStart, segLen);
-    auto wrapped = renderer.wrappedText(fontId, segment.c_str(), maxWidth, maxLines - static_cast<int>(result.size()));
-    result.insert(result.end(), std::make_move_iterator(wrapped.begin()), std::make_move_iterator(wrapped.end()));
-  }
-
-  return result;
 }
