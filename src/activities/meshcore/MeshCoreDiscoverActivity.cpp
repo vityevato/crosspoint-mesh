@@ -131,23 +131,17 @@ void MeshCoreDiscoverActivity::removeSelectedFromContacts() {
   // Find the index in savedContacts
   for (uint8_t i = 0; i < savedContactCount; ++i) {
     if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
-      // Build a contact with isSaved=false to tell companion to delete
-      MeshCoreContact deleteContact = {};
-      memcpy(deleteContact.publicKey, node.publicKey, 32);
-      memcpy(deleteContact.name, node.name, sizeof(deleteContact.name));
-      deleteContact.isSaved = false;
-
-      if (!client.addUpdateContact(deleteContact)) {
+      if (!client.removeContact(node.publicKey)) {
         LOG_ERR("MESH", "Failed to queue contact delete: %s", node.name);
         _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
         requestUpdate();
         return;
       }
 
-      _pendingContact = deleteContact;
-      _pendingDeleteIndex = i;
+      _pendingContact = node;
       _pendingOp = PendingOp::DELETING;
       _pendingStartMs = millis();
+      _pendingDeleteIndex = i;
       _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
       LOG_INF("MESH", "Deleting contact from companion: %s", node.name);
       requestUpdate();

@@ -69,6 +69,9 @@ class MeshCoreClient {
   bool setChannel(uint8_t idx, const char* name, const uint8_t* secret16);
   bool deleteChannel(uint8_t idx);
   bool addUpdateContact(const MeshCoreContact& contact);
+  /// Remove a contact from the companion's address book by public key.
+  /// Wire format: CMD_REMOVE_CONTACT <pubkey[32]>. Expects PKT_OK.
+  bool removeContact(const uint8_t* pubkey32);
   bool sendSelfAdvert(bool flood);
   /// Reset the companion's stored route for a contact by sending
   /// CMD_ADD_UPDATE_CONTACT with pathLength=0xFF (no path).

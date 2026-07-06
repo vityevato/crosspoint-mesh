@@ -144,7 +144,7 @@ size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact&
   memcpy(out + off, contact.publicKey, 32);
   off += 32;
   out[off++] = nodeTypeToWire(contact.type);  // internal enum → wire (1=CLIENT, 2=REPEATER, …)
-  out[off++] = contact.isSaved ? 1 : 0;       // flags (bit 0 = saved)
+  out[off++] = contact.flags;                  // flags (bit 0 = favorites)
   out[off++] = contact.pathLength;            // out_path_len (may be 0)
   memset(out + off, 0, 64);                   // out_path — not tracked locally
   off += 64;
@@ -158,6 +158,18 @@ size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact&
   memcpy(out + off, &ts, 4);
   off += 4;
   return off;
+}
+
+size_t buildRemoveContact(uint8_t* out, size_t maxLen, const uint8_t* pubkey32) {
+  // Format: 0x0F <pubkey[32]>
+  static constexpr size_t NEEDED = 1 + 32;
+  if (maxLen < NEEDED) {
+    LOG_ERR("MESH", "buildRemoveContact: buffer too small");
+    return 0;
+  }
+  out[0] = CMD_REMOVE_CONTACT;
+  memcpy(out + 1, pubkey32, 32);
+  return NEEDED;
 }
 
 // --- Packet parsers ---

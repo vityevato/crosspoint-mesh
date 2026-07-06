@@ -14,6 +14,7 @@ static constexpr uint8_t CMD_SEND_DM = 0x02;
 static constexpr uint8_t CMD_SEND_CHAN_MSG = 0x03;
 static constexpr uint8_t CMD_GET_CONTACTS = 0x04;
 static constexpr uint8_t CMD_ADD_UPDATE_CONTACT = 0x09;
+static constexpr uint8_t CMD_REMOVE_CONTACT = 0x0F;
 static constexpr uint8_t CMD_SEND_SELF_ADVERT = 0x07;
 static constexpr uint8_t CMD_GET_MESSAGE = 0x0A;
 static constexpr uint8_t CMD_GET_BATTERY = 0x14;
@@ -104,6 +105,9 @@ size_t buildGetContacts(uint8_t* out, size_t maxLen);
 
 // CMD_ADD_UPDATE_CONTACT: 0x09 <pubkey[32]> <type> <flags> <out_path_len> <out_path[64]> <name[32]> <ts[4]>
 size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact& contact);
+
+// CMD_REMOVE_CONTACT: 0x0F <pubkey[32]>
+size_t buildRemoveContact(uint8_t* out, size_t maxLen, const uint8_t* pubkey32);
 
 // CMD_GET_CHANNEL: 0x1F <index>
 size_t buildGetChannel(uint8_t* out, size_t maxLen, uint8_t channelIdx);

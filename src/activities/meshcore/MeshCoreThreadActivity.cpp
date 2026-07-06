@@ -508,10 +508,7 @@ void MeshCoreThreadActivity::loop() {
               requestUpdate();
               break;
             }
-            MeshCoreContact toRemove = {};
-            memcpy(toRemove.publicKey, contactPubkey, 32);
-            toRemove.isSaved = false;
-            if (!client.addUpdateContact(toRemove)) {
+            if (!client.removeContact(contactPubkey)) {
               LOG_ERR("MESH", "Failed to queue contact delete");
               _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
               requestUpdate();

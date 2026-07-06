@@ -53,6 +53,28 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
     - `lib/MeshCore/` — MeshCore BLE protocol client, message store.
       Reference client (protocol exchange, BLE companion behaviour):
       <https://github.com/dz0ny/meshcore-sar>
+      Companion BLE firmware (ground truth for the BLE protocol):
+      <https://github.com/meshcore-dev/MeshCore/tree/main/examples/companion_radio>
+
+      Key companion_radio files for understanding the protocol:
+      - `MyMesh.cpp`/`MyMesh.h` — core framework: `handleCmdFrame()` dispatches
+        incoming commands from the client (CMD_*), `writeContactRespFrame()`
+        serialises responses. `onDiscoveredContact()` sends PUSH_CODE_ADVERT
+        (known contact) or PUSH_CODE_NEW_ADVERT (new contact).
+        `processAck()` parses delivery acknowledgements, `queueMessage()`
+        enqueues incoming messages.
+      - `NodePrefs.h` — persisted node config structure (BLE PIN, node name,
+        radio parameters, auto-add contact settings).
+      - `DataStore.h`/`DataStore.cpp` — persistence: load/save contacts,
+        channels, prefs file, identity key.
+      - `main.cpp` — initialisation: transport selection (BLE via
+        `SerialBLEInterface`, WiFi via `SerialWifiInterface`, or direct UART
+        via `ArduinoSerialInterface`).
+      - `src/helpers/BaseSerialInterface.h` — base transport class:
+        `writeFrame()` / `checkRecvFrame()` — all BLE exchange goes through
+        this interface over a serial stream.
+      - `src/helpers/esp32/SerialBLEInterface.h` — BLE transport for ESP32:
+        implements GATT server with TX/RX characteristics.
     - `lib/Memory/` — `makeUniqueNoThrow` allocation helper
     - `lib/MiniBidi/` — bidirectional text layout (Arabic, Hebrew)
 - **Storage**: SD card (SdFat via `HalStorage`). No database.

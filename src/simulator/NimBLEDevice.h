@@ -15,6 +15,7 @@
 // circular include between NimBLEDevice.h ↔ MockSession.h.
 class NimBLERemoteCharacteristic;
 void mockHandleAddUpdateContact(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len);
+void mockHandleRemoveContact(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len);
 
 // Forward declarations with enough surface for MeshCoreClient
 class NimBLEUUID {
@@ -328,6 +329,10 @@ class NimBLERemoteCharacteristic {
     }
     if (cmd == 0x09) {  // CMD_ADD_UPDATE_CONTACT → mode-driven response
       mockHandleAddUpdateContact(this, data, len);
+      return true;
+    }
+    if (cmd == 0x0F) {  // CMD_REMOVE_CONTACT → mode-driven response (same cycler)
+      mockHandleRemoveContact(this, data, len);
       return true;
     }
     // All other commands: ACK write, no response

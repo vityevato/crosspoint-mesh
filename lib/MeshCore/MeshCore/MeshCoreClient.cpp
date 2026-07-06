@@ -381,7 +381,9 @@ void MeshCoreClient::disconnect() {
 bool MeshCoreClient::requestContacts() {
   uint8_t buf[1];
   size_t len = MeshProto::buildGetContacts(buf, sizeof(buf));
-  return len > 0 && enqueueCmd(buf, len, MeshProto::PKT_CONTACT_START);
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_CONTACT_START);
+  LOG_DBG("MESH", "requestContacts: %s (queue=%d/%d)", ok ? "queued" : "FAILED", cmdCount, CMD_QUEUE_SIZE);
+  return ok;
 }
 
 bool MeshCoreClient::addUpdateContact(const MeshCoreContact& contact) {
@@ -390,6 +392,14 @@ bool MeshCoreClient::addUpdateContact(const MeshCoreContact& contact) {
   bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
   LOG_DBG("MESH", "addUpdateContact(%s): %s (queue=%d/%d)", contact.name, ok ? "queued" : "FAILED", cmdCount,
           CMD_QUEUE_SIZE);
+  return ok;
+}
+
+bool MeshCoreClient::removeContact(const uint8_t* pubkey32) {
+  uint8_t buf[CMD_BUF_SIZE];
+  size_t len = MeshProto::buildRemoveContact(buf, sizeof(buf), pubkey32);
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
+  LOG_DBG("MESH", "removeContact: %s (queue=%d/%d)", ok ? "queued" : "FAILED", cmdCount, CMD_QUEUE_SIZE);
   return ok;
 }
 

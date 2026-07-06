@@ -58,6 +58,46 @@ void mockHandleAddUpdateContact(NimBLERemoteCharacteristic* txChar, const uint8_
   }
 }
 
+// Free function (declared in NimBLEDevice.h) to handle CMD_REMOVE_CONTACT.
+// Has its own independent mode counter for testing remove ops in isolation.
+void mockHandleRemoveContact(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len) {
+  if (!txChar || len < 33) return;
+
+  // Auto-cycle through responses on each call: OK → ERROR → TIMEOUT → DELAY_OK → …
+  static uint8_t modeCounter = 0;
+  uint8_t mode = modeCounter;
+  modeCounter = (modeCounter + 1) % 4;
+
+  // Log hex prefix of the pubkey for traceability
+  char keyLabel[7] = {};
+  snprintf(keyLabel, sizeof(keyLabel), "%02X%02X%02X", data[1], data[2], data[3]);
+
+  switch (mode) {
+    case 0:  // OK
+      LOG_INF("MOCK", "CMD_REMOVE_CONTACT %s... → OK", keyLabel);
+      {
+        uint8_t ok = 0x00;
+        txChar->injectRawPacket(&ok, 1);
+      }
+      break;
+    case 1:  // ERROR
+      LOG_INF("MOCK", "CMD_REMOVE_CONTACT %s... → ERROR", keyLabel);
+      {
+        uint8_t err = 0x01;
+        txChar->injectRawPacket(&err, 1);
+      }
+      break;
+    case 2:  // TIMEOUT
+      LOG_INF("MOCK", "CMD_REMOVE_CONTACT %s... → (no response / timeout)", keyLabel);
+      break;
+    case 3:  // DELAY_OK
+      sPendingEcho.type = PendingEchoType::ADD_CONTACT_OK;  // reuse OK echo slot
+      sPendingEcho.requestTimeMs = millis();
+      LOG_INF("MOCK", "CMD_REMOVE_CONTACT %s... → OK (delayed 1.5 s)", keyLabel);
+      break;
+  }
+}
+
 bool MockSession::loadMockConfig(const char* jsonPath) {
   // Clean up any previously loaded config
   unloadMockConfig();

@@ -675,10 +675,22 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
       return;
     }
   }
-  // New unseen pubkey — add weak entry (name will be empty until PKT_NEW_ADVERT)
+  // New unseen pubkey — add weak entry (name will be empty until PKT_NEW_ADVERT).
+  // Before adding, check savedContacts for a matching pubkey and copy name/type
+  // from there so previously saved contacts display their names immediately.
   if (discoveredNodeCount < MAX_VISIBLE_CONTACTS) {
     discoveredNodes[discoveredNodeCount] = node;
     discoveredNodes[discoveredNodeCount].lastSeen = now;
+    // Look for a matching saved contact to fill in name/type/path
+    for (uint8_t i = 0; i < savedContactCount; ++i) {
+      if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
+        memcpy(discoveredNodes[discoveredNodeCount].name, savedContacts[i].name, sizeof(MeshCoreContact::name));
+        discoveredNodes[discoveredNodeCount].type = savedContacts[i].type;
+        discoveredNodes[discoveredNodeCount].pathLength = savedContacts[i].pathLength;
+        discoveredNodes[discoveredNodeCount].snr = savedContacts[i].snr;
+        break;
+      }
+    }
     discoveredNodeCount++;
     requestUpdate();
   }

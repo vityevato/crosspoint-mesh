@@ -192,6 +192,31 @@ screens are interactive regardless.
 Reference client for MeshCore BLE protocol exchange and companion app
 behaviour: <https://github.com/dz0ny/meshcore-sar>
 
+**Companion BLE firmware** (runs on the MeshCore device, e.g. RAK WisMesh Tag):
+<https://github.com/meshcore-dev/MeshCore/tree/main/examples/companion_radio>
+Key file: `MyMesh.cpp` — `onDiscoveredContact()`, `handleCmdFrame()`, and the
+`PUSH_CODE_ADVERT` / `PUSH_CODE_NEW_ADVERT` push logic.
+
+Key companion_radio files for understanding the protocol:
+- `MyMesh.cpp`/`MyMesh.h` — core framework: `handleCmdFrame()` dispatches
+  incoming commands from the client (CMD_*), `writeContactRespFrame()`
+  serialises responses. `onDiscoveredContact()` sends `PUSH_CODE_ADVERT`
+  (known contact) or `PUSH_CODE_NEW_ADVERT` (new contact).
+  `processAck()` parses delivery acknowledgements, `queueMessage()`
+  enqueues incoming messages.
+- `NodePrefs.h` — persisted node config structure (BLE PIN, node name,
+  radio parameters, auto-add contact settings).
+- `DataStore.h`/`DataStore.cpp` — persistence: load/save contacts,
+  channels, prefs file, identity key.
+- `main.cpp` — initialisation: transport selection (BLE via
+  `SerialBLEInterface`, WiFi via `SerialWifiInterface`, or direct UART
+  via `ArduinoSerialInterface`).
+- `src/helpers/BaseSerialInterface.h` — base transport class:
+  `writeFrame()` / `checkRecvFrame()` — all BLE exchange goes through
+  this interface over a serial stream.
+- `src/helpers/esp32/SerialBLEInterface.h` — BLE transport for ESP32:
+  implements GATT server with TX/RX characteristics.
+
 ### Hardware Abstraction Layer (HAL)
 
 **CRITICAL**: Always use HAL classes, NOT SDK classes directly.
