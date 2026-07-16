@@ -134,6 +134,13 @@ void MeshCoreClient::deinit() {
       LOG_ERR("MESH", "Worker task stuck, force killing");
       vTaskDelete(workerTaskHandle);
       workerRunning = false;
+      // After force-kill, bleClient is in an indeterminate state — the
+      // worker was blocked inside a NimBLE call (connect/secureConnection/
+      // subscribe).  Null it out so disconnect() below is a no-op;
+      // NimBLEDevice::deinit(true) will clean up the entire stack.
+      bleClient = nullptr;
+      rxChar = nullptr;
+      txChar = nullptr;
     }
     vQueueDelete(workQueue);
     workQueue = nullptr;

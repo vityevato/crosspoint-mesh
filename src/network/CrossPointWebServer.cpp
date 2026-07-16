@@ -708,8 +708,6 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       }
     }
   } else if (upload.status == UPLOAD_FILE_END) {
-    // Transfer done: allow the SD log sink to resume writing.
-    resumeLogFileSink();
     if (state.file) {
       // Flush any remaining buffered data
       if (!flushUploadBuffer(state)) {
@@ -734,6 +732,11 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         clearBookCache(filePath.c_str());
       }
     }
+    // Transfer done: allow the SD log sink to resume writing.
+    // Must be AFTER close() — SdFat uses a single shared sector cache,
+    // and a log line written between close and resume can thrash it,
+    // truncating the uploaded file.
+    resumeLogFileSink();
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     // Transfer aborted: allow the SD log sink to resume writing.
     resumeLogFileSink();

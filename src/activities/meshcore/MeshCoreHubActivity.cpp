@@ -247,6 +247,11 @@ void MeshCoreHubActivity::loop() {
     if (autoReconnecting) {
       if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
         autoReconnecting = false;
+        // Tear down BLE first so the worker task can unblock cleanly.
+        // Without this, deinit() may need to force-kill the worker while
+        // it's blocked inside a NimBLE call, leaving the stack in an
+        // indeterminate state that causes a panic on cleanup.
+        client.disconnect();
         onGoHome();
       }
       return;
