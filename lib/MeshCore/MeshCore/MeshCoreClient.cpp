@@ -193,8 +193,11 @@ void MeshCoreClient::doScan(uint32_t durationSec) {
     if (!device->isAdvertisingService(NUS_SERVICE_UUID)) continue;
 
     ScanResult& sr = scanResults[scanResultCount];
-    const char* devName = device->getName().c_str();
-    snprintf(sr.name, sizeof(sr.name), "%s", devName[0] ? devName : "Unknown");
+    // NimBLE advertised device name is returned as a temporary object.
+    // Keep it alive long enough for c_str() usage.
+    std::string devNameStr = device->getName();
+    const char* devName = devNameStr.c_str();
+    snprintf(sr.name, sizeof(sr.name), "%s", (devName && devName[0]) ? devName : "Unknown");
     snprintf(sr.address, sizeof(sr.address), "%s", device->getAddress().toString().c_str());
     sr.addressType = device->getAddress().getType();
     sr.rssi = device->getRSSI();
@@ -372,19 +375,30 @@ void MeshCoreClient::disconnect() {
   rxHead = 0;
   rxTail = 0;
   _pendingDm = {};
+  initialRequestsPending = false;
 
   if (state != BleConnectionState::DISCONNECTED) {
     setState(BleConnectionState::DISCONNECTED);
   }
+
+  cmdInFlightCommandByte = 0;
 }
 
-bool MeshCoreClient::requestContacts() {
-  uint8_t buf[1];
-  size_t len = MeshProto::buildGetContacts(buf, sizeof(buf));
-  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_CONTACT_START);
-  LOG_DBG("MESH", "requestContacts: %s (queue=%d/%d)", ok ? "queued" : "FAILED", cmdCount, CMD_QUEUE_SIZE);
+bool MeshCoreClient::requestContacts(uint32_t since) {
+  uint8_t buf[5];
+  size_t len = MeshProto::buildGetContacts(buf, sizeof(buf), since);
+  // Expect PKT_CONTACT_END (0x04), NOT PKT_CONTACT_START (0x02): the command must
+  // stay in-flight until the whole list has streamed, so the queue does not advance
+  // (and start firing channel/message commands) while the contact list is still
+  // open. Keeping the companion idle during the stream also stops it deferring
+  // contacts — the companion prioritises incoming command frames over streaming.
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_CONTACT_END);
+  LOG_DBG("MESH", "requestContacts(since=%lu): %s (queue=%d/%d)", (unsigned long)since, ok ? "queued" : "FAILED",
+          cmdCount, CMD_QUEUE_SIZE);
   return ok;
 }
+
+bool MeshCoreClient::requestNewContacts() { return requestContacts(contactsMostRecentLastmod); }
 
 bool MeshCoreClient::addUpdateContact(const MeshCoreContact& contact) {
   uint8_t buf[CMD_BUF_SIZE];
@@ -707,6 +721,24 @@ void MeshCoreClient::poll() {
     return;
   }
 
+  // Fire the deferred post-init request burst on the main-loop thread.
+  // runInitSequence() (worker task) sets initialRequestsPending; running the
+  // enqueues here guarantees every command-queue mutation happens on this
+  // single thread. Enqueuing from the worker task while poll() runs on the
+  // main loop races on cmdHead/cmdTail/cmdCount/cmdPending — observed as
+  // GET_CONTACTS being dropped and GET_BATTERY sent twice.
+  if (initialRequestsPending && rxChar) {
+    initialRequestsPending = false;
+    if (!requestBattery()) {
+      LOG_ERR("MESH", "Failed to queue battery request");
+    }
+    requestContacts();
+    for (uint8_t i = 0; i < companion.maxChannels && i < 8; ++i) {
+      requestChannel(i);
+    }
+    requestMessages();
+  }
+
   // Process all received notifications (ring-buffer drain).
   // Processing in a loop ensures a full multi-packet burst (e.g. contact list)
   // is handled within a single poll() call rather than being split across frames.
@@ -767,6 +799,9 @@ bool MeshCoreClient::enqueueCmd(const uint8_t* data, size_t len, uint8_t expecte
   cmdTail = (cmdTail + 1) % CMD_QUEUE_SIZE;
   cmdCount++;
 
+  LOG_DBG("MESH", "enqueueCmd: cmd=0x%02X len=%d expect=0x%02X (count=%d pending=%d)", (unsigned)data[0], (int)len,
+          (unsigned)expectedResp, (int)cmdCount, (int)cmdPending);
+
   // If nothing pending, send immediately
   if (!cmdPending) {
     sendNextCmd();
@@ -783,28 +818,63 @@ bool MeshCoreClient::sendNextCmd() {
 
   CmdEntry& entry = cmdQueue[cmdHead];
   if (!rxChar->writeValue(static_cast<const uint8_t*>(entry.data), entry.len, true)) {
-    LOG_ERR("MESH", "BLE write failed");
+    LOG_ERR("MESH", "BLE write failed (cmd=0x%02X len=%d)", (unsigned)entry.data[0], (int)entry.len);
     return false;
   }
 
+  LOG_DBG("MESH", "sendNextCmd: wrote cmd=0x%02X len=%d expect=0x%02X (remaining=%d)", (unsigned)entry.data[0],
+          (int)entry.len, (unsigned)entry.expectedResponse, (int)(cmdCount - 1));
+
   cmdPending = true;
   cmdExpectedResponse = entry.expectedResponse;
+  // Store app->companion command byte so PKT_ERROR can be decoded.
+  cmdInFlightCommandByte = entry.data[0];
   cmdSentTime = millis();
   cmdHead = (cmdHead + 1) % CMD_QUEUE_SIZE;
   cmdCount--;
   return true;
 }
 
+void MeshCoreClient::handleCompanionErrorResponse(const uint8_t* data, size_t len) {
+  // Companion error payload format: [RESP_CODE_ERR, err_code].
+  // For CMD_REMOVE_CONTACT the companion returns ERR_CODE_NOT_FOUND (2)
+  // when the contact is already missing — treat it as success.
+  uint8_t err = (len >= 2) ? data[1] : 0;
+  constexpr uint8_t ERR_CODE_NOT_FOUND = 2;
+
+  const uint8_t inFlightCmd = cmdInFlightCommandByte;
+  cmdPending = false;
+
+  const bool removeContactOk = (inFlightCmd == MeshProto::CMD_REMOVE_CONTACT && err == ERR_CODE_NOT_FOUND);
+  lastCmdSuccess = removeContactOk;
+
+  // Direct-message send failures must update persisted delivery status.
+  // Without this, the Thread activity stays at SENT and the UI shows
+  // "sent" even though the companion rejected the command.
+  if (inFlightCmd == MeshProto::CMD_SEND_DM && _pendingDm.active) {
+    LOG_ERR("MESH", "DM send rejected by companion: msgId=%lu err=%u", (unsigned long)_pendingDm.msgId, (unsigned)err);
+    _pendingDm.active = false;
+    _pendingDm.awaitingSent = false;
+    fireDelivery(DeliveryStatus::FAILED);
+  }
+
+  LOG_ERR("MESH", "Error response from companion: cmd=0x%02X err=%u", (unsigned)inFlightCmd, (unsigned)err);
+}
+
 void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
   if (len == 0) return;
   uint8_t pktType = data[0];
 
-  // Only clear pending flag if this packet matches the expected response.
-  // Push notifications (PKT_MSGS_WAITING, PKT_NEW_ADVERT, etc.) must NOT
-  // advance the command queue — they are processed but keep cmdPending intact.
-  if (cmdExpectedResponse == 0 || pktType == cmdExpectedResponse) {
-    cmdPending = false;
-    lastCmdSuccess = (pktType != MeshProto::PKT_ERROR);
+  if (pktType == MeshProto::PKT_ERROR) {
+    handleCompanionErrorResponse(data, len);
+  } else {
+    // Only clear pending flag if this packet matches the expected response.
+    // Push notifications (PKT_MSGS_WAITING, PKT_NEW_ADVERT, etc.) must NOT
+    // advance the command queue — they are processed but keep cmdPending intact.
+    if (cmdExpectedResponse == 0 || pktType == cmdExpectedResponse) {
+      cmdPending = false;
+      lastCmdSuccess = true;
+    }
   }
 
   switch (pktType) {
@@ -834,22 +904,37 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
       LOG_DBG("MESH", "Battery: %d mV", companion.batteryMv);
       break;
 
-    case MeshProto::PKT_CONTACT_START:
-      LOG_DBG("MESH", "Contact list start");
+    case MeshProto::PKT_CONTACT_START: {
+      // The companion appends getNumContacts() (total, unfiltered) as 4 LE bytes.
+      uint32_t total = 0;
+      if (len >= 5) memcpy(&total, data + 1, sizeof(total));  // memcpy: data+1 may be unaligned
+      LOG_DBG("MESH", "Contact list start (companion reports %lu contacts)", (unsigned long)total);
       if (contactCb) contactCb(MeshCoreContact{}, false, contactCbCtx);
       break;
+    }
 
     case MeshProto::PKT_CONTACT: {
       MeshCoreContact contact = {};
       if (MeshProto::parseContact(data, len, contact)) {
         contact.isSaved = true;  // CMD_GET_CONTACTS returns all known contacts
+        LOG_DBG("MESH", "PKT_CONTACT: %s type=%d pathLen=%d (len=%d)", contact.name, (int)contact.type,
+                (int)contact.pathLength, (int)len);
         if (contactCb) contactCb(contact, false, contactCbCtx);
+      } else {
+        LOG_ERR("MESH", "PKT_CONTACT parse failed (len=%d)", (int)len);
       }
       break;
     }
 
     case MeshProto::PKT_CONTACT_END:
-      LOG_DBG("MESH", "Contact list end");
+      // Trailing 4 bytes (when present) are the most-recent contact lastmod.
+      // Store it so the next incremental sync can filter with 'since'.
+      if (len >= 5) {
+        uint32_t lastmod = 0;
+        memcpy(&lastmod, data + 1, sizeof(lastmod));  // memcpy: data+1 may be unaligned
+        if (lastmod > contactsMostRecentLastmod) contactsMostRecentLastmod = lastmod;
+      }
+      LOG_DBG("MESH", "Contact list end (mostRecentLastmod=%lu)", (unsigned long)contactsMostRecentLastmod);
       if (contactCb) contactCb(MeshCoreContact{}, true, contactCbCtx);
       break;
 
@@ -982,8 +1067,8 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
       break;
 
     case MeshProto::PKT_ERROR:
-      LOG_ERR("MESH", "Error response from companion");
-      cmdPending = false;
+      // `lastCmdSuccess` is updated above when this error matches the expected
+      // response. Here we only avoid extra logging/side-effects.
       break;
 
     default:
@@ -1066,20 +1151,13 @@ bool MeshCoreClient::runInitSequence() {
   // and packets are dropped before they can be consumed.
   inInitSequence = false;
 
-  // Queue battery FIRST so it doesn't get stuck behind slow channel requests.
-  // Battery data updates the header subtitle on every screen.
-  if (!requestBattery()) {
-    LOG_ERR("MESH", "Failed to queue battery request");
-  }
-
-  // Queue GET_CONTACTS and GET_CHANNEL x maxChannels
-  requestContacts();
-  for (uint8_t i = 0; i < companion.maxChannels && i < 8; ++i) {
-    requestChannel(i);
-  }
-
-  // Also request pending messages
-  requestMessages();
+  // Defer the post-init request burst (battery, contacts, channels, messages)
+  // to poll() on the main-loop thread. Enqueuing here (worker task) while the
+  // main loop concurrently runs poll() races on the command ring buffer
+  // (cmdHead/cmdTail/cmdCount/cmdPending) — observed on device as GET_CONTACTS
+  // being dropped and GET_BATTERY sent twice. Routing every enqueue through
+  // the single main-loop thread removes the race without a mutex.
+  initialRequestsPending = true;
 
   return true;
 }

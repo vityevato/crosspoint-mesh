@@ -32,13 +32,23 @@ size_t buildDeviceQuery(uint8_t* out, size_t maxLen) {
   return 2;
 }
 
-size_t buildGetContacts(uint8_t* out, size_t maxLen) {
-  if (maxLen < 1) {
-    LOG_ERR("MESH", "buildGetContacts: buffer too small");
+size_t buildGetContacts(uint8_t* out, size_t maxLen, uint32_t since) {
+  if (since == 0) {
+    if (maxLen < 1) {
+      LOG_ERR("MESH", "buildGetContacts: buffer too small");
+      return 0;
+    }
+    out[0] = CMD_GET_CONTACTS;
+    return 1;
+  }
+  // Incremental sync: append 4-byte little-endian 'since' filter.
+  if (maxLen < 5) {
+    LOG_ERR("MESH", "buildGetContacts: buffer too small for since");
     return 0;
   }
   out[0] = CMD_GET_CONTACTS;
-  return 1;
+  memcpy(&out[1], &since, sizeof(since));
+  return 5;
 }
 
 size_t buildGetChannel(uint8_t* out, size_t maxLen, uint8_t channelIdx) {
@@ -144,7 +154,7 @@ size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact&
   memcpy(out + off, contact.publicKey, 32);
   off += 32;
   out[off++] = nodeTypeToWire(contact.type);  // internal enum → wire (1=CLIENT, 2=REPEATER, …)
-  out[off++] = contact.flags;                  // flags (bit 0 = favorites)
+  out[off++] = contact.flags;                 // flags (bit 0 = favorites)
   out[off++] = contact.pathLength;            // out_path_len (may be 0)
   memset(out + off, 0, 64);                   // out_path — not tracked locally
   off += 64;

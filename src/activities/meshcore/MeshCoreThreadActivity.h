@@ -5,9 +5,11 @@
 #include <MeshCore/MeshCoreTypes.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "MeshCoreSettings.h"
 #include "StatusMessageOverlay.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
@@ -101,12 +103,19 @@ class MeshCoreThreadActivity final : public Activity {
   uint32_t _pendingStartMs = 0;
   void completeUnlistOp(bool success);
 
+  // Confirmation popup state (shown before destructive menu actions)
+  enum class ConfirmAction : uint8_t { NONE, CLEAR_CONVERSATION, REMOVE_CONTACT, DELETE_CHANNEL };
+  ConfirmAction _confirmAction = ConfirmAction::NONE;
+
   // Tab state
   Tab currentTab = Tab::MESSAGES;
   int selectedIndex = 0;
 
   // Ephemeral toast overlay
   StatusMessageOverlay _toast;
+
+  // Menu settings — loaded when MENU tab is opened, freed on tab switch or exit
+  std::unique_ptr<MeshCoreSettings> _menuSettings;
 
   int contentHeight() const;
 
@@ -115,7 +124,7 @@ class MeshCoreThreadActivity final : public Activity {
    * @return true if any messages were loaded.
    */
   bool loadMessages(uint32_t startId, bool up);
-  void drawVisibleMessages(const GfxRenderer& renderer, Rect rect, bool useReaderFontSettings, bool scanOnly = false);
+  void drawVisibleMessages(const GfxRenderer& renderer, Rect rect, int bodyFontId, bool scanOnly = false);
   void scrollDownPage();
   void scrollUpPage();
   void scrollDownByMessage();
@@ -131,6 +140,7 @@ class MeshCoreThreadActivity final : public Activity {
 
   void _rebuildMessageHeights();
 
+  void resolveBodyFont();
   void switchTab(Tab tab);
   int getListCountForCurrentTab() const;
 

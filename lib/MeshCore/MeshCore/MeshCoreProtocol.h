@@ -101,7 +101,11 @@ size_t buildAppStart(uint8_t* out, size_t maxLen);
 size_t buildDeviceQuery(uint8_t* out, size_t maxLen);
 
 // CMD_GET_CONTACTS: 0x04 [optional 4-byte since timestamp]
-size_t buildGetContacts(uint8_t* out, size_t maxLen);
+// Build CMD_GET_CONTACTS. When since==0 the request is a bare 1-byte command
+// (full contact list). When since>0 a 4-byte little-endian 'since' filter is
+// appended (5 bytes total) so the companion only streams contacts with
+// lastmod > since — used for incremental syncs after a bare advert.
+size_t buildGetContacts(uint8_t* out, size_t maxLen, uint32_t since = 0);
 
 // CMD_ADD_UPDATE_CONTACT: 0x09 <pubkey[32]> <type> <flags> <out_path_len> <out_path[64]> <name[32]> <ts[4]>
 size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact& contact);

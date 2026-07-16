@@ -58,7 +58,14 @@ class MeshCoreClient {
   const MeshCoreCompanion& getCompanion() const { return companion; }
 
   // Commands (queued, async)
-  bool requestContacts();
+  /// Request the contact list. since==0 fetches the full list (used at init);
+  /// since>0 fetches only contacts with lastmod>since (incremental sync).
+  bool requestContacts(uint32_t since = 0);
+  /// Incremental contact sync using the most recent lastmod reported by the
+  /// companion in the last PKT_CONTACT_END. Used when a bare advert (0x80)
+  /// arrives for a pubkey we don't have yet — the companion has likely just
+  /// auto-added the contact, so this pulls the freshly added full record.
+  bool requestNewContacts();
   bool requestChannel(uint8_t idx);
   bool requestBattery();
   bool requestMessages();
@@ -178,11 +185,27 @@ class MeshCoreClient {
   uint8_t cmdCount = 0;
   bool cmdPending = false;
   uint8_t cmdExpectedResponse = 0;
+  // Command byte (app -> companion) for the in-flight command.
+  // Needed to interpret PKT_ERROR payload (e.g. ignore NOT_FOUND for
+  // CMD_REMOVE_CONTACT).
+  uint8_t cmdInFlightCommandByte = 0;
   uint32_t cmdSentTime = 0;
   bool lastCmdSuccess = false;
 
+  // Most-recent contact lastmod reported by the companion in PKT_CONTACT_END.
+  // Used as the 'since' filter for incremental contact syncs (requestNewContacts).
+  uint32_t contactsMostRecentLastmod = 0;
+
   // True while runInitSequence() owns rxBuf; poll() must not consume responses.
   volatile bool inInitSequence = false;
+
+  // Set by runInitSequence() (worker task) once the init handshake completes.
+  // poll() (main loop) fires the post-init request burst (battery, contacts,
+  // channels, messages) so ALL command-queue mutations happen on a single
+  // thread. Enqueuing directly from the worker task races poll() on the main
+  // loop and corrupts the ring buffer (dropped GET_CONTACTS, duplicated
+  // GET_BATTERY observed on device).
+  volatile bool initialRequestsPending = false;
 
   // Set by deinit() to signal doConnect() to skip bleClient cleanup.
   // Ownership of bleClient transfers back to deinit() when this is true.
@@ -307,6 +330,7 @@ class MeshCoreClient {
 
   bool enqueueCmd(const uint8_t* data, size_t len, uint8_t expectedResp);
   bool sendNextCmd();
+  void handleCompanionErrorResponse(const uint8_t* data, size_t len);
   void processResponse(const uint8_t* data, size_t len);
   bool runInitSequence();
 

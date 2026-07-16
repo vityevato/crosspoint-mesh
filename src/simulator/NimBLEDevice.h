@@ -310,21 +310,34 @@ class NimBLERemoteCharacteristic {
       return true;
     }
     if (cmd == 0x02) {  // CMD_SEND_DM → PKT_MSG_SENT + schedule DM echo
-      injectMsgSent();
+      // Alternate DM responses to exercise the companion error path and
+      // verify UI updates from DeliveryStatus::FAILED.
+      static uint8_t dmModeCounter = 0;
+      uint8_t mode = dmModeCounter;
+      dmModeCounter = static_cast<uint8_t>((dmModeCounter + 1) % 2);
 
-      // Parse the command to extract pubkey prefix and text for echo
-      // Format: [0x02][isFlood][0x00][ts LE 4][pubkey 6][text...]
-      if (len >= 14) {
-        memcpy(sPendingEcho.pubkeyPrefix, data + 7, 6);
-        const char* textStart = reinterpret_cast<const char*>(data + 13);
-        size_t textLen = len - 13;
-        sPendingEcho.type = PendingEchoType::DM;
-        if (textLen > MOCK_MAX_TEXT_LEN - 1) textLen = MOCK_MAX_TEXT_LEN - 1;
-        memcpy(sPendingEcho.text, textStart, textLen);
-        sPendingEcho.text[textLen] = '\0';
-        sPendingEcho.requestTimeMs = millis();
-        LOG_DBG("MOCK", "scheduled DM echo: %.40s", sPendingEcho.text);
+      if (mode == 0) {
+        injectMsgSent();
+
+        // Parse the command to extract pubkey prefix and text for echo
+        // Format: [0x02][isFlood][0x00][ts LE 4][pubkey 6][text...]
+        if (len >= 14) {
+          memcpy(sPendingEcho.pubkeyPrefix, data + 7, 6);
+          const char* textStart = reinterpret_cast<const char*>(data + 13);
+          size_t textLen = len - 13;
+          sPendingEcho.type = PendingEchoType::DM;
+          if (textLen > MOCK_MAX_TEXT_LEN - 1) textLen = MOCK_MAX_TEXT_LEN - 1;
+          memcpy(sPendingEcho.text, textStart, textLen);
+          sPendingEcho.text[textLen] = '\0';
+          sPendingEcho.requestTimeMs = millis();
+          LOG_DBG("MOCK", "scheduled DM echo: %.40s", sPendingEcho.text);
+        }
+      } else {
+        // Companion error frame format: [PKT_ERROR(=1), err_code].
+        injectPktErrorFrame(0x01);
+        LOG_INF("MOCK", "CMD_SEND_DM → ERROR (err_code=1)");
       }
+
       return true;
     }
     if (cmd == 0x09) {  // CMD_ADD_UPDATE_CONTACT → mode-driven response
@@ -372,6 +385,17 @@ class NimBLERemoteCharacteristic {
     if (!cb) return;
     uint8_t err = 0x01;
     cb(this, &err, 1, true);
+  }
+
+  // Build and inject PKT_ERROR with companion payload format:
+  // [PKT_ERROR(=1), err_code].
+  void injectPktErrorFrame(uint8_t errCode) {
+    auto cb = effectiveNotifyCb();
+    if (!cb) return;
+    uint8_t errFrame[2];
+    errFrame[0] = 0x01;  // MeshProto::PKT_ERROR
+    errFrame[1] = errCode;
+    cb(this, errFrame, sizeof(errFrame), true);
   }
 
   // Build and inject PKT_SELF_INFO (0x05) via notify callback.

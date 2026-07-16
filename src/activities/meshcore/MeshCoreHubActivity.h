@@ -76,6 +76,14 @@ class MeshCoreHubActivity final : public Activity {
   uint8_t channelCount = 0;
 
   static constexpr uint8_t MAX_VISIBLE_CONTACTS = 20;
+
+  // Batch contact loading from file (async via BLE, like DiscoverActivity)
+  MeshCoreContact _pendingFileContacts[MAX_VISIBLE_CONTACTS] = {};
+  uint8_t _pendingFileContactCount = 0;
+  uint8_t _pendingFileContactIndex = 0;
+  uint8_t _pendingFileContactSuccessCount = 0;
+  bool _contactsFileLoadPending = false;
+  uint32_t _contactsFileLoadStartMs = 0;
   MeshCoreContact savedContacts[MAX_VISIBLE_CONTACTS] = {};
   uint8_t savedContactCount = 0;
 
@@ -118,6 +126,10 @@ class MeshCoreHubActivity final : public Activity {
     if (_activeThread == t) _activeThread = nullptr;
   }
 
+ public:
+  /// File path for saving/loading contacts (shared constant).
+  static constexpr const char* MESHCORE_CONTACTS_FILE = "/meshcore_contants.txt";
+
  private:
   // cppcheck-suppress unusedPrivateFunction; used in issue 2-AFK
   void openDiscover();
@@ -126,6 +138,9 @@ class MeshCoreHubActivity final : public Activity {
 
   void addChannel();
   void deleteChannel(uint8_t idx);
+  void saveAdvertToFile();
+  void loadContactsFromFile();
+  void advanceFileContactLoad(bool success);
 
   int getListCountForCurrentTab() const;
 

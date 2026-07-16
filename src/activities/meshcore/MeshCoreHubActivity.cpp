@@ -24,6 +24,7 @@
 #include "SilentRestart.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
+#include "utils/MeshCoreContactUrlParser.h"
 #include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreMessageHeight.h"
 
@@ -207,6 +208,23 @@ void MeshCoreHubActivity::loop() {
     }
   }
 
+  // Poll batch contact loading from file (async via BLE, like DiscoverActivity)
+  if (_contactsFileLoadPending) {
+    if (!client.isCommandPending()) {
+      advanceFileContactLoad(client.getLastCommandResult());
+    } else if (millis() - _contactsFileLoadStartMs > 30000) {
+      // 30 s timeout for the whole batch
+      _contactsFileLoadPending = false;
+      if (_pendingFileContactCount > 0) {
+        store.saveContacts(savedContacts, savedContactCount);
+        _toast.show(tr(STR_MESHCORE_CONTACTS_IMPORTED), 5000);
+        switchTab(Tab::CONTACTS);
+        selectedIndex = 0;
+      }
+      requestUpdate();
+    }
+  }
+
   // Auto-clear expired toast messages
   if (_toast.poll()) {
     requestUpdate();
@@ -322,25 +340,11 @@ void MeshCoreHubActivity::loop() {
           }
           break;
         case Tab::MENU: {
-          if (itemIdx >= 0 && itemIdx < 5) {
+          if (itemIdx >= 0 && itemIdx < 7) {
             bool connected = (client.getState() == BleConnectionState::CONNECTED);
             switch (itemIdx) {
               case 0:  // Discovery Nodes
                 openDiscover();
-                return;
-              case 3:  // Status
-                if (client.getState() == BleConnectionState::CONNECTED) {
-                  lastCompanion = client.getCompanion();
-                }
-                showingStatus = true;
-                requestUpdate();
-                return;
-              case 4:  // Disconnect
-                if (connected) {
-                  showingDisconnectPopup = true;
-                  requestUpdate();
-                }
-                // Dimmed when disconnected — no-op
                 return;
               case 1:  // Send Advert
                 if (connected) {
@@ -367,6 +371,26 @@ void MeshCoreHubActivity::loop() {
                   _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
                 }
                 requestUpdate();
+                return;
+              case 3:  // Save Advert to File
+                saveAdvertToFile();
+                return;
+              case 4:  // Load Contacts from File
+                loadContactsFromFile();
+                return;
+              case 5:  // Status
+                if (client.getState() == BleConnectionState::CONNECTED) {
+                  lastCompanion = client.getCompanion();
+                }
+                showingStatus = true;
+                requestUpdate();
+                return;
+              case 6:  // Disconnect
+                if (connected) {
+                  showingDisconnectPopup = true;
+                  requestUpdate();
+                }
+                // Dimmed when disconnected — no-op
                 return;
               default:
                 break;
@@ -410,7 +434,7 @@ int MeshCoreHubActivity::getListCountForCurrentTab() const {
     case Tab::CONTACTS:
       return savedContactCount;
     case Tab::MENU:
-      return 5;  // Always 5 menu items
+      return 7;  // Always 7 menu items
     default:
       return 0;
   }
@@ -568,7 +592,9 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
   // Compute rendered height before storing (needed for batch-load scrolling)
   const auto& metrics = UITheme::getInstance().getMetrics();
   int contentWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
-  int fontId = SETTINGS.getReaderFontId();
+  MeshCoreSettings settings;
+  int fontId =
+      (meshcore_settings::load(settings) && settings.useReaderFont) ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
 
   MeshCoreMessage msgWithHeight = msg;
   msgWithHeight.heightPx = measureMeshCoreMessageHeight(renderer, fontId, contentWidth, msg.type == MsgType::CHANNEL,
@@ -675,25 +701,36 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
       return;
     }
   }
-  // New unseen pubkey — add weak entry (name will be empty until PKT_NEW_ADVERT).
-  // Before adding, check savedContacts for a matching pubkey and copy name/type
-  // from there so previously saved contacts display their names immediately.
-  if (discoveredNodeCount < MAX_VISIBLE_CONTACTS) {
-    discoveredNodes[discoveredNodeCount] = node;
-    discoveredNodes[discoveredNodeCount].lastSeen = now;
-    // Look for a matching saved contact to fill in name/type/path
-    for (uint8_t i = 0; i < savedContactCount; ++i) {
-      if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
-        memcpy(discoveredNodes[discoveredNodeCount].name, savedContacts[i].name, sizeof(MeshCoreContact::name));
-        discoveredNodes[discoveredNodeCount].type = savedContacts[i].type;
-        discoveredNodes[discoveredNodeCount].pathLength = savedContacts[i].pathLength;
-        discoveredNodes[discoveredNodeCount].snr = savedContacts[i].snr;
-        break;
-      }
-    }
-    discoveredNodeCount++;
-    requestUpdate();
+  // // New unseen pubkey — add weak entry (name will be empty until PKT_NEW_ADVERT).
+  // // Before adding, check savedContacts for a matching pubkey and copy name/type
+  // // from there so previously saved contacts display their names immediately.
+  // if (discoveredNodeCount < MAX_VISIBLE_CONTACTS) {
+  //   discoveredNodes[discoveredNodeCount] = node;
+  //   discoveredNodes[discoveredNodeCount].lastSeen = now;
+  //   // Look for a matching saved contact to fill in name/type/path
+  bool foundSaved = false;
+  //   for (uint8_t i = 0; i < savedContactCount; ++i) {
+  //     if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
+  //       memcpy(discoveredNodes[discoveredNodeCount].name, savedContacts[i].name, sizeof(MeshCoreContact::name));
+  //       discoveredNodes[discoveredNodeCount].type = savedContacts[i].type;
+  //       discoveredNodes[discoveredNodeCount].pathLength = savedContacts[i].pathLength;
+  //       discoveredNodes[discoveredNodeCount].snr = savedContacts[i].snr;
+  //       foundSaved = true;
+  //       break;
+  //     }
+  //   }
+  //   discoveredNodeCount++;
+  //   requestUpdate();
+
+  // First sighting of a pubkey we don't have in the address book. The companion
+  // sends 0x80 (pubkey-only) instead of 0x8A precisely because it just auto-added
+  // the contact to its own contacts[] — from its perspective the contact is now
+  // "known". Pull the freshly added full record with an incremental GET_CONTACTS
+  // so the name/type arrive; the companion never pushes them on its own.
+  if (!foundSaved && client.getState() == BleConnectionState::CONNECTED) {
+    client.requestNewContacts();
   }
+  // }
 }
 
 void MeshCoreHubActivity::handleChannel(const MeshCoreChannel& ch) {
@@ -821,5 +858,211 @@ void MeshCoreHubActivity::addChannel() {
 void MeshCoreHubActivity::deleteChannel(uint8_t idx) {
   client.deleteChannel(idx);
   channels[idx] = {};
+  requestUpdate();
+}
+
+void MeshCoreHubActivity::saveAdvertToFile() {
+  if (client.getState() != BleConnectionState::CONNECTED) {
+    _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
+    requestUpdate();
+    return;
+  }
+  const auto& comp = client.getCompanion();
+  // Build meshcore://contact/add?name=<name>&public_key=<64 hex>&type=1
+  // URL-encode name: replace spaces with '+'
+  char nameEncoded[128] = {};
+  size_t ni = 0;
+  for (size_t si = 0; comp.name[si] != '\0' && ni < sizeof(nameEncoded) - 4; ++si) {
+    char c = comp.name[si];
+    if (c == ' ') {
+      nameEncoded[ni++] = '+';
+    } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+               c == '.') {
+      nameEncoded[ni++] = c;
+    } else {
+      // Percent-encode other chars
+      snprintf(nameEncoded + ni, 4, "%%%02X", static_cast<uint8_t>(c));
+      ni += 3;
+    }
+  }
+  nameEncoded[ni] = '\0';
+  // Build public_key hex string (64 hex chars)
+  char pubkeyHex[65] = {};
+  for (int i = 0; i < 32; ++i) {
+    snprintf(pubkeyHex + i * 2, 3, "%02x", comp.publicKey[i]);
+  }
+  // Assemble the full URL
+  char url[384];
+  snprintf(url, sizeof(url), "meshcore://contact/add?name=%s&public_key=%s&type=1", nameEncoded, pubkeyHex);
+  // Write to SD card root
+  HalFile file;
+  if (Storage.openFileForWrite("MESH", MESHCORE_CONTACTS_FILE, file)) {
+    file.print(url);
+    file.print("\n");
+    _toast.show(tr(STR_MESHCORE_ADVERT_SAVED_TO_FILE), 5000);
+  } else {
+    _toast.show(tr(STR_MESHCORE_ADVERT_SAVE_FAILED), 5000);
+  }
+  requestUpdate();
+}
+
+void MeshCoreHubActivity::loadContactsFromFile() {
+  LOG_INF("MESH", "loadContactsFromFile: opening %s", MESHCORE_CONTACTS_FILE);
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", MESHCORE_CONTACTS_FILE, file)) {
+    LOG_ERR("MESH", "loadContactsFromFile: file not found");
+    _toast.show(tr(STR_MESHCORE_CONTACTS_FILE_NOT_FOUND), 5000);
+    requestUpdate();
+    return;
+  }
+
+  // Our own public key (companion's key)
+  const uint8_t* ownPubkey = client.getCompanion().publicKey;
+  bool hasOwnPubkey = (client.getState() == BleConnectionState::CONNECTED);
+  LOG_DBG("MESH", "loadContactsFromFile: hasOwnPubkey=%d", hasOwnPubkey);
+
+  _pendingFileContactCount = 0;
+  _pendingFileContactIndex = 0;
+  _pendingFileContactSuccessCount = 0;
+
+  char line[512];
+  size_t linePos = 0;
+  uint16_t totalLines = 0;
+
+  // Read file byte by byte, building lines.
+  // When the file doesn't end with \n, lastLine triggers one final parse.
+  bool lastLine = false;
+  while (true) {
+    int c = file.read();
+    if (c < 0) {
+      if (linePos == 0) break;
+      lastLine = true;
+      c = '\n';
+    }
+    if (c == '\n' || c == '\r') {
+      if (linePos == 0) {
+        if (lastLine) break;
+        continue;
+      }
+      line[linePos] = '\0';
+      totalLines++;
+
+      // Parse the URL using the shared parser utility
+      MeshCoreContact contact;
+      bool accepted = false;
+      if (parseMeshCoreContactUrl(line, contact)) {
+        char keyLabel[MeshCoreContact::PUBLIC_KEY_DISPLAY_LEN];
+        contact.getPublicKeyLabel(keyLabel);
+        LOG_DBG("MESH", "loadContactsFromFile: parsed '%s' key=%s type=%d", contact.name, keyLabel, (int)contact.type);
+
+        if (contact.type == MeshNodeType::COMPANION) {
+          // Skip our own pubkey
+          bool skip = (hasOwnPubkey && memcmp(contact.publicKey, ownPubkey, 32) == 0);
+          if (skip) {
+            LOG_DBG("MESH", "loadContactsFromFile: skip own pubkey %s", keyLabel);
+          }
+
+          // Skip duplicates (check both savedContacts and already-pending)
+          if (!skip) {
+            for (uint8_t i = 0; i < savedContactCount; ++i) {
+              if (memcmp(savedContacts[i].publicKey, contact.publicKey, 32) == 0) {
+                LOG_DBG("MESH", "loadContactsFromFile: duplicate in savedContacts[%d]", i);
+                skip = true;
+                break;
+              }
+            }
+          }
+          if (!skip) {
+            for (uint8_t i = 0; i < _pendingFileContactCount; ++i) {
+              if (memcmp(_pendingFileContacts[i].publicKey, contact.publicKey, 32) == 0) {
+                LOG_DBG("MESH", "loadContactsFromFile: duplicate in pending[%d]", i);
+                skip = true;
+                break;
+              }
+            }
+          }
+
+          if (!skip && _pendingFileContactCount < MAX_VISIBLE_CONTACTS) {
+            _pendingFileContacts[_pendingFileContactCount++] = contact;
+            accepted = true;
+            LOG_DBG("MESH", "loadContactsFromFile: accepted [%d/%d]", _pendingFileContactCount, MAX_VISIBLE_CONTACTS);
+          }
+        } else {
+          LOG_DBG("MESH", "loadContactsFromFile: skip non-chat type=%d", (int)contact.type);
+        }
+      } else {
+        LOG_DBG("MESH", "loadContactsFromFile: failed to parse URL '%.60s'", line);
+      }
+
+      linePos = 0;
+      if (lastLine) break;
+    } else if (linePos < sizeof(line) - 1) {
+      line[linePos++] = static_cast<char>(c);
+    }
+  }
+
+  LOG_INF("MESH", "loadContactsFromFile: %d total lines, %d accepted contacts", totalLines, _pendingFileContactCount);
+
+  if (_pendingFileContactCount == 0) {
+    LOG_ERR("MESH", "loadContactsFromFile: no valid contacts found");
+    _toast.show(tr(STR_MESHCORE_CONTACTS_NO_NEW), 5000);
+    requestUpdate();
+    return;
+  }
+
+  // Start async batch: queue first contact with the companion
+  LOG_INF("MESH", "loadContactsFromFile: starting async batch, queueing contact 0/%d", _pendingFileContactCount);
+  _contactsFileLoadPending = true;
+  _contactsFileLoadStartMs = millis();
+  _toast.show(tr(STR_MESHCORE_SAVING), 0);  // persistent during batch
+  client.addUpdateContact(_pendingFileContacts[0]);
+  requestUpdate();
+}
+
+void MeshCoreHubActivity::advanceFileContactLoad(bool success) {
+  LOG_DBG("MESH", "advanceFileContactLoad: idx=%d/%d success=%d", _pendingFileContactIndex, _pendingFileContactCount,
+          success);
+
+  if (success) {
+    _pendingFileContactSuccessCount++;
+    // Insert at the TOP of savedContacts
+    const auto& contact = _pendingFileContacts[_pendingFileContactIndex];
+    char keyLabel[MeshCoreContact::PUBLIC_KEY_DISPLAY_LEN];
+    contact.getPublicKeyLabel(keyLabel);
+    LOG_INF("MESH", "advanceFileContactLoad: added '%s' key=%s at top", contact.name, keyLabel);
+
+    if (savedContactCount < MAX_VISIBLE_CONTACTS) {
+      for (int i = static_cast<int>(savedContactCount); i > 0; --i) {
+        savedContacts[i] = savedContacts[i - 1];
+      }
+      savedContacts[0] = contact;
+      savedContactCount++;
+    }
+  } else {
+    LOG_ERR("MESH", "advanceFileContactLoad: BLE command failed for contact idx=%d", _pendingFileContactIndex);
+  }
+
+  _pendingFileContactIndex++;
+
+  if (_pendingFileContactIndex < _pendingFileContactCount) {
+    LOG_DBG("MESH", "advanceFileContactLoad: queueing next contact %d/%d", _pendingFileContactIndex,
+            _pendingFileContactCount);
+    client.addUpdateContact(_pendingFileContacts[_pendingFileContactIndex]);
+  } else {
+    LOG_INF("MESH", "advanceFileContactLoad: batch complete, success=%d/%d", _pendingFileContactSuccessCount,
+            _pendingFileContactCount);
+    _contactsFileLoadPending = false;
+    store.saveContacts(savedContacts, savedContactCount);
+
+    if (_pendingFileContactSuccessCount > 0) {
+      _toast.show(tr(STR_MESHCORE_CONTACTS_IMPORTED), 5000);
+      switchTab(Tab::CONTACTS);
+      selectedIndex = 0;
+    } else if (_pendingFileContactCount > 0) {
+      _toast.show(tr(STR_MESHCORE_CONTACTS_SAVE_FAILED), 5000);
+    } else {
+      _toast.show(tr(STR_MESHCORE_CONTACTS_NO_NEW), 5000);
+    }
+  }
   requestUpdate();
 }

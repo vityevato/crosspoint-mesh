@@ -83,14 +83,18 @@ void mockHandleRemoveContact(NimBLERemoteCharacteristic* txChar, const uint8_t* 
     case 1:  // ERROR
       LOG_INF("MOCK", "CMD_REMOVE_CONTACT %s... → ERROR", keyLabel);
       {
-        uint8_t err = 0x01;
-        txChar->injectRawPacket(&err, 1);
+        // Companion error frame format: [PKT_ERROR(=1), err_code].
+        // ERR_CODE_NOT_FOUND in companion is 2.
+        uint8_t errFrame[2];
+        errFrame[0] = 0x01;  // MeshProto::PKT_ERROR
+        errFrame[1] = 0x02;  // ERR_CODE_NOT_FOUND
+        txChar->injectRawPacket(errFrame, 2);
       }
       break;
     case 2:  // TIMEOUT
       LOG_INF("MOCK", "CMD_REMOVE_CONTACT %s... → (no response / timeout)", keyLabel);
       break;
-    case 3:  // DELAY_OK
+    case 3:                                                 // DELAY_OK
       sPendingEcho.type = PendingEchoType::ADD_CONTACT_OK;  // reuse OK echo slot
       sPendingEcho.requestTimeMs = millis();
       LOG_INF("MOCK", "CMD_REMOVE_CONTACT %s... → OK (delayed 1.5 s)", keyLabel);

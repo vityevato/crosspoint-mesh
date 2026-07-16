@@ -12,6 +12,7 @@
 
 #include "CrossPointSettings.h"
 #include "FontCacheManager.h"
+#include "Memory.h"
 #include "MeshCoreHubActivity.h"
 #include "MeshCoreSubtitle.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -35,9 +36,9 @@ struct ThreadRenderCtx {
   int metaLineH;   // Height of a line for meta information
   int maxTextWidth;
 
-  ThreadRenderCtx(const GfxRenderer& renderer, const Rect& rect, bool useReaderFontSettings)
+  ThreadRenderCtx(const GfxRenderer& renderer, const Rect& rect, int bodyFontId)
       : metrics(UITheme::getInstance().getMetrics()),
-        bodyFontId(useReaderFontSettings ? SETTINGS.getReaderFontId() : SMALL_FONT_ID),
+        bodyFontId(bodyFontId),
         bodyLineH(renderer.getLineHeight(bodyFontId)),
         metaFontId(bodyFontId),
         metaLineH(renderer.getLineHeight(metaFontId)),
@@ -99,7 +100,7 @@ void MeshCoreThreadActivity::onEnter() {
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
 
-  _bodyFontId = SETTINGS.getReaderFontId();
+  resolveBodyFont();
   const auto& metrics = UITheme::getInstance().getMetrics();
   _contentAreaWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
   _contentAreaHeight = contentHeight();
@@ -139,6 +140,7 @@ void MeshCoreThreadActivity::onExit() {
   savePosition();
   memset(_visibleMsgs, 0, sizeof(_visibleMsgs));
   _visibleCount = 0;
+  _menuSettings.reset();
   Activity::onExit();
 }
 
@@ -192,15 +194,7 @@ void MeshCoreThreadActivity::scrollDownPage() {
 
   _meta.positionId = _lastVisibleId + 1;
   _meta.positionPx += _accHeight;
-  // if (_meta.positionPx > _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)) {
-  //   _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
-  //                          ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
-  //                          : 0;
-  //   _meta.positionId = _meta.endId;
-  //   LOG_DBG("MESH", "scrollDownPage: clamped to end, loading Up (posPx=%u posId=%u)", _meta.positionPx,
-  //           _meta.positionId);
-  //   loadVisibleBatchUp();
-  // } else {
+
   LOG_DBG("MESH", "scrollDownPage: advancing (posPx=%u posId=%u)", _meta.positionPx, _meta.positionId);
   loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
   savePosition();
@@ -223,15 +217,23 @@ void MeshCoreThreadActivity::scrollUpPage() {
     return;
   }
 
-  LOG_DBG("MESH", "scrollUpPage: loaded %d msgs [%u..%u] (new posPx calculation: %u - %u)", _visibleCount,
-          _firstVisibleId, _lastVisibleId, _meta.positionPx, _accHeight);
+  // When we reach the very beginning of the conversation, reload forward from
+  // startId so the entire viewport is filled (not just the last 2-3 messages
+  // at the top with empty space below them).
+  if (_firstVisibleId <= _meta.startId) {
+    LOG_DBG("MESH", "scrollUpPage: hit top — reload from startId=%u down", _meta.startId);
+    _meta.positionPx = 0;
+    _meta.positionId = _meta.startId;
+    loadMessages(_meta.startId, /*up=*/false);
+    savePosition();
+    requestUpdate();
+    return;
+  }
+
+  LOG_DBG("MESH", "scrollUpPage: loaded %d msgs [%u..%u] (posPx: %u - %u)", _visibleCount, _firstVisibleId,
+          _lastVisibleId, _meta.positionPx, _accHeight);
 
   _meta.positionId = _firstVisibleId;
-
-  // Subtract _accHeight (total visible content height from the last render before
-  // this scroll) — symmetric with scrollDownPage which adds _accHeight.
-  // Using "all-but-last" here was asymmetric and caused positionPx drift,
-  // leaving the scrollbar stuck mid-way after scrolling all the way up.
   _meta.positionPx = (_meta.positionPx >= _accHeight) ? _meta.positionPx - _accHeight : 0;
 
   LOG_DBG("MESH", "scrollUpPage: final posPx=%u posId=%u", _meta.positionPx, _meta.positionId);
@@ -396,6 +398,54 @@ void MeshCoreThreadActivity::loop() {
     requestUpdate();
   }
 
+  // ── Confirmation popup input handling ──
+  if (_confirmAction != ConfirmAction::NONE) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      _confirmAction = ConfirmAction::NONE;
+      requestUpdate();
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      auto action = _confirmAction;
+      _confirmAction = ConfirmAction::NONE;
+      switch (action) {
+        case ConfirmAction::CLEAR_CONVERSATION:
+          clearConversation();
+          break;
+        case ConfirmAction::REMOVE_CONTACT: {
+          if (!client.removeContact(contactPubkey)) {
+            LOG_ERR("MESH", "Failed to queue contact delete");
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            return;
+          }
+          LOG_DBG("MESH", "Queued contact unlist — waiting for BLE response");
+          _pendingOp = PendingOp::DELETING_CONTACT;
+          _pendingStartMs = millis();
+          _toast.show(tr(STR_MESHCORE_REMOVING), 0);
+          selectedIndex = 0;
+          break;
+        }
+        case ConfirmAction::DELETE_CHANNEL: {
+          if (!client.deleteChannel(channelIdx)) {
+            LOG_ERR("MESH", "Failed to queue channel delete");
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            return;
+          }
+          LOG_DBG("MESH", "Queued channel %d delete — waiting for BLE response", channelIdx);
+          _pendingOp = PendingOp::DELETING_CHANNEL;
+          _pendingStartMs = millis();
+          _toast.show(tr(STR_MESHCORE_REMOVING), 0);
+          selectedIndex = 0;
+          break;
+        }
+        default:
+          break;
+      }
+      requestUpdate();
+    }
+    return;  // Consume all other input while popup is active
+  }
+
   // --- Back ---
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     if (selectedIndex > 0) {
@@ -428,6 +478,20 @@ void MeshCoreThreadActivity::loop() {
     }
 
     if (currentTab == Tab::MENU) {
+      // Action indices: 0..(actionCount-1) = menu actions, actionCount = settings toggle
+      int actionCount = isChannel ? 3 : 4;
+      if (itemIdx >= actionCount) {
+        // Settings toggle
+        if (_menuSettings) {
+          _menuSettings->useReaderFont = !_menuSettings->useReaderFont;
+          meshcore_settings::save(*_menuSettings);
+          resolveBodyFont();
+          _needsRebuild = true;
+        }
+        requestUpdate();
+        return;
+      }
+
       if (isChannel) {
         // Channel menu: 0=Scroll to End, 1=Clear, 2=Delete Channel
         bool connected = (client.getState() == BleConnectionState::CONNECTED);
@@ -436,7 +500,8 @@ void MeshCoreThreadActivity::loop() {
             scrollToEnd();
             return;
           case 1:  // Clear Conversation
-            clearConversation();
+            _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
+            requestUpdate();
             return;
           case 2: {  // Delete Channel (async, waits for BLE)
             if (!connected) {
@@ -444,17 +509,7 @@ void MeshCoreThreadActivity::loop() {
               requestUpdate();
               break;
             }
-            if (!client.deleteChannel(channelIdx)) {
-              LOG_ERR("MESH", "Failed to queue channel delete");
-              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-              requestUpdate();
-              break;
-            }
-            LOG_DBG("MESH", "Queued channel %d delete — waiting for BLE response", channelIdx);
-            _pendingOp = PendingOp::DELETING_CHANNEL;
-            _pendingStartMs = millis();
-            _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
-            selectedIndex = 0;
+            _confirmAction = ConfirmAction::DELETE_CHANNEL;
             requestUpdate();
             return;
           }
@@ -500,7 +555,8 @@ void MeshCoreThreadActivity::loop() {
             scrollToEnd();
             return;
           case 2:  // Clear Conversation
-            clearConversation();
+            _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
+            requestUpdate();
             return;
           case 3: {  // Unlist Contact (async, waits for BLE)
             if (!connected) {
@@ -508,17 +564,7 @@ void MeshCoreThreadActivity::loop() {
               requestUpdate();
               break;
             }
-            if (!client.removeContact(contactPubkey)) {
-              LOG_ERR("MESH", "Failed to queue contact delete");
-              _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-              requestUpdate();
-              break;
-            }
-            LOG_DBG("MESH", "Queued contact unlist — waiting for BLE response");
-            _pendingOp = PendingOp::DELETING_CONTACT;
-            _pendingStartMs = millis();
-            _toast.show(tr(STR_MESHCORE_REMOVING), 0);  // persistent until result
-            selectedIndex = 0;
+            _confirmAction = ConfirmAction::REMOVE_CONTACT;
             requestUpdate();
             return;
           }
@@ -577,7 +623,27 @@ void MeshCoreThreadActivity::loop() {
   }
 }
 
+void MeshCoreThreadActivity::resolveBodyFont() {
+  auto settings = makeUniqueNoThrow<MeshCoreSettings>();
+  if (settings && meshcore_settings::load(*settings)) {
+    _bodyFontId = settings->useReaderFont ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
+  } else {
+    _bodyFontId = SMALL_FONT_ID;  // fallback
+  }
+}
+
 void MeshCoreThreadActivity::switchTab(Tab tab) {
+  // Free settings when leaving MENU
+  if (currentTab == Tab::MENU && tab != Tab::MENU) {
+    _menuSettings.reset();
+  }
+  // Load settings when entering MENU
+  if (tab == Tab::MENU && !_menuSettings) {
+    _menuSettings = makeUniqueNoThrow<MeshCoreSettings>();
+    if (_menuSettings) {
+      meshcore_settings::load(*_menuSettings);
+    }
+  }
   currentTab = tab;
   selectedIndex = 0;
   requestUpdate();
@@ -587,8 +653,11 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
   switch (currentTab) {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
-    case Tab::MENU:
-      return isChannel ? 3 : 4;  // Channel: 3 items; DM: 4 items (+Reset Path)
+    case Tab::MENU: {
+      int count = isChannel ? 3 : 4;  // Channel: 3 actions; DM: 4 actions (+Reset Path)
+      if (_menuSettings) count += 1;  // +1 for the settings toggle
+      return count;
+    }
     default:
       return 0;
   }
@@ -666,8 +735,8 @@ void MeshCoreThreadActivity::sendMessage() {
                            // Compute rendered height for batch-load scrolling
                            const auto& tmetrics = UITheme::getInstance().getMetrics();
                            int tcontentWidth = renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
-                           msg.heightPx = measureMeshCoreMessageHeight(renderer, SETTINGS.getReaderFontId(),
-                                                                       tcontentWidth, isChannel, msg, tmetrics);
+                           msg.heightPx = measureMeshCoreMessageHeight(renderer, _bodyFontId, tcontentWidth, isChannel,
+                                                                       msg, tmetrics);
 
                            bool sent = false;
                            if (isChannel) {
@@ -744,6 +813,36 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
     return;
   }
 
+  // --- Confirmation popup (shown before destructive menu actions) ---
+  if (_confirmAction != ConfirmAction::NONE) {
+    const char* confirmMsg = "";
+    const char* confirmLabel = "";
+    switch (_confirmAction) {
+      case ConfirmAction::CLEAR_CONVERSATION:
+        confirmMsg = tr(STR_MESHCORE_CLEAR_CONFIRM);
+        confirmLabel = tr(STR_MESHCORE_CLEAR_CONVERSATION);
+        break;
+      case ConfirmAction::REMOVE_CONTACT:
+        confirmMsg = tr(STR_MESHCORE_REMOVE_CONTACT_CONFIRM);
+        confirmLabel = tr(STR_MESHCORE_REMOVE_CONTACT);
+        break;
+      case ConfirmAction::DELETE_CHANNEL:
+        confirmMsg = tr(STR_MESHCORE_DELETE_CHANNEL_CONFIRM);
+        confirmLabel = tr(STR_MESHCORE_DELETE_CHANNEL);
+        break;
+      default:
+        break;
+    }
+    char headerSubtitle[64];
+    _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
+    GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
+    GUI.drawPopup(renderer, confirmMsg);
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
+
   // --- Normal tabbed layout ---
   char headerSubtitle[64];
   _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
@@ -764,16 +863,15 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
       } else if (_visibleCount > 0) {
         // Two-pass font prewarming: scan → prewarm → render
         auto* fcm = renderer.getFontCacheManager();
-        bool useReaderFontSettings = true;
         if (fcm) {
           MESHCORE_LOG_HEAP("Thread prewarm:before");
           auto scope = fcm->createPrewarmScope();
-          drawVisibleMessages(renderer, contentRect, useReaderFontSettings, /*scanOnly=*/true);
+          drawVisibleMessages(renderer, contentRect, _bodyFontId, /*scanOnly=*/true);
           scope.endScanAndPrewarm();
           MESHCORE_LOG_HEAP("Thread prewarm:after");
-          drawVisibleMessages(renderer, contentRect, useReaderFontSettings);
+          drawVisibleMessages(renderer, contentRect, _bodyFontId);
         } else {
-          drawVisibleMessages(renderer, contentRect, useReaderFontSettings);
+          drawVisibleMessages(renderer, contentRect, _bodyFontId);
         }
       }
       break;
@@ -804,7 +902,8 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
   } else if (currentTab == Tab::MESSAGES) {
     btn2 = tr(STR_MESHCORE_SEND);
   } else if (currentTab == Tab::MENU) {
-    btn2 = tr(STR_SELECT);
+    int actionCount = isChannel ? 3 : 4;
+    btn2 = (selectedIndex > 0 && selectedIndex - 1 >= actionCount) ? tr(STR_TOGGLE) : tr(STR_SELECT);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -815,12 +914,15 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
 void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
   bool connected = (client.getState() == BleConnectionState::CONNECTED);
 
-  constexpr int kChannelItemCount = 3;
-  constexpr int kDmItemCount = 4;
-  int kItemCount = isChannel ? kChannelItemCount : kDmItemCount;
+  constexpr int kChannelActionCount = 3;
+  constexpr int kDmActionCount = 4;
+  int kActionCount = isChannel ? kChannelActionCount : kDmActionCount;
+  bool hasSettings = _menuSettings != nullptr;
 
-  // Menu item labels — table-driven to avoid duplicating the shared
-  // entries (Scroll to End, Clear Conversation) across two switches.
+  const auto& m = UITheme::getInstance().getMetrics();
+  const int sepGap = m.verticalSpacing;  // theme-aware gap above and below the separator
+
+  // Menu item labels — table-driven
   static constexpr StrId kChannelTitles[] = {
       StrId::STR_MESHCORE_SCROLL_TO_END,
       StrId::STR_MESHCORE_CLEAR_CONVERSATION,
@@ -834,11 +936,16 @@ void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
   };
   const auto& titles = isChannel ? kChannelTitles : kDmTitles;
 
+  // ── Action list ──
+  int listSel = selectedIndex - 1;  // 0-based
+  int actionSel = (listSel >= 0 && listSel < kActionCount) ? listSel : -1;
+
+  Rect actionRect = contentRect;
   GUI.drawList(
-      renderer, contentRect, kItemCount, selectedIndex - 1,
+      renderer, actionRect, kActionCount, actionSel,
       /*rowTitle*/
-      [&titles, kItemCount](int index) -> std::string {
-        if (index < 0 || index >= kItemCount) return {};
+      [&](int index) -> std::string {
+        if (index < 0 || index >= kActionCount) return {};
         return I18n::getInstance().get(titles[index]);
       },
       /*rowSubtitle*/ nullptr,
@@ -848,39 +955,57 @@ void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
       /*rowDimmed*/
       [this, connected](int index) -> bool {
         if (isChannel) {
-          // Channel: item 2 (unlist/delete) requires connected companion
           if (!connected) return (index == 2);
           return false;
         } else {
-          // DM: item 0 (Reset Path) requires connected + has path;
-          // item 3 (unlist) requires connected
           if (index == 0) {
             if (!connected) return true;
-            // Check if contact has a path by loading from store
             constexpr uint8_t kMaxDim = 20;
             MeshCoreContact contacts[kMaxDim] = {};
             uint8_t count = store.loadContacts(contacts, kMaxDim);
             for (uint8_t i = 0; i < count; ++i) {
               if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
-                return (contacts[i].pathLength == 0xFF);  // dim if no path
+                return (contacts[i].pathLength == 0xFF);
               }
             }
-            return true;  // contact not found → dim
+            return true;
           }
           if (!connected) return (index == 3);
           return false;
         }
       });
+
+  // ── Separator + settings ──
+  if (!hasSettings) return;
+
+  int sepY = contentRect.y + kActionCount * m.listRowHeight + sepGap;
+  renderer.drawLine(contentRect.x + m.contentSidePadding, sepY,
+                    contentRect.x + contentRect.width - m.contentSidePadding - 1, sepY, true);
+
+  int settingSel = (listSel >= kActionCount) ? (listSel - kActionCount) : -1;
+  int settingsTop = sepY + 1 + sepGap;  // +1 for the drawn line
+  Rect settingsRect(contentRect.x, settingsTop, contentRect.width, contentRect.y + contentRect.height - settingsTop);
+
+  GUI.drawList(
+      renderer, settingsRect, 1, settingSel,
+      /*rowTitle*/
+      [](int) -> std::string { return I18n::getInstance().get(StrId::STR_MESHCORE_USE_READER_FONT); },
+      /*rowSubtitle*/ nullptr,
+      /*rowIcon*/ nullptr,
+      /*rowValue*/
+      [this](int) -> std::string { return _menuSettings->useReaderFont ? tr(STR_STATE_ON) : tr(STR_STATE_OFF); },
+      /*highlightValue*/ true,
+      /*rowDimmed*/ nullptr);
 }
 
 // --- Message rendering (reads from _visibleMsgs array) ---
 
-void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Rect rect, bool useReaderFontSettings,
+void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Rect rect, int bodyFontId,
                                                  bool scanOnly) {
   if (_visibleCount == 0) return;
 
   constexpr int maxLines = 100;
-  const ThreadRenderCtx ctx(renderer, rect, useReaderFontSettings);
+  const ThreadRenderCtx ctx(renderer, rect, bodyFontId);
 
   // ── Scan-only pass for font prewarming ──
   if (scanOnly) {
