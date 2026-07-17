@@ -57,6 +57,11 @@ class ActivityManager {
   // Note: only one waiting task is supported at a time
   TaskHandle_t waitingTaskHandle = nullptr;
 
+  // Spinlock for atomically reading/writing waitingTaskHandle.
+  // Must be a real portMUX_TYPE (not nullptr) — the simulator's taskENTER_CRITICAL
+  // dereferences the pointer unconditionally.
+  portMUX_TYPE waitingTaskMux = portMUX_INITIALIZER_UNLOCKED;
+
   // Mutex to protect rendering operations from race conditions
   // Must only be used via RenderLock
   SemaphoreHandle_t renderingMutex = nullptr;
