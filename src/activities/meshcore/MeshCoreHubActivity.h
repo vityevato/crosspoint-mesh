@@ -128,7 +128,7 @@ class MeshCoreHubActivity final : public Activity {
 
  public:
   /// File path for saving/loading contacts (shared constant).
-  static constexpr const char* MESHCORE_CONTACTS_FILE = "/meshcore_contants.txt";
+  static constexpr const char* MESHCORE_CONTACTS_FILE = "/meshcore_contacts.txt";
 
  private:
   // cppcheck-suppress unusedPrivateFunction; used in issue 2-AFK

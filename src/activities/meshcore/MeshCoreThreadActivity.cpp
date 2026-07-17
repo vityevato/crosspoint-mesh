@@ -14,6 +14,7 @@
 #include "FontCacheManager.h"
 #include "Memory.h"
 #include "MeshCoreHubActivity.h"
+#include "MeshCoreMessageRenderer.h"
 #include "MeshCoreSubtitle.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -22,31 +23,6 @@
 #include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreMessageHeight.h"
 #include "utils/MeshCoreTimeUtils.h"
-
-namespace {
-
-/// Pre-computed font/layout metrics for a thread view.  Factors out the
-/// repeated (renderer, rect, fontSetting) → (bodyFontId, lineHeights,
-/// maxTextWidth) derivation so it lives in one place.
-struct ThreadRenderCtx {
-  const ThemeMetrics& metrics;
-  int bodyFontId;
-  int bodyLineH;
-  int metaFontId;  // Font ID for meta information
-  int metaLineH;   // Height of a line for meta information
-  int maxTextWidth;
-
-  ThreadRenderCtx(const GfxRenderer& renderer, const Rect& rect, int bodyFontId)
-      : metrics(UITheme::getInstance().getMetrics()),
-        bodyFontId(bodyFontId),
-        bodyLineH(renderer.getLineHeight(bodyFontId)),
-        metaFontId(bodyFontId),
-        metaLineH(renderer.getLineHeight(metaFontId)),
-        // Removed duplicate metaLineH initialization
-        maxTextWidth(rect.width - 2 * metrics.contentSidePadding) {}
-};
-
-}  // namespace
 
 // Channel thread constructor
 MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -1002,165 +978,9 @@ void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) {
 
 void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Rect rect, int bodyFontId,
                                                  bool scanOnly) {
-  if (_visibleCount == 0) return;
-
-  constexpr int maxLines = 100;
-  const ThreadRenderCtx ctx(renderer, rect, bodyFontId);
-
-  // ── Scan-only pass for font prewarming ──
-  if (scanOnly) {
-    for (uint8_t i = 0; i < _visibleCount; ++i) {
-      const auto& msg = _visibleMsgs[i];
-      bool showSender = (isChannel && msg.direction != MsgDirection::SENT && msg.senderName[0]);
-      if (showSender) {
-        renderer.drawText(ctx.bodyFontId, 0, 0, msg.senderName, true);
-      }
-      if (msg.text[0]) {
-        renderer.drawText(ctx.bodyFontId, 0, 0, msg.text, true);
-      }
-      if (msg.timestamp > 0) {
-        char tsBuf[16];
-        formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
-        renderer.drawText(ctx.metaFontId, 0, 0, tsBuf, true);
-      }
-    }
-    // Also prewarm the filler message if present
-    if (_fillerMsg.id != 0) {
-      bool showSender = (isChannel && _fillerMsg.direction != MsgDirection::SENT && _fillerMsg.senderName[0]);
-      if (showSender) {
-        renderer.drawText(ctx.bodyFontId, 0, 0, _fillerMsg.senderName, true);
-      }
-      if (_fillerMsg.text[0]) {
-        renderer.drawText(ctx.bodyFontId, 0, 0, _fillerMsg.text, true);
-      }
-      if (_fillerMsg.timestamp > 0) {
-        char tsBuf[16];
-        formatMeshCoreTimestamp(_fillerMsg.timestamp, tsBuf, sizeof(tsBuf));
-        renderer.drawText(ctx.metaFontId, 0, 0, tsBuf, true);
-      }
-    }
-    return;
-  }
-
-  int y = rect.y;
-  bool rendered = false;
-
-  // ── Helper: render one message (sender → body → meta), advancing y ──
-  // clipToFit=true  → only lines that fit fully (y + lineH <= bottom) are drawn.
-  // clipToFit=false → draws lines normally, caller stops when y > bottom.
-  auto renderOneMsg = [&](const MeshCoreMessage& msg, int& yPos, bool clipToFit) {
-    const int bottom = rect.y + rect.height;
-    const bool outgoing = (msg.direction == MsgDirection::SENT);
-    const bool showSender = (isChannel && !outgoing && msg.senderName[0]);
-
-    auto fits = [&](int lineH) { return clipToFit ? (yPos + lineH <= bottom) : (yPos <= bottom); };
-
-    // Sender line
-    if (showSender && fits(ctx.bodyLineH)) {
-      int senderX;
-      if (outgoing) {
-        int senderW = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
-        senderX = rect.x + rect.width - ctx.metrics.contentSidePadding - senderW;
-      } else {
-        senderX = rect.x + ctx.metrics.contentSidePadding;
-      }
-      renderer.drawText(ctx.bodyFontId, senderX, yPos, msg.senderName, true);
-      if (!outgoing) {
-        int sw = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
-        for (int py = yPos; py < yPos + ctx.bodyLineH; py++)
-          for (int px = senderX; px < senderX + sw; px++)
-            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      }
-      yPos += ctx.bodyLineH;
-    }
-
-    // Body text — line by line
-    if (msg.text[0] && fits(0)) {
-      auto lines = wrapMessageBody(renderer, ctx.bodyFontId, msg.text, ctx.maxTextWidth, maxLines);
-      for (const auto& line : lines) {
-        if (!fits(ctx.bodyLineH)) break;
-        if (!line.empty()) {
-          if (outgoing) {
-            int textW = renderer.getTextWidth(ctx.bodyFontId, line.c_str());
-            renderer.drawText(ctx.bodyFontId, rect.x + rect.width - ctx.metrics.contentSidePadding - textW, yPos,
-                              line.c_str(), true);
-          } else {
-            renderer.drawText(ctx.bodyFontId, rect.x + ctx.metrics.contentSidePadding, yPos, line.c_str(), true);
-          }
-        }
-        yPos += ctx.bodyLineH;
-      }
-    }
-
-    // Meta line (timestamp + delivery status or hops)
-    if (msg.timestamp > 0 && fits(ctx.metaLineH)) {
-      char metaBuf[64];
-      char tsBuf[16];
-      formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
-      char hopBuf[20];
-      if (isChannel && outgoing) {
-        meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
-      } else if (!isChannel && outgoing) {
-        // Show delivery status instead of hop count for outgoing DMs
-        switch (msg.deliveryStatus) {
-          case DeliveryStatus::ACKED:
-            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_ACKED));
-            break;
-          case DeliveryStatus::FAILED:
-            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_FAILED));
-            break;
-          case DeliveryStatus::SENT:
-          default:
-            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_SENT));
-            break;
-        }
-      } else {
-        meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
-      }
-      snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
-      int metaX;
-      if (outgoing) {
-        int metaW = renderer.getTextWidth(ctx.metaFontId, metaBuf);
-        metaX = rect.x + rect.width - ctx.metrics.contentSidePadding - metaW;
-      } else {
-        metaX = rect.x + ctx.metrics.contentSidePadding;
-      }
-      renderer.drawText(ctx.metaFontId, metaX, yPos, metaBuf, true);
-      int mw = renderer.getTextWidth(ctx.metaFontId, metaBuf);
-      for (int py = yPos; py < yPos + ctx.metaLineH; py++)
-        for (int px = metaX; px < metaX + mw; px++)
-          if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
-      yPos += ctx.metaLineH;
-    }
-  };
-
-  // ── Main message batch ──
-  for (uint8_t i = 0; i < _visibleCount; ++i) {
-    if (y > rect.y + rect.height) break;
-    rendered = true;
-    renderOneMsg(_visibleMsgs[i], y, /*clipToFit=*/false);
-    // Vertical gap between messages (proportional to font size)
-    if (y < rect.y + rect.height) {
-      y += meshcoreMessageGapPx(ctx.bodyLineH);
-    }
-  }
-
-  // ── Filler message (partial render in remaining space at bottom) ──
-  if (_fillerMsg.id != 0 && y < rect.y + rect.height) {
-    renderOneMsg(_fillerMsg, y, /*clipToFit=*/true);
-  }
-
-  // ── Render pass ──
-  GUI.drawScrollBar(renderer, rect, _meta.totalPx, _meta.positionPx);
-
-  // Clear overflow areas
-  if (rendered) {
-    const int screenW = renderer.getScreenWidth();
-    const int screenH = renderer.getScreenHeight();
-    if (rect.y > 0) renderer.fillRect(0, 0, screenW, rect.y, false);
-    const int belowY = rect.y + rect.height;
-    if (belowY < screenH) renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
-  }
+  ThreadRenderCtx ctx(renderer, rect, bodyFontId);
+  renderMessageBatch(renderer, rect, _visibleMsgs, _visibleCount, _fillerMsg, ctx, isChannel, _meta.totalPx,
+                     _meta.positionPx, scanOnly);
 }
 
 // ── Font recalculation (synchronous, called from onEnter) ──
