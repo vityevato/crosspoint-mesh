@@ -6,11 +6,9 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
-#include <vector>
 
-#include "MeshCoreSettings.h"
-#include "StatusMessageOverlay.h"
+#include "../MeshCoreSettings.h"
+#include "../StatusMessageOverlay.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
@@ -18,7 +16,7 @@ struct Rect;
 
 class MeshCoreHubActivity;
 
-struct ThreadScroller;
+#include "ThreadScroller.h"
 
 /**
  * MeshCoreThreadActivity shows a pixel-paginated message thread for either a
@@ -63,6 +61,9 @@ class MeshCoreThreadActivity final : public Activity {
   /// Expose pubkey for Hub to match delivery callbacks to this conversation.
   const uint8_t* contactPubkeyForDelivery() const { return contactPubkey; }
 
+  friend struct ThreadMessenger;
+  friend struct ThreadMenuRenderer;
+
  private:
   enum class Tab : uint8_t { MESSAGES = 0, MENU, TAB_COUNT };
 
@@ -105,7 +106,7 @@ class MeshCoreThreadActivity final : public Activity {
   uint32_t _pendingStartMs = 0;
   void completeUnlistOp(bool success);
 
-  // Extracted scroll state machine — created in onEnter, deleted in onExit.
+  // Scroll state machine — created in onEnter, deleted in onExit.
   ThreadScroller* _scroller = nullptr;
 
   // Confirmation popup state (shown before destructive menu actions)
@@ -136,6 +137,9 @@ class MeshCoreThreadActivity final : public Activity {
   void _loopDetectNewMessages();
   bool _loopConfirmPopup();
   void _loopInput();
+  bool _loopInputBack();
+  bool _loopInputConfirm();
+  void _loopInputNav();
 
   void scrollDownPage();
   void scrollUpPage();

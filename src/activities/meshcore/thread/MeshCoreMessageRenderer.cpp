@@ -2,15 +2,13 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
-#include <Logging.h>
 
 #include <string>
 #include <vector>
 
-#include "FontCacheManager.h"
-#include "utils/MeshCoreDisplayUtils.h"
-#include "utils/MeshCoreMessageHeight.h"
-#include "utils/MeshCoreTimeUtils.h"
+#include "../utils/MeshCoreDisplayUtils.h"
+#include "../utils/MeshCoreMessageHeight.h"
+#include "../utils/MeshCoreTimeUtils.h"
 
 ThreadRenderCtx::ThreadRenderCtx(const GfxRenderer& renderer, const Rect& rect, int bodyFontId)
     : metrics(UITheme::getInstance().getMetrics()),
