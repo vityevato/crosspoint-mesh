@@ -130,6 +130,13 @@ class MeshCoreThreadActivity final : public Activity {
    */
   bool loadMessages(uint32_t startId, bool up);
   void drawVisibleMessages(const GfxRenderer& renderer, Rect rect, int bodyFontId, bool scanOnly = false);
+
+  // ── loop() decomposition ──
+  void _loopBleStateMachine();
+  void _loopDetectNewMessages();
+  bool _loopConfirmPopup();
+  void _loopInput();
+
   void scrollDownPage();
   void scrollUpPage();
   void scrollDownByMessage();
@@ -150,6 +157,11 @@ class MeshCoreThreadActivity final : public Activity {
   int getListCountForCurrentTab() const;
 
   void renderMenu(const Rect& contentRect);
+
+  // ── render() decomposition ──
+  bool _renderFontRebuildPopup();
+  bool _renderConfirmPopup();
+  void _renderNormal();
 
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);

@@ -19,10 +19,8 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "utils/MeshCoreDisplayUtils.h"
 #include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreMessageHeight.h"
-#include "utils/MeshCoreTimeUtils.h"
 
 /// Scroll state machine extracted from MeshCoreThreadActivity.
 /// Holds references to all mutable scroll-related fields so the full
@@ -401,14 +399,7 @@ void MeshCoreThreadActivity::loop() {
     requestUpdate();
   }
 
-  // ── Async BLE unlist operation state machine ──
-  if (_pendingOp != PendingOp::IDLE && !client.isCommandPending()) {
-    completeUnlistOp(client.getLastCommandResult());
-  }
-  if (_pendingOp != PendingOp::IDLE && (millis() - _pendingStartMs) > 10000) {
-    LOG_ERR("MESH", "Unlist BLE timeout (no response after 10 s)");
-    completeUnlistOp(false);
-  }
+  _loopBleStateMachine();
 
 #ifdef SIMULATOR
   if (handleMockKey("Thread", client.getBleClient())) {
@@ -418,7 +409,24 @@ void MeshCoreThreadActivity::loop() {
   pollMock(client.getBleClient(), millis());
 #endif
 
-  // ── Detect new messages (store updated by hub callback) ──
+  _loopDetectNewMessages();
+
+  if (_loopConfirmPopup()) return;  // popup active — consumed all input
+
+  _loopInput();
+}
+
+void MeshCoreThreadActivity::_loopBleStateMachine() {
+  if (_pendingOp != PendingOp::IDLE && !client.isCommandPending()) {
+    completeUnlistOp(client.getLastCommandResult());
+  }
+  if (_pendingOp != PendingOp::IDLE && (millis() - _pendingStartMs) > 10000) {
+    LOG_ERR("MESH", "Unlist BLE timeout (no response after 10 s)");
+    completeUnlistOp(false);
+  }
+}
+
+void MeshCoreThreadActivity::_loopDetectNewMessages() {
   ConvMeta currentMeta;
   bool hasMeta =
       isChannel ? store.getChannelMeta(channelIdx, currentMeta) : store.getDirectMeta(contactPubkey, currentMeta);
@@ -446,55 +454,63 @@ void MeshCoreThreadActivity::loop() {
     loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
     requestUpdate();
   }
+}
 
-  // ── Confirmation popup input handling ──
-  if (_confirmAction != ConfirmAction::NONE) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      _confirmAction = ConfirmAction::NONE;
-      requestUpdate();
-    } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      auto action = _confirmAction;
-      _confirmAction = ConfirmAction::NONE;
-      switch (action) {
-        case ConfirmAction::CLEAR_CONVERSATION:
-          clearConversation();
-          break;
-        case ConfirmAction::REMOVE_CONTACT: {
-          if (!client.removeContact(contactPubkey)) {
-            LOG_ERR("MESH", "Failed to queue contact delete");
-            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-            requestUpdate();
-            return;
-          }
-          LOG_DBG("MESH", "Queued contact unlist — waiting for BLE response");
-          _pendingOp = PendingOp::DELETING_CONTACT;
-          _pendingStartMs = millis();
-          _toast.show(tr(STR_MESHCORE_REMOVING), 0);
-          selectedIndex = 0;
-          break;
-        }
-        case ConfirmAction::DELETE_CHANNEL: {
-          if (!client.deleteChannel(channelIdx)) {
-            LOG_ERR("MESH", "Failed to queue channel delete");
-            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-            requestUpdate();
-            return;
-          }
-          LOG_DBG("MESH", "Queued channel %d delete — waiting for BLE response", channelIdx);
-          _pendingOp = PendingOp::DELETING_CHANNEL;
-          _pendingStartMs = millis();
-          _toast.show(tr(STR_MESHCORE_REMOVING), 0);
-          selectedIndex = 0;
-          break;
-        }
-        default:
-          break;
-      }
-      requestUpdate();
-    }
-    return;  // Consume all other input while popup is active
+bool MeshCoreThreadActivity::_loopConfirmPopup() {
+  if (_confirmAction == ConfirmAction::NONE) return false;
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    _confirmAction = ConfirmAction::NONE;
+    requestUpdate();
+    return true;
   }
 
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    auto action = _confirmAction;
+    _confirmAction = ConfirmAction::NONE;
+    switch (action) {
+      case ConfirmAction::CLEAR_CONVERSATION:
+        clearConversation();
+        break;
+      case ConfirmAction::REMOVE_CONTACT: {
+        if (!client.removeContact(contactPubkey)) {
+          LOG_ERR("MESH", "Failed to queue contact delete");
+          _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+          requestUpdate();
+          return true;
+        }
+        LOG_DBG("MESH", "Queued contact unlist — waiting for BLE response");
+        _pendingOp = PendingOp::DELETING_CONTACT;
+        _pendingStartMs = millis();
+        _toast.show(tr(STR_MESHCORE_REMOVING), 0);
+        selectedIndex = 0;
+        break;
+      }
+      case ConfirmAction::DELETE_CHANNEL: {
+        if (!client.deleteChannel(channelIdx)) {
+          LOG_ERR("MESH", "Failed to queue channel delete");
+          _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+          requestUpdate();
+          return true;
+        }
+        LOG_DBG("MESH", "Queued channel %d delete — waiting for BLE response", channelIdx);
+        _pendingOp = PendingOp::DELETING_CHANNEL;
+        _pendingStartMs = millis();
+        _toast.show(tr(STR_MESHCORE_REMOVING), 0);
+        selectedIndex = 0;
+        break;
+      }
+      default:
+        break;
+    }
+    requestUpdate();
+    return true;
+  }
+
+  return true;  // Consume all other input while popup is active
+}
+
+void MeshCoreThreadActivity::_loopInput() {
   // --- Back ---
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     if (selectedIndex > 0) {
@@ -845,54 +861,62 @@ void MeshCoreThreadActivity::sendMessage() {
 
 void MeshCoreThreadActivity::render(RenderLock&&) {
   renderer.clearScreen();
+  if (_renderFontRebuildPopup()) return;
+  if (_renderConfirmPopup()) return;
+  _renderNormal();
+}
 
+bool MeshCoreThreadActivity::_renderFontRebuildPopup() {
+  if (!_needsRebuild) return false;
+  _needsRebuild = false;
+  renderer.clearScreen();
+  GUI.drawPopup(renderer, tr(STR_MESHCORE_RECALC_LAYOUT));
+  renderer.displayBuffer();
+  _rebuildMessageHeights();
+  loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
+  requestUpdate();
+  return true;
+}
+
+bool MeshCoreThreadActivity::_renderConfirmPopup() {
+  if (_confirmAction == ConfirmAction::NONE) return false;
+
+  const char* confirmMsg = "";
+  const char* confirmLabel = "";
+  switch (_confirmAction) {
+    case ConfirmAction::CLEAR_CONVERSATION:
+      confirmMsg = tr(STR_MESHCORE_CLEAR_CONFIRM);
+      confirmLabel = tr(STR_MESHCORE_CLEAR_CONVERSATION);
+      break;
+    case ConfirmAction::REMOVE_CONTACT:
+      confirmMsg = tr(STR_MESHCORE_REMOVE_CONTACT_CONFIRM);
+      confirmLabel = tr(STR_MESHCORE_REMOVE_CONTACT);
+      break;
+    case ConfirmAction::DELETE_CHANNEL:
+      confirmMsg = tr(STR_MESHCORE_DELETE_CHANNEL_CONFIRM);
+      confirmLabel = tr(STR_MESHCORE_DELETE_CHANNEL);
+      break;
+    default:
+      break;
+  }
+
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  char headerSubtitle[64];
+  _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
+  GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
+  GUI.drawPopup(renderer, confirmMsg);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  renderer.displayBuffer();
+  return true;
+}
+
+void MeshCoreThreadActivity::_renderNormal() {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  // --- Font rebuild popup (like reader's "Indexing…") ---
-  if (_needsRebuild) {
-    _needsRebuild = false;
-    renderer.clearScreen();
-    GUI.drawPopup(renderer, tr(STR_MESHCORE_RECALC_LAYOUT));
-    renderer.displayBuffer();
-    _rebuildMessageHeights();
-    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
-    requestUpdate();
-    return;
-  }
-
-  // --- Confirmation popup (shown before destructive menu actions) ---
-  if (_confirmAction != ConfirmAction::NONE) {
-    const char* confirmMsg = "";
-    const char* confirmLabel = "";
-    switch (_confirmAction) {
-      case ConfirmAction::CLEAR_CONVERSATION:
-        confirmMsg = tr(STR_MESHCORE_CLEAR_CONFIRM);
-        confirmLabel = tr(STR_MESHCORE_CLEAR_CONVERSATION);
-        break;
-      case ConfirmAction::REMOVE_CONTACT:
-        confirmMsg = tr(STR_MESHCORE_REMOVE_CONTACT_CONFIRM);
-        confirmLabel = tr(STR_MESHCORE_REMOVE_CONTACT);
-        break;
-      case ConfirmAction::DELETE_CHANNEL:
-        confirmMsg = tr(STR_MESHCORE_DELETE_CHANNEL_CONFIRM);
-        confirmLabel = tr(STR_MESHCORE_DELETE_CHANNEL);
-        break;
-      default:
-        break;
-    }
-    char headerSubtitle[64];
-    _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
-    GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
-    GUI.drawPopup(renderer, confirmMsg);
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    renderer.displayBuffer();
-    return;
-  }
-
-  // --- Normal tabbed layout ---
   char headerSubtitle[64];
   _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
 
