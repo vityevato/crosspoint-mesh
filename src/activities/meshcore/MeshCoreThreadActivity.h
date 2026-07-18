@@ -18,6 +18,8 @@ struct Rect;
 
 class MeshCoreHubActivity;
 
+struct ThreadScroller;
+
 /**
  * MeshCoreThreadActivity shows a pixel-paginated message thread for either a
  * LoRa channel (group chat) or a direct message conversation with a
@@ -102,6 +104,9 @@ class MeshCoreThreadActivity final : public Activity {
   PendingOp _pendingOp = PendingOp::IDLE;
   uint32_t _pendingStartMs = 0;
   void completeUnlistOp(bool success);
+
+  // Extracted scroll state machine — created in onEnter, deleted in onExit.
+  ThreadScroller* _scroller = nullptr;
 
   // Confirmation popup state (shown before destructive menu actions)
   enum class ConfirmAction : uint8_t { NONE, CLEAR_CONVERSATION, REMOVE_CONTACT, DELETE_CHANNEL };
