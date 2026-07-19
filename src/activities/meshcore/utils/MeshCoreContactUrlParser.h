@@ -149,16 +149,32 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
 
   // Determine MeshNodeType from flags
   MeshNodeType nodeType = MeshNodeType::UNKNOWN;
-  if (flags & 0x01) nodeType = MeshNodeType::COMPANION;
-  else if (flags & 0x02) nodeType = MeshNodeType::REPEATER;
-  else if (flags & 0x04) nodeType = MeshNodeType::ROOM_SERVER;
-  else if (flags & 0x08) nodeType = MeshNodeType::SENSOR;
+  if (flags & 0x01)
+    nodeType = MeshNodeType::COMPANION;
+  else if (flags & 0x02)
+    nodeType = MeshNodeType::REPEATER;
+  else if (flags & 0x04)
+    nodeType = MeshNodeType::ROOM_SERVER;
+  else if (flags & 0x08)
+    nodeType = MeshNodeType::SENSOR;
 
   // Skip optional fields
-  if (flags & 0x10) { off += 4; if (off > decodedLen) return false; }   // lat
-  if (flags & 0x10) { off += 4; if (off > decodedLen) return false; }   // lon
-  if (flags & 0x20) { off += 2; if (off > decodedLen) return false; }   // feature 1
-  if (flags & 0x40) { off += 2; if (off > decodedLen) return false; }   // feature 2
+  if (flags & 0x10) {
+    off += 4;
+    if (off > decodedLen) return false;
+  }  // lat
+  if (flags & 0x10) {
+    off += 4;
+    if (off > decodedLen) return false;
+  }  // lon
+  if (flags & 0x20) {
+    off += 2;
+    if (off > decodedLen) return false;
+  }  // feature 1
+  if (flags & 0x40) {
+    off += 2;
+    if (off > decodedLen) return false;
+  }  // feature 2
 
   // Remaining bytes are the node name (even without HAS_NAME flag,
   // some firmwares embed a name without setting the flag).

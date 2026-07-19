@@ -1,7 +1,6 @@
 #include "ThreadScroller.h"
 
 #include <Logging.h>
-
 #include <MeshCore/MeshCoreMessageStore.h>
 #include <MeshCore/MeshCoreTypes.h>
 

@@ -1,15 +1,14 @@
 #include "ThreadMessenger.h"
 
 #include <Logging.h>
-
 #include <MeshCore/MeshCoreClient.h>
 #include <MeshCore/MeshCoreMessageStore.h>
 #include <MeshCore/MeshCoreTypes.h>
 
+#include "../utils/MeshCoreMessageHeight.h"
 #include "MeshCoreThreadActivity.h"
 #include "activities/Activity.h"
 #include "components/UITheme.h"
-#include "../utils/MeshCoreMessageHeight.h"
 
 void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const ActivityResult& result) {
   if (result.isCancelled) {
@@ -35,8 +34,7 @@ void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const Activity
   // Compute rendered height for batch-load scrolling
   const auto& tmetrics = UITheme::getInstance().getMetrics();
   int tcontentWidth = act.renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
-  msg.heightPx =
-      measureMeshCoreMessageHeight(act.renderer, bodyFontId, tcontentWidth, isCh, msg, tmetrics);
+  msg.heightPx = measureMeshCoreMessageHeight(act.renderer, bodyFontId, tcontentWidth, isCh, msg, tmetrics);
 
   bool sent = false;
   if (isCh) {

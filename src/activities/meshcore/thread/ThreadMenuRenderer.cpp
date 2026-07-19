@@ -1,7 +1,6 @@
 #include "ThreadMenuRenderer.h"
 
 #include <I18n.h>
-
 #include <MeshCore/MeshCoreClient.h>
 #include <MeshCore/MeshCoreMessageStore.h>
 #include <MeshCore/MeshCoreTypes.h>
@@ -51,8 +50,8 @@ bool ThreadMenuRenderer::renderConfirmPopup(MeshCoreThreadActivity& act) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   char headerSubtitle[64];
   act._toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
-  GUI.drawHeader(act.renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight),
-                 act.threadName, headerSubtitle);
+  GUI.drawHeader(act.renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), act.threadName,
+                 headerSubtitle);
   GUI.drawPopup(act.renderer, confirmMsg);
   const auto labels = act.mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
   GUI.drawButtonHints(act.renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -94,10 +93,7 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
         if (index < 0 || index >= kActionCount) return {};
         return I18n::getInstance().get(titles[index]);
       },
-      nullptr,
-      nullptr,
-      nullptr,
-      false,
+      nullptr, nullptr, nullptr, false,
       [&](int index) -> bool {
         if (act.isChannel) {
           if (!connected) return (index == 2);
@@ -128,17 +124,11 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
 
   int settingSel = (listSel >= kActionCount) ? (listSel - kActionCount) : -1;
   int settingsTop = sepY + 1 + sepGap;
-  Rect settingsRect(contentRect.x, settingsTop, contentRect.width,
-                    contentRect.y + contentRect.height - settingsTop);
+  Rect settingsRect(contentRect.x, settingsTop, contentRect.width, contentRect.y + contentRect.height - settingsTop);
 
   GUI.drawList(
       act.renderer, settingsRect, 1, settingSel,
-      [](int) -> std::string { return I18n::getInstance().get(StrId::STR_MESHCORE_USE_READER_FONT); },
-      nullptr,
-      nullptr,
-      [&](int) -> std::string {
-        return act._menuSettings->useReaderFont ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
-      },
-      true,
+      [](int) -> std::string { return I18n::getInstance().get(StrId::STR_MESHCORE_USE_READER_FONT); }, nullptr, nullptr,
+      [&](int) -> std::string { return act._menuSettings->useReaderFont ? tr(STR_STATE_ON) : tr(STR_STATE_OFF); }, true,
       nullptr);
 }
