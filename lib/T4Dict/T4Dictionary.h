@@ -1,13 +1,14 @@
 #pragma once
 
+#include <HalStorage.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <HalStorage.h>
 #include "T4TrieFormat.h"
 
 class T4Dictionary {
-public:
+ public:
   T4Dictionary();
   ~T4Dictionary();
 
@@ -53,7 +54,7 @@ public:
   /// Returns empty string if not loaded.
   const char* getLangCode() const;
 
-private:
+ private:
   static constexpr size_t DEFAULT_CANDIDATE_BUF_SIZE = 4096;
 
   HalFile _file;

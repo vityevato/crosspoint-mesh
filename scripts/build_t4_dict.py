@@ -226,7 +226,7 @@ def serialize(
         for i, node in enumerate(nodes):
             child_offs = child_offsets_map[i]
             str_off = str_offsets[id(node)]
-            if str_off > 0:
+            if node.words:
                 str_off += string_pool_start  # make absolute
             node_bytes = struct.pack(
                 "<4s4s4s4sHI",

@@ -44,11 +44,9 @@ inline bool validateTrieHeader(const uint8_t* data, size_t len) {
 /// Read a T4TrieNode from the node pool at the given index.
 /// nodePool points to the start of the Node Pool section.
 /// Returns false if index is out of range.
-inline bool readTrieNode(const uint8_t* nodePool, uint32_t nodeCount,
-                         uint32_t nodeIndex, T4TrieNode& out) {
+inline bool readTrieNode(const uint8_t* nodePool, uint32_t nodeCount, uint32_t nodeIndex, T4TrieNode& out) {
   if (nodeIndex >= nodeCount) return false;
-  memcpy(&out, nodePool + static_cast<size_t>(nodeIndex) * T4_TRIE_NODE_SIZE,
-         sizeof(T4TrieNode));
+  memcpy(&out, nodePool + static_cast<size_t>(nodeIndex) * T4_TRIE_NODE_SIZE, sizeof(T4TrieNode));
   return true;
 }
 
@@ -56,10 +54,8 @@ inline bool readTrieNode(const uint8_t* nodePool, uint32_t nodeCount,
 /// stringPool points to the start of the String Pool section (absolute
 /// str_offset is relative to file start; caller must subtract pool start).
 /// Writes up to bufSize-1 bytes to buf. Returns number of words extracted.
-inline size_t extractCandidates(const uint8_t* stringPool, size_t poolLen,
-                                uint32_t poolRelativeOffset,
-                                uint16_t wordCount,
-                                char* buf, size_t bufSize) {
+inline size_t extractCandidates(const uint8_t* stringPool, size_t poolLen, uint32_t poolRelativeOffset,
+                                uint16_t wordCount, char* buf, size_t bufSize) {
   if (poolRelativeOffset >= poolLen || wordCount == 0 || bufSize == 0) {
     return 0;
   }

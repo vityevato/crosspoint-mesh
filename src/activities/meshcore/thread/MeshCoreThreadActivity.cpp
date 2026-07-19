@@ -21,7 +21,7 @@
 #include "ThreadMenuRenderer.h"
 #include "ThreadMessenger.h"
 #include "ThreadScroller.h"
-#include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/T4EntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -610,8 +610,8 @@ void MeshCoreThreadActivity::completeUnlistOp(bool success) {
 void MeshCoreThreadActivity::sendMessage() {
   ThreadMessenger messenger{client, store, isChannel, channelIdx, contactPubkey, threadName, _bodyFontId};
   startActivityForResult(
-      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_SEND), "",
-                                              MESHCORE_SEND_CHAR_LIMIT, InputType::Text),
+      std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_SEND), "", MESHCORE_SEND_CHAR_LIMIT,
+                                        InputType::Text),
       [this, messenger](const ActivityResult& result) mutable { messenger.onSendComplete(*this, result); });
 }
 

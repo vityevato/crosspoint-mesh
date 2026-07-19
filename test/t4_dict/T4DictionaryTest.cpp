@@ -1,9 +1,10 @@
 #include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
-#include <vector>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "T4Dict/T4TrieFormat.h"
 
@@ -16,9 +17,7 @@ using namespace t4;
 namespace {
 
 // Helper: build path relative to TEST_DATA_DIR
-std::string testPath(const char* filename) {
-  return std::string(TEST_DATA_DIR) + "/" + filename;
-}
+std::string testPath(const char* filename) { return std::string(TEST_DATA_DIR) + "/" + filename; }
 
 }  // namespace
 
@@ -82,25 +81,19 @@ TEST(T4TrieFormat, ValidateRealEnTrie) {
   T4TrieNode node = root;
   for (uint32_t btn : seq) {
     uint32_t off = node.child_offset[btn];
-    ASSERT_NE(off, T4_TRIE_NULL_OFFSET)
-        << "No child for button " << btn;
-    ASSERT_TRUE(readTrieNode(nodePool, hdr.node_count,
-        (off - T4_TRIE_HEADER_SIZE) / T4_TRIE_NODE_SIZE, node));
+    ASSERT_NE(off, T4_TRIE_NULL_OFFSET) << "No child for button " << btn;
+    ASSERT_TRUE(readTrieNode(nodePool, hdr.node_count, (off - T4_TRIE_HEADER_SIZE) / T4_TRIE_NODE_SIZE, node));
   }
 
   EXPECT_GT(node.word_count, 0u) << "Expected words at 'hello' node";
 
   // Extract candidates
-  const uint8_t* stringPool = data.data() + T4_TRIE_HEADER_SIZE
-      + hdr.node_count * T4_TRIE_NODE_SIZE;
+  const uint8_t* stringPool = data.data() + T4_TRIE_HEADER_SIZE + hdr.node_count * T4_TRIE_NODE_SIZE;
   size_t poolLen = data.size() - (stringPool - data.data());
-  uint32_t poolRelative = node.str_offset
-      - T4_TRIE_HEADER_SIZE
-      - hdr.node_count * T4_TRIE_NODE_SIZE;
+  uint32_t poolRelative = node.str_offset - T4_TRIE_HEADER_SIZE - hdr.node_count * T4_TRIE_NODE_SIZE;
 
   char buf[4096];
-  size_t count = extractCandidates(stringPool, poolLen, poolRelative,
-                                        node.word_count, buf, sizeof(buf));
+  size_t count = extractCandidates(stringPool, poolLen, poolRelative, node.word_count, buf, sizeof(buf));
   EXPECT_GT(count, 0u);
 
   // "hello" should be the first candidate (highest frequency)
@@ -125,9 +118,11 @@ TEST(T4TrieFormat, DeadEndSequenceReturnsNoChild) {
   bool deadEnd = false;
   for (uint32_t btn : seq) {
     uint32_t off = node.child_offset[btn];
-    if (off == T4_TRIE_NULL_OFFSET) { deadEnd = true; break; }
-    ASSERT_TRUE(readTrieNode(nodePool, hdr.node_count,
-        (off - T4_TRIE_HEADER_SIZE) / T4_TRIE_NODE_SIZE, node));
+    if (off == T4_TRIE_NULL_OFFSET) {
+      deadEnd = true;
+      break;
+    }
+    ASSERT_TRUE(readTrieNode(nodePool, hdr.node_count, (off - T4_TRIE_HEADER_SIZE) / T4_TRIE_NODE_SIZE, node));
   }
   EXPECT_TRUE(deadEnd) << "xqxqz should not be a valid sequence";
 }

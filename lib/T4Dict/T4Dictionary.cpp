@@ -3,24 +3,28 @@
 #include <Logging.h>
 #include <Memory.h>
 
-T4Dictionary::T4Dictionary() = default;
+#include <cstring>
+
+T4Dictionary::T4Dictionary() { LOG_DBG("T4", "Constructor"); }
 
 T4Dictionary::~T4Dictionary() {
+  LOG_DBG("T4", "Destructor");
   close();
 }
 
 T4Dictionary::T4Dictionary(T4Dictionary&& other) noexcept
-    : _file(std::move(other._file))
-    , _currentNode(other._currentNode)
-    , _candidateBuf(std::move(other._candidateBuf))
-    , _candidateBufSize(other._candidateBufSize)
-    , _candidateCount(other._candidateCount)
-    , _loaded(other._loaded) {
+    : _file(std::move(other._file)),
+      _currentNode(other._currentNode),
+      _candidateBuf(std::move(other._candidateBuf)),
+      _candidateBufSize(other._candidateBufSize),
+      _candidateCount(other._candidateCount),
+      _loaded(other._loaded) {
   memcpy(_langCode, other._langCode, sizeof(_langCode));
   other._loaded = false;
   other._candidateCount = 0;
   other._candidateBufSize = 0;
   other._langCode[0] = '\0';
+  LOG_DBG("T4", "Move constructor");
 }
 
 T4Dictionary& T4Dictionary::operator=(T4Dictionary&& other) noexcept {
@@ -37,11 +41,13 @@ T4Dictionary& T4Dictionary::operator=(T4Dictionary&& other) noexcept {
     other._candidateCount = 0;
     other._candidateBufSize = 0;
     other._langCode[0] = '\0';
+    LOG_DBG("T4", "Move assignment");
   }
   return *this;
 }
 
 bool T4Dictionary::loadFromSD(const char* path) {
+  LOG_DBG("T4", "loadFromSD: %s", path);
   close();  // ensure clean state
 
   if (!Storage.openFileForRead("T4", path, _file)) {
@@ -51,8 +57,7 @@ bool T4Dictionary::loadFromSD(const char* path) {
 
   // Read header
   uint8_t headerBuf[t4::T4_TRIE_HEADER_SIZE];
-  if (_file.read(headerBuf, sizeof(headerBuf)) !=
-      static_cast<int>(sizeof(headerBuf))) {
+  if (_file.read(headerBuf, sizeof(headerBuf)) != static_cast<int>(sizeof(headerBuf))) {
     LOG_ERR("T4", "Failed to read header from %s", path);
     close();
     return false;
@@ -61,8 +66,7 @@ bool T4Dictionary::loadFromSD(const char* path) {
   if (!t4::validateTrieHeader(headerBuf, sizeof(headerBuf))) {
     t4::T4TrieHeader hdr;
     memcpy(&hdr, headerBuf, sizeof(hdr));
-    LOG_ERR("T4", "Invalid dictionary: magic=0x%08X version=%u",
-            hdr.magic, hdr.version);
+    LOG_ERR("T4", "Invalid dictionary: magic=0x%08X version=%u", hdr.magic, hdr.version);
     close();
     return false;
   }
@@ -81,13 +85,16 @@ bool T4Dictionary::loadFromSD(const char* path) {
   }
 
   _loaded = true;
-  LOG_INF("T4", "Loaded dictionary: %s (%s, %u words, %u nodes)",
-          path, _langCode, hdr.word_count, hdr.node_count);
+  LOG_INF("T4", "Loaded dictionary: %s (%s, %u words, %u nodes)", path, _langCode, hdr.word_count, hdr.node_count);
   return true;
 }
 
 bool T4Dictionary::pressButton(uint8_t btn) {
-  if (!_loaded || btn < 1 || btn > 4) return false;
+  LOG_DBG("T4", "pressButton: btn=%u (loaded=%d)", btn, _loaded);
+  if (!_loaded || btn < 1 || btn > 4) {
+    LOG_DBG("T4", "pressButton: rejected (loaded=%d btn=%u)", _loaded, btn);
+    return false;
+  }
 
   // Clear previous candidates — new node means new candidates
   freeCandidates();
@@ -95,17 +102,23 @@ bool T4Dictionary::pressButton(uint8_t btn) {
   uint8_t idx = btn - 1;
   uint32_t childOff = _currentNode.child_offset[idx];
   if (childOff == t4::T4_TRIE_NULL_OFFSET) {
+    LOG_DBG("T4", "pressButton: btn=%u dead end (no child)", btn);
     return false;
   }
 
-  return readNodeAtOffset(childOff, _currentNode);
+  bool ok = readNodeAtOffset(childOff, _currentNode);
+  LOG_DBG("T4", "pressButton: btn=%u -> node@0x%08X word_count=%u (%s)", btn, childOff, _currentNode.word_count,
+          ok ? "ok" : "fail");
+  return ok;
 }
 
 uint16_t T4Dictionary::getCandidateCount() const {
+  LOG_DBG("T4", "getCandidateCount: %u", _candidateCount);
   return _candidateCount;
 }
 
 bool T4Dictionary::loadCandidates() {
+  LOG_DBG("T4", "loadCandidates: word_count=%u str_offset=0x%08X", _currentNode.word_count, _currentNode.str_offset);
   if (!_loaded || _currentNode.word_count == 0) {
     _candidateCount = 0;
     return _currentNode.word_count == 0;  // success if no words (intermediate node)
@@ -144,6 +157,32 @@ bool T4Dictionary::loadCandidates() {
   }
 
   _candidateCount = wordsRead;
+  LOG_DBG("T4", "loadCandidates: read %u words, %u bytes", wordsRead, bytesRead);
+
+#if LOG_LEVEL >= 2
+  // Log candidate words for debugging (compiled out in release)
+  if (wordsRead > 0 && _candidateBuf) {
+    char summary[256];
+    size_t pos = 0;
+    const char* p = _candidateBuf.get();
+    uint16_t shown = 0;
+    while (shown < wordsRead && pos < sizeof(summary) - 4) {
+      size_t len = strlen(p);
+      if (pos > 0) {
+        summary[pos++] = ',';
+        summary[pos++] = ' ';
+      }
+      size_t cp = (pos + len < sizeof(summary) - 1) ? len : (sizeof(summary) - pos - 1);
+      memcpy(summary + pos, p, cp);
+      pos += cp;
+      p += len + 1;
+      ++shown;
+    }
+    summary[pos] = '\0';
+    LOG_DBG("T4", "candidates[%u]: %s", wordsRead, summary);
+  }
+#endif
+
   return true;
 }
 
@@ -160,12 +199,14 @@ const char* T4Dictionary::getCandidate(uint16_t index) const {
 }
 
 void T4Dictionary::reset() {
+  LOG_DBG("T4", "reset (loaded=%d)", _loaded);
   if (!_loaded) return;
   freeCandidates();
   readNodeAtOffset(t4::T4_TRIE_HEADER_SIZE, _currentNode);
 }
 
 void T4Dictionary::close() {
+  LOG_DBG("T4", "close (loaded=%d)", _loaded);
   if (_file.isOpen()) {
     _file.close();
   }
@@ -174,18 +215,14 @@ void T4Dictionary::close() {
   _langCode[0] = '\0';
 }
 
-bool T4Dictionary::isLoaded() const {
-  return _loaded;
-}
+bool T4Dictionary::isLoaded() const { return _loaded; }
 
-const char* T4Dictionary::getLangCode() const {
-  return _langCode;
-}
+const char* T4Dictionary::getLangCode() const { return _langCode; }
 
 // ── Private helpers ─────────────────────────────────────────────────────
 
-bool T4Dictionary::readNodeAtOffset(uint32_t offset,
-                                     t4::T4TrieNode& out) {
+bool T4Dictionary::readNodeAtOffset(uint32_t offset, t4::T4TrieNode& out) {
+  LOG_DBG("T4", "readNodeAtOffset: 0x%08X", offset);
   if (!_file.seekSet(offset)) {
     LOG_ERR("T4", "Seek to offset %u failed", offset);
     return false;
@@ -200,6 +237,7 @@ bool T4Dictionary::readNodeAtOffset(uint32_t offset,
 }
 
 void T4Dictionary::freeCandidates() {
+  LOG_DBG("T4", "freeCandidates (was %u words, %u bytes)", _candidateCount, _candidateBufSize);
   _candidateBuf.reset();
   _candidateBufSize = 0;
   _candidateCount = 0;

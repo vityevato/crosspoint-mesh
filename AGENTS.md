@@ -77,6 +77,10 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
         implements GATT server with TX/RX characteristics.
     - `lib/Memory/` — `makeUniqueNoThrow` allocation helper
     - `lib/MiniBidi/` — bidirectional text layout (Arabic, Hebrew)
+    - `lib/T4Dict/` — T9‑style predictive text input engine (dictionary
+      lookup, trie layout, input engine). Pre‑built dictionaries are in
+      `t4dicts/` (`en.trie`, `ru.trie`); source word lists can be obtained
+      from <https://github.com/hermitdave/FrequencyWords>.
 - **Storage**: SD card (SdFat via `HalStorage`). No database.
   Settings persist as `/settings.json`. EPUB caches persist as
   binary files under `.crosspoint/` on the SD card.
@@ -453,6 +457,12 @@ Configuration in `.clang-format` at repo root. Run
 
 **Static analysis**: `pio check` with cppcheck, enforced in CI.
 Failures on low/medium/high defects block merge.
+
+**Magic numbers**: Never hardcode numeric literals in logic (timeout
+durations, thresholds, sizes). Always use a named `static constexpr`
+constant in class scope. The only exceptions are 0, 1, and
+renderer-coordinate math where the semantics are self-evident (e.g.,
+`x + 2` as padding, `fontSize - 4` as insets).
 
 **Orientation-aware rendering**:
 - Never hardcode `800` or `480`. Use `renderer.getScreenWidth()` and
