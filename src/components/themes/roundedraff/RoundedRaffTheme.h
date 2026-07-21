@@ -98,7 +98,8 @@ class RoundedRaffTheme : public BaseTheme {
                 const std::function<bool(int index)>& rowDimmed = nullptr) const override;
   void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
                      uint16_t scrollOffsetPx) const override;
-  void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                       const char* btn4) const override;
+  void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
+                       bool inactive = false) const override;
+  int getButtonHintWidth() const override { return 106; }
   bool homeMenuShowsContinueReading() const { return true; }
 };

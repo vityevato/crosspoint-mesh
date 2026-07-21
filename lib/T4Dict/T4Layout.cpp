@@ -12,33 +12,33 @@ namespace {
 // btn3: mno + pqrs = mnopqrs
 // btn4: tuv + wxyz = tuvwxyz
 static constexpr const char* kEnGroups[4] = {
-    "abcdef",
-    "ghijkl",
+    "abcdef'",
+    "ghijkl-",
     "mnopqrs",
     "tuvwxyz",
 };
 
-static constexpr uint8_t kEnGroupLens[4] = {6, 6, 7, 7};
+static constexpr uint8_t kEnGroupLens[4] = {7, 7, 7, 7};
 
 // ── Russian letter groups ───────────────────────────────────────────────
 static constexpr const char* kRuGroups[4] = {
-    "абвгдеёж",
+    "абвгдеёж-",
     "зийклмно",
     "прстуфхц",
     "чшщъыьэюя",
 };
 
-static constexpr uint8_t kRuGroupLens[4] = {8, 8, 8, 9};
+static constexpr uint8_t kRuGroupLens[4] = {9, 8, 8, 9};
 
 // ── Digit groups ────────────────────────────────────────────────────────
 static constexpr const char* kDigitGroups[4] = {
-    "123",
-    "456",
-    "789",
-    "0.,!?:;",
+    "123'@_()\"[]",
+    "456-#/*+&$%",
+    "789=<>\\^`{}",
+    "0.,!?:;|~",
 };
 
-static constexpr uint8_t kDigitGroupLens[4] = {3, 3, 3, 7};
+static constexpr uint8_t kDigitGroupLens[4] = {11, 10, 10, 9};
 
 // ── Language metadata ───────────────────────────────────────────────────
 static constexpr const char* kLangCodes[3] = {"en", "ru", "12"};

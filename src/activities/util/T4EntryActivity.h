@@ -7,8 +7,8 @@
 
 #include "KeyboardEntryActivity.h"
 #include "T4Dictionary.h"
-#include "T4Layout.h"
 #include "T4InputEngine.h"
+#include "T4Layout.h"
 #include "activities/Activity.h"
 
 class MappedInputManager;
@@ -43,17 +43,17 @@ class T4EntryActivity : public Activity {
   bool togglePredictMultiTap();
 
   std::string _title;
-  std::string _confirmedText;
+  std::string _initialText;
   size_t _maxLength;
   InputType _inputType;
 
   t4::T4InputEngine<> _inputEngine;
   t4::T4Language _lang;
-  t4::T4Mode _mode;          // Tracks _inputEngine.getMode() for rendering
-  t4::T4Mode _prevMode;      // Source mode stored on entering COMMAND
-  int _punctIndex;           // 0 = space (just-confirmed), 1-7 = punct
-  bool _wordJustConfirmed;   // true after confirmWord, false after next input
-  bool _autoCap;             // next confirmWord should capitalize
+  t4::T4Mode _mode;         // Tracks _inputEngine.getMode() for rendering
+  t4::T4Mode _prevMode;     // Source mode stored on entering COMMAND
+  int _punctIndex;          // 0 = space (just-confirmed), 1-7 = punct
+  bool _wordJustConfirmed;  // true after confirmWord, false after next input
+  bool _autoCap;            // next confirmWord should capitalize
 
   // Render buffer (heap-allocated, reused across render calls)
   std::unique_ptr<char[]> _displayBuf;

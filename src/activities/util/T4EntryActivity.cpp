@@ -8,11 +8,11 @@
 #include <cstring>
 
 #include "KeyboardEntryActivity.h"
+#include "Logging.h"
 #include "MappedInputManager.h"
 #include "Memory.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "Logging.h"
 
 // ── Constructor ──────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ T4EntryActivity::T4EntryActivity(GfxRenderer& renderer, MappedInputManager& mapp
                                  std::string initialText, size_t maxLength, InputType inputType)
     : Activity("T4Entry", renderer, mappedInput),
       _title(std::move(title)),
-      _confirmedText(std::move(initialText)),
+      _initialText(std::move(initialText)),
       _maxLength(maxLength),
       _inputType(inputType),
       _lang(t4::T4Language::EN),
@@ -49,7 +49,7 @@ T4EntryActivity::T4EntryActivity(GfxRenderer& renderer, MappedInputManager& mapp
 
 void T4EntryActivity::onEnter() {
   LOG_DBG("T4", "onEnter: lang=%d mode=%d text='%s'", static_cast<int>(_lang), static_cast<int>(_mode),
-          _confirmedText.c_str());
+          _initialText.c_str());
   Activity::onEnter();
 
   // Allocate reusable render buffer on heap (512 bytes — too large for stack)
@@ -67,10 +67,15 @@ void T4EntryActivity::onEnter() {
     LOG_ERR("T4", "Dict load failed: %s", err);
     // Fallback: push KeyboardEntryActivity and exit this activity
     startActivityForResult(
-        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, _title, _confirmedText, _maxLength, _inputType),
+        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, _title, _initialText, _maxLength, _inputType),
         resultHandler);
     finish();
     return;
+  }
+
+  // Priming the engine with initial text (e.g., file rename)
+  if (!_initialText.empty()) {
+    _inputEngine.setConfirmedText(_initialText.c_str());
   }
 
   _punctIndex = 0;
@@ -101,6 +106,7 @@ void T4EntryActivity::loop() {
   if (_backHeld && !_backLongHandled && mappedInput.isPressed(MappedInputManager::Button::Back) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _backLongHandled = true;
+    LOG_DBG("T4", "loop: long-press Back → cancel");
     onCancel();
     return;
   }
@@ -109,6 +115,8 @@ void T4EntryActivity::loop() {
   if (_confirmHeld && !_confirmLongHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _confirmLongHandled = true;
+    LOG_DBG("T4", "loop: long-press Confirm → finish, mode=%d text='%s'", static_cast<int>(_mode),
+            _inputEngine.getConfirmedText());
     onComplete();
     return;
   }
@@ -117,10 +125,32 @@ void T4EntryActivity::loop() {
   if (_leftHeld && !_leftLongHandled && mappedInput.isPressed(MappedInputManager::Button::Left) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _leftLongHandled = true;
-    LOG_DBG("T4", "loop: long-press Left → cycle language");
+    auto prevLang = _lang;
     _lang = t4::cycleLanguage(_lang);
+    LOG_DBG("T4", "loop: long-press Left → cycle language to %s", t4::getLanguageName(_lang));
+
+    // Save text before reset destroys it
+    std::string savedText(_inputEngine.getConfirmedText());
+    if (_mode == t4::T4Mode::PREDICT) {
+      const char* cand = _inputEngine.getCurrentCandidate();
+      if (cand && cand[0] != '\0') savedText += cand;
+    }
+    LOG_DBG("T4", "loop: lang cycle saved text='%s'", savedText.c_str());
+
     _inputEngine.reset();
     _inputEngine.setLanguage(_lang);
+
+    // Restore text
+    if (!savedText.empty()) {
+      _inputEngine.setConfirmedText(savedText.c_str());
+    }
+
+    // DIGIT has no dictionary — force MULTI_TAP; restore PREDICT when leaving
+    if (_lang == t4::T4Language::DIGIT && _mode == t4::T4Mode::PREDICT) {
+      togglePredictMultiTap();
+    } else if (prevLang == t4::T4Language::DIGIT && _mode == t4::T4Mode::MULTI_TAP) {
+      togglePredictMultiTap();
+    }
     _punctIndex = 0;
     _wordJustConfirmed = false;
     _candidateScrollX = 0;
@@ -131,10 +161,11 @@ void T4EntryActivity::loop() {
   if (_rightHeld && !_rightLongHandled && mappedInput.isPressed(MappedInputManager::Button::Right) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _rightLongHandled = true;
-    LOG_DBG("T4", "loop: long-press Right → toggle Command mode");
     if (_mode == t4::T4Mode::COMMAND) {
+      LOG_DBG("T4", "loop: long-press Right → exit Command (prevMode=%d)", static_cast<int>(_prevMode));
       exitCommandMode();
     } else {
+      LOG_DBG("T4", "loop: long-press Right → enter Command (from mode=%d)", static_cast<int>(_mode));
       enterCommandMode();
     }
     requestUpdate();
@@ -144,7 +175,7 @@ void T4EntryActivity::loop() {
   if (_upHeld && !_upLongHandled && mappedInput.isPressed(MappedInputManager::Button::Up) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _upLongHandled = true;
-    LOG_DBG("T4", "loop: long-press Up → toggle Predict/Multi-tap");
+    LOG_DBG("T4", "loop: long-press Up → toggle Predict/Multi-tap (current=%d)", static_cast<int>(_mode));
     togglePredictMultiTap();
     requestUpdate();
   }
@@ -188,6 +219,7 @@ void T4EntryActivity::loop() {
     // Back → cancel
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       if (_backHeld && !_backLongHandled) {
+        LOG_DBG("T4", "loop: CMD Back → cancel");
         onCancel();
         _backHeld = false;
         _backLongHandled = false;
@@ -200,6 +232,7 @@ void T4EntryActivity::loop() {
     // Confirm → finish
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (_confirmHeld && !_confirmLongHandled) {
+        LOG_DBG("T4", "loop: CMD Confirm → finish, text='%s'", _inputEngine.getConfirmedText());
         onComplete();
         _confirmHeld = false;
         _confirmLongHandled = false;
@@ -212,9 +245,30 @@ void T4EntryActivity::loop() {
     // Left → cycle language
     if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
       if (_leftHeld && !_leftLongHandled) {
+        auto prevLang = _lang;
         _lang = t4::cycleLanguage(_lang);
+        LOG_DBG("T4", "loop: CMD Left → cycle language to %s", t4::getLanguageName(_lang));
+
+        // Save text before reset destroys it
+        std::string savedText(_inputEngine.getConfirmedText());
+        if (_mode == t4::T4Mode::PREDICT) {
+          const char* cand = _inputEngine.getCurrentCandidate();
+          if (cand && cand[0] != '\0') savedText += cand;
+        }
+        LOG_DBG("T4", "loop: CMD lang cycle saved text='%s'", savedText.c_str());
+
         _inputEngine.reset();
         _inputEngine.setLanguage(_lang);
+
+        if (!savedText.empty()) {
+          _inputEngine.setConfirmedText(savedText.c_str());
+        }
+        // DIGIT has no dictionary — force MULTI_TAP; restore PREDICT when leaving
+        if (_lang == t4::T4Language::DIGIT && _mode == t4::T4Mode::PREDICT) {
+          togglePredictMultiTap();
+        } else if (prevLang == t4::T4Language::DIGIT && _mode == t4::T4Mode::MULTI_TAP) {
+          togglePredictMultiTap();
+        }
         _punctIndex = 0;
         _wordJustConfirmed = false;
         _candidateScrollX = 0;
@@ -227,6 +281,7 @@ void T4EntryActivity::loop() {
     // Right → exit Command
     if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
       if (_rightHeld && !_rightLongHandled) {
+        LOG_DBG("T4", "loop: CMD Right → exit Command");
         exitCommandMode();
         requestUpdate();
       }
@@ -239,6 +294,7 @@ void T4EntryActivity::loop() {
     // Button::Back — letter group 1
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       if (_backHeld && !_backLongHandled) {
+        LOG_DBG("T4", "loop: press group 1 (mode=%d)", static_cast<int>(_mode));
         _inputEngine.pressButton(1);
         _punctIndex = 0;
         _wordJustConfirmed = false;
@@ -293,30 +349,42 @@ void T4EntryActivity::loop() {
 
   // Button::Up release (side left) — mode-dependent
   if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+    bool wasLongPress = _upLongHandled;
     _upHeld = false;
     _upLongHandled = false;
     _backspaceLastActionMs = 0;
 
-    if (_mode == t4::T4Mode::PREDICT) {
-      if (_inputEngine.getCandidateCount() > 0) {
-        _inputEngine.cycleCandidate();
-        _candidateScrollX = 0;
+    // If long-press was already handled (mode toggle), skip short-press action
+    if (!wasLongPress) {
+      if (_mode == t4::T4Mode::PREDICT) {
+        if (_inputEngine.getCandidateCount() > 0) {
+          LOG_DBG("T4", "loop: Up → cycleCandidate (idx=%u/%u)", _inputEngine.getCandidateIndex() + 1,
+                  _inputEngine.getCandidateCount());
+          _inputEngine.cycleCandidate();
+          _candidateScrollX = 0;
+          requestUpdate();
+        }
+      } else if (_mode == t4::T4Mode::MULTI_TAP || _mode == t4::T4Mode::COMMAND) {
+        LOG_DBG("T4", "loop: Up → backspace (mode=%d, textLen=%u)", static_cast<int>(_mode),
+                _inputEngine.getConfirmedTextLength());
+        _inputEngine.backspace();
+        _punctIndex = 0;
+        _wordJustConfirmed = false;
         requestUpdate();
       }
-    } else if (_mode == t4::T4Mode::MULTI_TAP || _mode == t4::T4Mode::COMMAND) {
-      _inputEngine.backspace();
-      _punctIndex = 0;
-      _wordJustConfirmed = false;
-      requestUpdate();
+    } else {
+      LOG_DBG("T4", "loop: Up release after long-press, skip short-press action");
     }
   }
 
   // Button::Down release (side right) — mode-dependent
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     if (_mode == t4::T4Mode::COMMAND) {
+      LOG_DBG("T4", "loop: Down → undoDelete (CMD mode)");
       _inputEngine.undoDelete();
       requestUpdate();
     } else {
+      LOG_DBG("T4", "loop: Down → punctuation (mode=%d)", static_cast<int>(_mode));
       handlePunctuation();
       requestUpdate();
     }
@@ -329,6 +397,7 @@ void T4EntryActivity::loop() {
       if (held >= BACKSPACE_INITIAL_DELAY_MS) {
         if (_backspaceLastActionMs == 0) {
           // First deletion after initial delay
+          LOG_DBG("T4", "loop: CMD backspace hold start (held=%lums)", held);
           _inputEngine.backspace();
           _backspaceLastActionMs = millis();
           requestUpdate();
@@ -349,25 +418,21 @@ void T4EntryActivity::loop() {
 // ── Completion / Cancellation ────────────────────────────────────────────
 
 void T4EntryActivity::onComplete() {
-  LOG_DBG("T4", "onComplete: mode=%d text='%s'", static_cast<int>(_mode), _confirmedText.c_str());
-  // In MULTI_TAP/COMMAND mode, the predictor owns the confirmed text.
-  if (_mode == t4::T4Mode::COMMAND || _mode == t4::T4Mode::MULTI_TAP) {
-    _confirmedText = _inputEngine.getConfirmedText();
-    setResult(KeyboardResult{_confirmedText});
-    finish();
-    return;
+  const char* text = _inputEngine.getConfirmedText();
+  // In PREDICT: append unconfirmed candidate to engine text
+  if (_mode == t4::T4Mode::PREDICT) {
+    const char* candidate = _inputEngine.getCurrentCandidate();
+    if (candidate && candidate[0] != '\0') {
+      std::string result(text);
+      result += candidate;
+      LOG_DBG("T4", "onComplete: PREDICT with cand='%s', result='%s'", candidate, result.c_str());
+      setResult(KeyboardResult{std::move(result)});
+      finish();
+      return;
+    }
   }
-
-  // If there's an unconfirmed candidate, append it to _confirmedText
-  const char* candidate = _inputEngine.getCurrentCandidate();
-  if (candidate && candidate[0] != '\0') {
-    std::string result = _confirmedText;
-    if (!result.empty() && result.back() != ' ') result += ' ';
-    result += candidate;
-    setResult(KeyboardResult{std::move(result)});
-  } else {
-    setResult(KeyboardResult{_confirmedText});
-  }
+  LOG_DBG("T4", "onComplete: mode=%d, result='%s'", static_cast<int>(_mode), text);
+  setResult(KeyboardResult{std::string(text)});
   finish();
 }
 
@@ -391,35 +456,42 @@ bool T4EntryActivity::isAutoCapPunct(const char* punct) {
 }
 
 void T4EntryActivity::handlePunctuation() {
-  LOG_DBG("T4", "handlePunctuation: mode=%d wordJustConfirmed=%d punctIdx=%d",
-          static_cast<int>(_mode), _wordJustConfirmed, _punctIndex);
   const char* candidate = _inputEngine.getCurrentCandidate();
   bool hasCandidate = candidate && candidate[0] != '\0';
 
-  // MULTI_TAP: confirmWord fixes the cycling letter into predictor's buffer.
-  // Sync _confirmedText from the predictor and append punctuation.
+  // Work on a local mutable copy of engine text; sync back at the end.
+  std::string text(_inputEngine.getConfirmedText());
+  LOG_DBG("T4", "handlePunct: mode=%d wjc=%d pIdx=%d hasCand=%d cand='%s' text='%s'", static_cast<int>(_mode),
+          _wordJustConfirmed, _punctIndex, hasCandidate, hasCandidate ? candidate : "(none)", text.c_str());
+
+  // MULTI_TAP: fix any cycling letter (no space — letters are already
+  // individually confirmed by timeout or next press). Then apply punctuation.
   if (_mode == t4::T4Mode::MULTI_TAP) {
-    _inputEngine.confirmWord();
-    _confirmedText = _inputEngine.getConfirmedText();
+    _inputEngine.fixMultiTapLetter();
+    text = _inputEngine.getConfirmedText();
 
     if (_wordJustConfirmed && millis() - _lastConfirmMs <= decltype(_inputEngine)::kMultiTapTimeoutMs) {
       // Within timeout: cycle punctuation
       const char* prevPunct = PUNCT_CYCLE[_punctIndex];
       size_t prevLen = strlen(prevPunct);
-      if (_confirmedText.length() >= prevLen) {
-        _confirmedText.erase(_confirmedText.length() - prevLen);
+      if (text.length() >= prevLen) {
+        text.erase(text.length() - prevLen);
       }
       _punctIndex = (_punctIndex + 1) % PUNCT_COUNT;
-      _confirmedText += PUNCT_CYCLE[_punctIndex];
+      text += PUNCT_CYCLE[_punctIndex];
       _lastConfirmMs = millis();
+      LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, PUNCT_CYCLE[_punctIndex],
+              text.c_str());
     } else {
       // First confirm or timeout expired: add trailing space
-      _confirmedText += ' ';
+      text += ' ';
       _punctIndex = 0;
       _wordJustConfirmed = true;
       _candidateScrollX = 0;
       _lastConfirmMs = millis();
+      LOG_DBG("T4", "handlePunct: MULTI_TAP first confirm → text='%s'", text.c_str());
     }
+    _inputEngine.setConfirmedText(text.c_str());
     requestUpdate();
     return;
   }
@@ -428,24 +500,28 @@ void T4EntryActivity::handlePunctuation() {
   if (_wordJustConfirmed) {
     // Timeout: if user waited too long, start fresh with new space
     if (millis() - _lastConfirmMs > decltype(_inputEngine)::kMultiTapTimeoutMs) {
+      LOG_DBG("T4", "handlePunct: PREDICT punct timeout expired, resetting _wordJustConfirmed");
       _wordJustConfirmed = false;
       // Fall through to first-press logic below
     } else {
       // Remove previous punctuation suffix, then append next in cycle
       const char* prevPunct = PUNCT_CYCLE[_punctIndex];
       size_t prevLen = strlen(prevPunct);
-      if (_confirmedText.length() >= prevLen) {
-        _confirmedText.erase(_confirmedText.length() - prevLen);
+      if (text.length() >= prevLen) {
+        text.erase(text.length() - prevLen);
       }
       _punctIndex = (_punctIndex + 1) % PUNCT_COUNT;
-      _confirmedText += PUNCT_CYCLE[_punctIndex];
+      text += PUNCT_CYCLE[_punctIndex];
       _lastConfirmMs = millis();
+      LOG_DBG("T4", "handlePunct: PREDICT cycle punct[%d]='%s' → text='%s'", _punctIndex, PUNCT_CYCLE[_punctIndex],
+              text.c_str());
+      _inputEngine.setConfirmedText(text.c_str());
       requestUpdate();
       return;
     }
   }
 
-  // First press: confirm current candidate into _confirmedText
+  // First press: confirm current candidate into confirmed text
   if (hasCandidate) {
     const char* word = _inputEngine.getCurrentCandidate();
     std::string capitalized;
@@ -456,35 +532,39 @@ void T4EntryActivity::handlePunctuation() {
       _autoCap = false;
     }
 
-    if (!_confirmedText.empty() && _confirmedText.back() != ' ') {
-      _confirmedText += ' ';
+    if (!text.empty() && text.back() != ' ') {
+      text += ' ';
     }
-    _confirmedText += word;
+    text += word;
 
     if (isAutoCapPunct(PUNCT_CYCLE[_punctIndex])) {
       _autoCap = true;
     }
 
-    // Reset predictor sequence for next word (don't read its confirmed text)
+    // Reset predictor sequence for next word
     _inputEngine.confirmWord();
-    _confirmedText += ' ';  // trailing space after confirmed word
+    text += ' ';  // trailing space after confirmed word
     _punctIndex = 0;
     _wordJustConfirmed = true;
     _candidateScrollX = 0;
     _lastConfirmMs = millis();
+    LOG_DBG("T4", "handlePunct: PREDICT confirm '%s' → text='%s' autoCap=%d", word, text.c_str(), _autoCap);
   } else {
-    // No candidate: just append space (and allow punctuation cycle on next quick press)
-    _confirmedText += ' ';
+    // No candidate: just append space
+    text += ' ';
     _punctIndex = 0;
     _wordJustConfirmed = true;
     _lastConfirmMs = millis();
+    LOG_DBG("T4", "handlePunct: PREDICT no-candidate → text='%s'", text.c_str());
   }
+  _inputEngine.setConfirmedText(text.c_str());
 }
 
 // ── Mode Transitions ─────────────────────────────────────────────────────
 
 bool T4EntryActivity::enterCommandMode() {
-  LOG_DBG("T4", "enterCommandMode: mode=%d prevMode=%d", static_cast<int>(_mode), static_cast<int>(_prevMode));
+  LOG_DBG("T4", "enterCommandMode: mode=%d → COMMAND, prevMode=%d, text='%s'", static_cast<int>(_mode),
+          static_cast<int>(_prevMode), _inputEngine.getConfirmedText());
   if (_mode == t4::T4Mode::COMMAND) return false;
   _prevMode = _mode;  // Remember source mode for exit
   _inputEngine.setMode(t4::T4Mode::COMMAND);
@@ -493,29 +573,46 @@ bool T4EntryActivity::enterCommandMode() {
   _punctIndex = 0;
   _candidateScrollX = 0;
   _backspaceLastActionMs = 0;
+  LOG_DBG("T4", "enterCommandMode: done, engine text='%s' len=%u", _inputEngine.getConfirmedText(),
+          _inputEngine.getConfirmedTextLength());
   return true;
 }
 
 bool T4EntryActivity::exitCommandMode() {
-  LOG_DBG("T4", "exitCommandMode: mode=%d prevMode=%d", static_cast<int>(_mode), static_cast<int>(_prevMode));
+  LOG_DBG("T4", "exitCommandMode: mode=%d → prevMode=%d, text='%s'", static_cast<int>(_mode),
+          static_cast<int>(_prevMode), _inputEngine.getConfirmedText());
   if (_mode != t4::T4Mode::COMMAND) return false;
   _inputEngine.setMode(_prevMode);  // Return to source mode
   _mode = _inputEngine.getMode();
-  _confirmedText = _inputEngine.getConfirmedText();  // Sync after backspace/undo
   _candidateScrollX = 0;
   _backspaceLastActionMs = 0;
+  LOG_DBG("T4", "exitCommandMode: done, _mode=%d, text='%s'", static_cast<int>(_mode), _inputEngine.getConfirmedText());
   return true;
 }
 
 bool T4EntryActivity::togglePredictMultiTap() {
   t4::T4Mode newMode = (_mode == t4::T4Mode::MULTI_TAP) ? t4::T4Mode::PREDICT : t4::T4Mode::MULTI_TAP;
-  LOG_DBG("T4", "togglePredictMultiTap: %d → %d", static_cast<int>(_mode), static_cast<int>(newMode));
+  LOG_DBG("T4", "togglePredictMultiTap: %d → %d, text='%s'", static_cast<int>(_mode), static_cast<int>(newMode),
+          _inputEngine.getConfirmedText());
   if (newMode == _mode) return false;
 
   if (_mode == t4::T4Mode::COMMAND) {
     // In COMMAND mode, toggle the source mode instead.
     _prevMode = (_prevMode == t4::T4Mode::MULTI_TAP) ? t4::T4Mode::PREDICT : t4::T4Mode::MULTI_TAP;
+    LOG_DBG("T4", "togglePredictMultiTap: in COMMAND, toggled _prevMode to %d", static_cast<int>(_prevMode));
     return true;
+  }
+
+  // Commit unconfirmed candidate when leaving PREDICT
+  if (_mode == t4::T4Mode::PREDICT && newMode == t4::T4Mode::MULTI_TAP) {
+    const char* cand = _inputEngine.getCurrentCandidate();
+    LOG_DBG("T4", "togglePredictMultiTap: PREDICT→MULTI_TAP, cand='%s' seqLen=%u", cand ? cand : "(null)",
+            _inputEngine.getSequenceLength());
+    if (cand && cand[0] != '\0') {
+      std::string t(_inputEngine.getConfirmedText());
+      t += cand;
+      _inputEngine.setConfirmedText(t.c_str());
+    }
   }
 
   _inputEngine.setMode(newMode);
@@ -523,6 +620,8 @@ bool T4EntryActivity::togglePredictMultiTap() {
   _wordJustConfirmed = false;
   _punctIndex = 0;
   _candidateScrollX = 0;
+  LOG_DBG("T4", "togglePredictMultiTap: done, _mode=%d text='%s'", static_cast<int>(_mode),
+          _inputEngine.getConfirmedText());
   return true;
 }
 
@@ -563,7 +662,7 @@ void T4EntryActivity::render(RenderLock&& lock) {
   bool hasCandidate = (candidate != nullptr) && (candidate[0] != '\0');
 
   // In MULTI_TAP/COMMAND, the predictor owns the confirmed text
-  const char* confirmedText = (_mode == t4::T4Mode::PREDICT) ? _confirmedText.c_str() : _inputEngine.getConfirmedText();
+  const char* confirmedText = _inputEngine.getConfirmedText();
 
   // Build full text (real content, not masked)
   char fullText[512];
@@ -779,19 +878,106 @@ void T4EntryActivity::render(RenderLock&& lock) {
 
   // --- 4. Button hints ---
   if (_mode == t4::T4Mode::COMMAND) {
-    const auto labels = mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG),
-                                              tr(STR_T4_MODE_BTN));
+    const auto labels =
+        mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG), tr(STR_T4_MODE_BTN));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     GUI.drawSideButtonHints(renderer, tr(STR_T4_BACKSPACE), tr(STR_T4_UNDO));
   } else {
-    // Predict and Multi-tap use same group labels
-    const auto labels = mappedInput.mapLabels(tr(STR_T4_GROUP_1),  // Back   → letter group 1
-                                              tr(STR_T4_GROUP_2),  // Confirm → letter group 2
-                                              tr(STR_T4_GROUP_3),  // Left   → letter group 3
-                                              tr(STR_T4_GROUP_4)   // Right  → letter group 4
-    );
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    // Predict / Multi-tap: letter blocks + long-press hints (inactive button hints)
 
+    // ── 4a. Button-position constants (match drawButtonHints layout) ──
+    static constexpr int x4BtnX[] = {25, 130, 245, 350};
+    static constexpr int x3BtnX[] = {38, 154, 268, 384};
+    const int* btnX = gpio.deviceIsX3() ? x3BtnX : x4BtnX;
+    const int btnW = GUI.getButtonHintWidth();  // Theme-dependent button width
+    static constexpr int blockPadY = 6;         // Vertical padding inside block
+    static constexpr int blockGapAbove = 12;    // Gap between blocks and button hints
+    static constexpr int charsPerRow = 3;       // Characters per row, evenly distributed
+
+    // ── 4b. Letter blocks (3 chars per row, UI_12 font, above button hints) ──
+    // Compute max block height for top-alignment
+    int maxBlockH = 0;
+    for (int i = 0; i < 4; i++) {
+      int len = t4::getGroupLength(_lang, i + 1);
+      int rows = (len + charsPerRow - 1) / charsPerRow;
+      int h = rows * lineHeight + 2 * blockPadY;
+      if (h > maxBlockH) maxBlockH = h;
+    }
+
+    // Position blocks above the button hints strip, offset upward by subtitle height
+    const int hintTopY = pageHeight - 40;
+    const int blocksBaseY = hintTopY - blockGapAbove - maxBlockH - lineHeight;
+
+    for (int i = 0; i < 4; i++) {
+      const char* group = t4::getGroup(_lang, i + 1);
+      if (!group || !group[0]) continue;
+
+      int len = t4::getGroupLength(_lang, i + 1);
+      int rows = (len + charsPerRow - 1) / charsPerRow;
+      int bh = rows * lineHeight + 2 * blockPadY;
+      int bx = btnX[i];
+      int by = blocksBaseY + (maxBlockH - bh);
+
+      renderer.drawRect(bx, by, btnW, bh);
+
+      // Pre-scan UTF-8 character boundaries (handles multi-byte cyrillic)
+      struct ChInfo {
+        const char* start;
+        uint8_t byteLen;
+      };
+      ChInfo chInfo[12];  // Max group length
+      {
+        const char* p = group;
+        for (int ci = 0; ci < len; ci++) {
+          unsigned char c0 = static_cast<unsigned char>(*p);
+          uint8_t blen = 1;
+          if ((c0 & 0xE0) == 0xC0)
+            blen = 2;
+          else if ((c0 & 0xF0) == 0xE0)
+            blen = 3;
+          else if ((c0 & 0xF8) == 0xF0)
+            blen = 4;
+          chInfo[ci] = {p, blen};
+          p += blen;
+        }
+      }
+
+      // Render each row
+      for (int r = 0; r < rows; r++) {
+        int rowCount = charsPerRow;
+        if (r == rows - 1 && len % charsPerRow != 0) rowCount = len % charsPerRow;
+        int ry = by + blockPadY + r * lineHeight;
+
+        // Measure row chars for equal-gap distribution: edge gap == inter-char gap
+        int rowCharsW[charsPerRow];
+        int totalCW = 0;
+        char chBuf[5];
+        for (int c = 0; c < rowCount; c++) {
+          const ChInfo& ci = chInfo[r * charsPerRow + c];
+          memcpy(chBuf, ci.start, ci.byteLen);
+          chBuf[ci.byteLen] = '\0';
+          rowCharsW[c] = renderer.getTextWidth(UI_12_FONT_ID, chBuf);
+          totalCW += rowCharsW[c];
+        }
+        int gap = (btnW - totalCW) / (rowCount + 1);
+
+        int cx = bx + gap;
+        for (int c = 0; c < rowCount; c++) {
+          const ChInfo& ci = chInfo[r * charsPerRow + c];
+          memcpy(chBuf, ci.start, ci.byteLen);
+          chBuf[ci.byteLen] = '\0';
+          renderer.drawText(UI_12_FONT_ID, cx, ry, chBuf, true);
+          cx += rowCharsW[c] + gap;
+        }
+      }
+    }
+
+    // ── 4c. Long-press hints: theme-drawn, inactive (grayed out) style ──
+    const auto labels =
+        mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG), tr(STR_T4_MODE_BTN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, /*inactive=*/true);
+
+    // ── 4d. Side button hints ──
     const char* leftLabel = (_mode == t4::T4Mode::MULTI_TAP) ? tr(STR_T4_BACKSPACE) : tr(STR_T4_CYCLE);
     GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE));
   }

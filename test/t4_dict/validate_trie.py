@@ -12,8 +12,8 @@ NULL_OFFSET = 0xFFFFFFFF
 
 # Letter groupings matching build_t4_dict.py
 GROUPINGS = {
-    "en": ["abcdef", "ghijkl", "mnopqrs", "tuvwxyz"],
-    "ru": ["абвгдеёж", "зийклмно", "прстуфхц", "чшщъыьэюя"],
+    "en": ["abcdef'", "ghijkl-", "mnopqrs", "tuvwxyz"],
+    "ru": ["абвгдеёж-", "зийклмно", "прстуфхц", "чшщъыьэюя"],
 }
 
 

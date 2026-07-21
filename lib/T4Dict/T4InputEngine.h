@@ -1,10 +1,10 @@
 #pragma once
 
+#include <Logging.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
-
-#include <Logging.h>
 
 #include "T4Layout.h"
 
@@ -99,6 +99,12 @@ class T4InputEngine {
   /// Current button being multi-tapped (1–4), or 0 if idle.
   uint8_t getActiveButton() const;
 
+  /// Fix the currently cycling multi-tap letter into confirmed text.
+  /// Does NOT append a space — unlike confirmWord(), this is the
+  /// building block for MULTI_TAP where each letter is individually
+  /// confirmed by timeout or next button press.
+  void fixMultiTapLetter();
+
   // ── Text output ───────────────────────────────────────────────────
 
   /// Confirm current word (Predict) or space (Multi-tap).
@@ -112,6 +118,11 @@ class T4InputEngine {
 
   /// Length of confirmed text.
   uint16_t getConfirmedTextLength() const;
+
+  /// Replace confirmed text buffer with @p text.
+  /// Used to sync confirmed text between activity and engine on mode switch.
+  /// Text is truncated to kMaxTextLen if needed.
+  void setConfirmedText(const char* text);
 
   // ── Editing ───────────────────────────────────────────────────────
 
@@ -178,11 +189,15 @@ class T4InputEngine {
   mutable char _candidateBuf[64] = {};
   char _lastError[64] = {};
 
+  // Dead-end fallback: last valid candidate + raw first-letters from
+  // the dead-end tail of the sequence.
+  char _savedCandidate[64] = {};
+  uint8_t _savedSeqLen = 0;
+
   // ── Internal helpers ──────────────────────────────────────────────
 
   void setError(const char* msg);
   void clearSequence();
-  void fixMultiTapLetter();
   void loadDictionaryForLanguage(T4Language lang);
   const char* dictPathForLanguage(T4Language lang);
 };
@@ -247,6 +262,20 @@ uint16_t T4InputEngine<Dict>::getConfirmedTextLength() const {
 }
 
 template <typename Dict>
+void T4InputEngine<Dict>::setConfirmedText(const char* text) {
+  if (!text) {
+    _confirmedText[0] = '\0';
+    _textLen = 0;
+    return;
+  }
+  auto len = strlen(text);
+  if (len > kMaxTextLen) len = kMaxTextLen;
+  memcpy(_confirmedText, text, len);
+  _confirmedText[len] = '\0';
+  _textLen = static_cast<uint16_t>(len);
+}
+
+template <typename Dict>
 uint8_t T4InputEngine<Dict>::getActiveButton() const {
   return _activeButton;
 }
@@ -271,6 +300,8 @@ void T4InputEngine<Dict>::clearSequence() {
   _candidateCount = 0;
   _candidatesLoaded = false;
   _candidateBuf[0] = '\0';
+  _savedCandidate[0] = '\0';
+  _savedSeqLen = 0;
 }
 
 template <typename Dict>
@@ -344,6 +375,13 @@ void T4InputEngine<Dict>::setMode(T4Mode mode) {
 
   _mode = mode;
 
+  // Discard PREDICT navigation state when leaving PREDICT mode —
+  // avoids stale candidates leaking into other modes' rendering.
+  if (_mode != T4Mode::PREDICT) {
+    clearSequence();
+    if (_dict) _dict->reset();
+  }
+
   // Fix any in-progress multi-tap letter on mode switch away from
   // MULTI_TAP, but not when entering COMMAND (preserve state for return).
   if (_activeButton != 0 && mode != T4Mode::MULTI_TAP && mode != T4Mode::COMMAND) {
@@ -374,6 +412,19 @@ bool T4InputEngine<Dict>::pressButton(uint8_t btn) {
     }
 
     if (_seqLen >= kMaxSeqLen) return false;
+
+    // Save current candidate before navigating further (dead-end fallback)
+    if (_candidateCount > 0 && _candidatesLoaded && _dict) {
+      const char* cur = _dict->getCandidate(_candidateIndex);
+      if (cur && cur[0]) {
+        auto clen = strlen(cur);
+        if (clen < sizeof(_savedCandidate)) {
+          memcpy(_savedCandidate, cur, clen);
+          _savedCandidate[clen] = '\0';
+        }
+      }
+      _savedSeqLen = _seqLen;
+    }
 
     _sequence[_seqLen++] = btn;
 
@@ -443,7 +494,41 @@ void T4InputEngine<Dict>::cycleCandidate() {
 
 template <typename Dict>
 const char* T4InputEngine<Dict>::getCurrentCandidate() {
-  if (_candidateCount == 0) return nullptr;
+  // Fallback: no dictionary candidates — show last valid candidate + raw
+  // first-letter of each dead-end button press after it.
+  if (_candidateCount == 0) {
+    if (_seqLen == 0) return nullptr;
+    int pos = 0;
+
+    // Copy saved (last valid) candidate if available
+    if (_savedCandidate[0] && _savedSeqLen > 0 && _savedSeqLen < _seqLen) {
+      auto slen = strlen(_savedCandidate);
+      if (slen < sizeof(_candidateBuf)) {
+        memcpy(_candidateBuf, _savedCandidate, slen);
+        pos = slen;
+      }
+    }
+
+    // Append raw first-letter from dead-end tail of sequence
+    for (uint8_t i = (pos > 0) ? _savedSeqLen : 0; i < _seqLen; i++) {
+      const char* group = getGroup(_lang, _sequence[i]);
+      if (!group || !group[0]) continue;
+      unsigned char c0 = static_cast<unsigned char>(group[0]);
+      uint8_t blen = 1;
+      if ((c0 & 0xE0) == 0xC0)
+        blen = 2;
+      else if ((c0 & 0xF0) == 0xE0)
+        blen = 3;
+      else if ((c0 & 0xF8) == 0xF0)
+        blen = 4;
+      if (pos + blen >= (int)sizeof(_candidateBuf)) break;
+      memcpy(_candidateBuf + pos, group, blen);
+      pos += blen;
+    }
+    _candidateBuf[pos] = '\0';
+    return _candidateBuf;
+  }
+
   if (!_candidatesLoaded || !_dict) return nullptr;
 
   const char* word = _dict->getCandidate(_candidateIndex);
@@ -500,8 +585,8 @@ void T4InputEngine<Dict>::backspace() {
   if (_mode == T4Mode::COMMAND) {
     effectiveMode = _prevMode;
   }
-  LOG_DBG("T4", "backspace: mode=%d effective=%d textLen=%u",
-          static_cast<int>(_mode), static_cast<int>(effectiveMode), _textLen);
+  LOG_DBG("T4", "backspace: mode=%d effective=%d textLen=%u", static_cast<int>(_mode), static_cast<int>(effectiveMode),
+          _textLen);
 
   if (effectiveMode == T4Mode::PREDICT) {
     // Delete entire candidate word (reset sequence).

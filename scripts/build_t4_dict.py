@@ -16,8 +16,8 @@ NULL_OFFSET = 0xFFFFFFFF
 
 # Letter groupings: button 1-4 (0-indexed: 0-3)
 GROUPINGS = {
-    "en": ["abcdef", "ghijkl", "mnopqrs", "tuvwxyz"],
-    "ru": ["абвгдеёж", "зийклмно", "прстуфхц", "чшщъыьэюя"],
+    "en": ["abcdef'", "ghijkl-", "mnopqrs", "tuvwxyz"],
+    "ru": ["абвгдеёж-", "зийклмно", "прстуфхц", "чшщъыьэюя"],
 }
 
 # ── Letter mapping ──────────────────────────────────────────────────────────

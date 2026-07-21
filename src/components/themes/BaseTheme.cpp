@@ -156,7 +156,7 @@ void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const si
 }
 
 void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                                const char* btn4) const {
+                                const char* btn4, bool inactive) const {
   const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
@@ -175,7 +175,11 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
     // Only draw if the label is non-empty
     if (labels[i] != nullptr && labels[i][0] != '\0') {
       const int x = buttonPositions[i];
-      renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
+      if (inactive) {
+        renderer.fillRectDither(x, pageHeight - buttonY, buttonWidth, buttonHeight, Color::LightGray);
+      } else {
+        renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
+      }
       renderer.drawRect(x, pageHeight - buttonY, buttonWidth, buttonHeight);
       constexpr int maxLabelWidth = buttonWidth - 4;
       auto label = renderer.truncatedText(UI_10_FONT_ID, labels[i], maxLabelWidth);

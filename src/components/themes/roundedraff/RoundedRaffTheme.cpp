@@ -379,7 +379,7 @@ void RoundedRaffTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uin
 }
 
 void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                                       const char* btn4) const {
+                                       const char* btn4, bool inactive) const {
   const GfxRenderer::Orientation origOrientation = renderer.getOrientation();
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
@@ -406,8 +406,13 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
       (btn4 && btn4[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn4, maxLabelWidth) : "";
 
   // Ensure button hints always "win" visually even if other elements accidentally render into this area.
-  renderer.fillRect(leftGroupX, hintY, groupWidth, hintHeight, false);
-  renderer.fillRect(rightGroupX, hintY, groupWidth, hintHeight, false);
+  if (inactive) {
+    renderer.fillRectDither(leftGroupX, hintY, groupWidth, hintHeight, Color::LightGray);
+    renderer.fillRectDither(rightGroupX, hintY, groupWidth, hintHeight, Color::LightGray);
+  } else {
+    renderer.fillRect(leftGroupX, hintY, groupWidth, hintHeight, false);
+    renderer.fillRect(rightGroupX, hintY, groupWidth, hintHeight, false);
+  }
 
   renderer.drawRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, 2, kBottomRadius, true);
   const int selectWidth = renderer.getTextWidth(kGuideFontId, selectText.c_str(), EpdFontFamily::REGULAR);
