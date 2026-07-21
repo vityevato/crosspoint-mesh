@@ -196,6 +196,9 @@ class BaseTheme {
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
   /// Width of a single button hint rectangle. Used to align overlaid elements with physical buttons.
   virtual int getButtonHintWidth() const { return 106; }
+  /// X-positions of the 4 front-button hint rectangles. Returns pointer to static array of 4 ints.
+  /// Used internally by drawButtonHints() and externally to align overlaid elements (e.g. T4 letter blocks).
+  virtual const int* getButtonXPositions(bool isX3) const;
   virtual int getListPageItems(int contentHeight, bool hasSubtitle) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                         const std::function<std::string(int index)>& rowTitle,

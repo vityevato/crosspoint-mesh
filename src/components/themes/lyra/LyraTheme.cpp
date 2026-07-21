@@ -320,6 +320,12 @@ void LyraTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t t
   renderer.fillRect(barX - barW, thumbY, barW, thumbH, true);
 }
 
+const int* LyraTheme::getButtonXPositions(bool isX3) const {
+  static constexpr int x4[] = {58, 146, 254, 342};
+  static constexpr int x3[] = {65, 157, 291, 383};
+  return isX3 ? x3 : x4;
+}
+
 void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                 const char* btn4, bool inactive) const {
   const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
@@ -331,10 +337,7 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   constexpr int buttonHeight = LyraMetrics::values.buttonHintsHeight;
   constexpr int buttonY = LyraMetrics::values.buttonHintsHeight;  // Distance from bottom
   constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
-  // X3 has wider screen in portrait (528 vs 480), use more spacing
-  constexpr int x4ButtonPositions[] = {58, 146, 254, 342};
-  constexpr int x3ButtonPositions[] = {65, 157, 291, 383};
-  const int* buttonPositions = gpio.deviceIsX3() ? x3ButtonPositions : x4ButtonPositions;
+  const int* buttonPositions = getButtonXPositions(gpio.deviceIsX3());
   const char* labels[] = {btn1, btn2, btn3, btn4};
 
   for (int i = 0; i < 4; i++) {

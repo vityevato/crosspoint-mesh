@@ -378,6 +378,12 @@ void RoundedRaffTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uin
   renderer.fillRect(barX, thumbY, barW, thumbH);
 }
 
+const int* RoundedRaffTheme::getButtonXPositions(bool isX3) const {
+  static constexpr int x4[] = {11, 128, 245, 362};
+  static constexpr int x3[] = {20, 146, 272, 398};
+  return isX3 ? x3 : x4;
+}
+
 void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                        const char* btn4, bool inactive) const {
   const GfxRenderer::Orientation origOrientation = renderer.getOrientation();

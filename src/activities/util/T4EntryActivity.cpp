@@ -886,21 +886,20 @@ void T4EntryActivity::render(RenderLock&& lock) {
     // Predict / Multi-tap: letter blocks + long-press hints (inactive button hints)
 
     // ── 4a. Button-position constants (match drawButtonHints layout) ──
-    static constexpr int x4BtnX[] = {25, 130, 245, 350};
-    static constexpr int x3BtnX[] = {38, 154, 268, 384};
-    const int* btnX = gpio.deviceIsX3() ? x3BtnX : x4BtnX;
+    const int* btnX = GUI.getButtonXPositions(gpio.deviceIsX3());
     const int btnW = GUI.getButtonHintWidth();  // Theme-dependent button width
     static constexpr int blockPadY = 6;         // Vertical padding inside block
+    static constexpr int blockRowGap = 6;       // Vertical gap between rows of characters
     static constexpr int blockGapAbove = 12;    // Gap between blocks and button hints
     static constexpr int charsPerRow = 3;       // Characters per row, evenly distributed
 
     // ── 4b. Letter blocks (3 chars per row, UI_12 font, above button hints) ──
-    // Compute max block height for top-alignment
+    // Compute max block height; all blocks share the same height for visual uniformity
     int maxBlockH = 0;
     for (int i = 0; i < 4; i++) {
       int len = t4::getGroupLength(_lang, i + 1);
       int rows = (len + charsPerRow - 1) / charsPerRow;
-      int h = rows * lineHeight + 2 * blockPadY;
+      int h = rows * lineHeight + (rows - 1) * blockRowGap + 2 * blockPadY;
       if (h > maxBlockH) maxBlockH = h;
     }
 
@@ -914,11 +913,10 @@ void T4EntryActivity::render(RenderLock&& lock) {
 
       int len = t4::getGroupLength(_lang, i + 1);
       int rows = (len + charsPerRow - 1) / charsPerRow;
-      int bh = rows * lineHeight + 2 * blockPadY;
       int bx = btnX[i];
-      int by = blocksBaseY + (maxBlockH - bh);
+      int by = blocksBaseY;
 
-      renderer.drawRect(bx, by, btnW, bh);
+      renderer.drawRect(bx, by, btnW, maxBlockH);
 
       // Pre-scan UTF-8 character boundaries (handles multi-byte cyrillic)
       struct ChInfo {
@@ -946,7 +944,7 @@ void T4EntryActivity::render(RenderLock&& lock) {
       for (int r = 0; r < rows; r++) {
         int rowCount = charsPerRow;
         if (r == rows - 1 && len % charsPerRow != 0) rowCount = len % charsPerRow;
-        int ry = by + blockPadY + r * lineHeight;
+        int ry = by + blockPadY + r * (lineHeight + blockRowGap);
 
         // Measure row chars for equal-gap distribution: edge gap == inter-char gap
         int rowCharsW[charsPerRow];
