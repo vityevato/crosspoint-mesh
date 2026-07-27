@@ -709,3 +709,29 @@ I18N        // I18n::getInstance()
 - Each `std::function<>` adds ~2-4 KB per unique signature and
   heap-allocates. Prefer raw function pointers or
   `struct { void* ctx; void (*fn)(void*); }`.
+
+### Chat Response Formatting
+
+**CRITICAL** — ALL file references in chat responses MUST use
+clickable `file://` links:
+
+```text
+[display name](file:///absolute/path#L<line>)
+```
+
+- **Never** use plain backtick-wrapped paths (`` `src/foo.cpp` ``)
+  or bare paths as the primary reference — always wrap them in a
+  clickable link.
+- When discussing a range of lines, use `#L<start>-L<end>`.
+- When referencing a specific code location, always include the
+  line anchor (`#L<line>`).
+
+**Examples**:
+
+| ✅ Correct | ❌ Wrong |
+| --- | --- |
+| `[backspace() in T4InputEngine.h](file:///Users/lala/Documents/dev/crosspoint-mesh/lib/T4Dict/T4InputEngine.h#L590)` | `` `lib/T4Dict/T4InputEngine.h` `` |
+| `[T4EntryActivity.cpp:402-407](file:///Users/lala/Documents/dev/crosspoint-mesh/src/activities/util/T4EntryActivity.cpp#L402)` | `src/activities/util/T4EntryActivity.cpp` |
+
+This rule overrides all other formatting conventions for file
+references and applies to every response that mentions a file path.

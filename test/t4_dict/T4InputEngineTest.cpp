@@ -336,14 +336,11 @@ TEST_F(T4InputEngineTest, CommandBackspaceFromPredict) {
   // Enter COMMAND
   predictor.setMode(T4Mode::COMMAND);
 
-  // Backspace in COMMAND (Predict semantics): delete entire candidate/sequence
+  // Backspace in COMMAND (Predict semantics): removes ONE button press
+  // from the sequence, stepping back up the dictionary trie.
   predictor.backspace();
-  EXPECT_EQ(predictor.getSequenceLength(), 0u);
-  EXPECT_EQ(predictor.getCandidateCount(), 0u);
-
-  // Undo-delete restores the word
-  predictor.undoDelete();
-  EXPECT_STREQ(predictor.getConfirmedText(), "hello");
+  EXPECT_EQ(predictor.getSequenceLength(), 4u);
+  EXPECT_GT(predictor.getCandidateCount(), 0u);
 }
 
 TEST_F(T4InputEngineTest, CommandBackspaceFromPredictNoSequence) {
@@ -355,9 +352,17 @@ TEST_F(T4InputEngineTest, CommandBackspaceFromPredictNoSequence) {
   EXPECT_STREQ(predictor.getConfirmedText(), "hello ");
 
   predictor.setMode(T4Mode::COMMAND);
+
+  // First backspace: deletes trailing space (punctuation)
   predictor.backspace();
-  // Nothing to delete in Predict (sequence is empty after confirm)
-  EXPECT_STREQ(predictor.getConfirmedText(), "hello ");
+  EXPECT_STREQ(predictor.getConfirmedText(), "hello");
+
+  // Second backspace: extracts "hello" back into the prediction sequence
+  predictor.backspace();
+  EXPECT_STREQ(predictor.getConfirmedText(), "");
+  EXPECT_GT(predictor.getSequenceLength(), 0u);
+  EXPECT_GT(predictor.getCandidateCount(), 0u);
+  EXPECT_STREQ(predictor.getCurrentCandidate(), "hello");
 }
 
 // ── COMMAND mode backspace (Multi-tap semantics) ────────────────────────
@@ -378,45 +383,6 @@ TEST_F(T4InputEngineTest, CommandBackspaceFromMultiTap) {
 
   predictor.backspace();
   EXPECT_STREQ(predictor.getConfirmedText(), "");   // another removed
-}
-
-// ── Undo-delete ─────────────────────────────────────────────────────────
-
-TEST_F(T4InputEngineTest, UndoDeletePredict) {
-  // Type hello
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
-  predictor.pressButton(3);
-  predictor.confirmWord();
-
-  // Backspace (Predict mode directly — not COMMAND)
-  // Let's create a sequence first.
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
-  predictor.pressButton(3);  // "hello" candidate
-
-  const char* before = predictor.getCurrentCandidate();
-  ASSERT_NE(before, nullptr);
-
-  predictor.backspace();
-  EXPECT_EQ(predictor.getSequenceLength(), 0u);
-
-  predictor.undoDelete();
-  // Restored word appended to confirmed text
-  EXPECT_STREQ(predictor.getConfirmedText(), "hello hello");
-}
-
-TEST_F(T4InputEngineTest, UndoDeleteMultiTap) {
-  predictor.setMode(T4Mode::MULTI_TAP);
-  predictor.pressButton(1);  // 'a'
-  predictor.pressButton(2);  // fix 'a', start 'g'
-  // confirmed: "a"
-
-  predictor.backspace();
-  EXPECT_STREQ(predictor.getConfirmedText(), "");
-
-  predictor.undoDelete();
-  EXPECT_STREQ(predictor.getConfirmedText(), "a");
 }
 
 // ── Sequence display ────────────────────────────────────────────────────

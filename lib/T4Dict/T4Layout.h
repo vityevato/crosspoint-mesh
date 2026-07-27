@@ -25,8 +25,10 @@ const char* getGroup(T4Language lang, uint8_t button);
 /// Return the number of letters in a group. Returns 0 for invalid input.
 uint8_t getGroupLength(T4Language lang, uint8_t button);
 
-/// Return the nth letter (0-indexed) from a group. Returns '\0' if invalid.
-char getGroupLetter(T4Language lang, uint8_t button, uint8_t index);
+/// Return pointer to the nth letter (0-indexed character count) within
+/// a group string. outByteLen receives the UTF-8 byte length (1–4).
+/// Returns nullptr if index is out of range.
+const char* getGroupLetter(T4Language lang, uint8_t button, uint8_t index, uint8_t& outByteLen);
 
 /// Return a 2-character ISO language code for the given language.
 const char* getLanguageCode(T4Language lang);

@@ -171,11 +171,12 @@ void T4EntryActivity::loop() {
     requestUpdate();
   }
 
-  // Up long-press → toggle Predict ↔ Multi-tap
-  if (_upHeld && !_upLongHandled && mappedInput.isPressed(MappedInputManager::Button::Up) &&
+  // Up long-press → toggle Predict ↔ Multi-tap (not in COMMAND)
+  if (_upHeld && !_upLongHandled && _mode != t4::T4Mode::COMMAND &&
+      mappedInput.isPressed(MappedInputManager::Button::Up) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _upLongHandled = true;
-    LOG_DBG("T4", "loop: long-press Up → toggle Predict/Multi-tap (current=%d)", static_cast<int>(_mode));
+    LOG_DBG("T4", "loop: Up long-press → toggle Predict/Multi-tap (mode=%d)", static_cast<int>(_mode));
     togglePredictMultiTap();
     requestUpdate();
   }
@@ -210,6 +211,21 @@ void T4EntryActivity::loop() {
   if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
     _upHeld = true;
     _upLongHandled = false;
+  }
+
+  // ── Simultaneous Up+Left → toggle backspace/cycleCandidate ──
+  // Placed AFTER press tracking so that _leftLongHandled / _upLongHandled
+  // set here are not immediately cleared by the press-tracking block above.
+  if (!_upLeftComboHandled && mappedInput.isPressed(MappedInputManager::Button::Up) &&
+      mappedInput.isPressed(MappedInputManager::Button::Left)) {
+    _upLeftComboHandled = true;
+    _upLongHandled = true;
+    _leftLongHandled = true;
+    if (_mode == t4::T4Mode::PREDICT) {
+      _upSideCyclesCandidates = !_upSideCyclesCandidates;
+      LOG_DBG("T4", "loop: Up+Left combo → toggle upSideAction=%d", _upSideCyclesCandidates);
+      requestUpdate();
+    }
   }
 
   // --- Short-press detection on release ---
@@ -294,12 +310,14 @@ void T4EntryActivity::loop() {
     // Button::Back — letter group 1
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       if (_backHeld && !_backLongHandled) {
-        LOG_DBG("T4", "loop: press group 1 (mode=%d)", static_cast<int>(_mode));
-        _inputEngine.pressButton(1);
-        _punctIndex = 0;
-        _wordJustConfirmed = false;
-        _candidateScrollX = 0;
-        requestUpdate();
+        if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
+          LOG_DBG("T4", "loop: press group 1 (mode=%d)", static_cast<int>(_mode));
+          _inputEngine.pressButton(1);
+          _punctIndex = 0;
+          _wordJustConfirmed = false;
+          _candidateScrollX = 0;
+          requestUpdate();
+        }
       }
       _backHeld = false;
       _backLongHandled = false;
@@ -308,11 +326,13 @@ void T4EntryActivity::loop() {
     // Button::Confirm — letter group 2
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (_confirmHeld && !_confirmLongHandled) {
-        _inputEngine.pressButton(2);
-        _punctIndex = 0;
-        _wordJustConfirmed = false;
-        _candidateScrollX = 0;
-        requestUpdate();
+        if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
+          _inputEngine.pressButton(2);
+          _punctIndex = 0;
+          _wordJustConfirmed = false;
+          _candidateScrollX = 0;
+          requestUpdate();
+        }
       }
       _confirmHeld = false;
       _confirmLongHandled = false;
@@ -321,24 +341,32 @@ void T4EntryActivity::loop() {
     // Button::Left — letter group 3
     if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
       if (_leftHeld && !_leftLongHandled) {
-        _inputEngine.pressButton(3);
-        _punctIndex = 0;
-        _wordJustConfirmed = false;
-        _candidateScrollX = 0;
-        requestUpdate();
+        if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
+          _inputEngine.pressButton(3);
+          _punctIndex = 0;
+          _wordJustConfirmed = false;
+          _candidateScrollX = 0;
+          requestUpdate();
+        }
       }
       _leftHeld = false;
       _leftLongHandled = false;
+      // Reset combo tracking when both buttons released
+      if (_upLeftComboHandled && !mappedInput.isPressed(MappedInputManager::Button::Up)) {
+        _upLeftComboHandled = false;
+      }
     }
 
     // Button::Right — letter group 4
     if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
       if (_rightHeld && !_rightLongHandled) {
-        _inputEngine.pressButton(4);
-        _punctIndex = 0;
-        _wordJustConfirmed = false;
-        _candidateScrollX = 0;
-        requestUpdate();
+        if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
+          _inputEngine.pressButton(4);
+          _punctIndex = 0;
+          _wordJustConfirmed = false;
+          _candidateScrollX = 0;
+          requestUpdate();
+        }
       }
       _rightHeld = false;
       _rightLongHandled = false;
@@ -354,22 +382,28 @@ void T4EntryActivity::loop() {
     _upLongHandled = false;
     _backspaceLastActionMs = 0;
 
-    // If long-press was already handled (mode toggle), skip short-press action
+    // Reset combo tracking when both buttons released
+    if (_upLeftComboHandled && !mappedInput.isPressed(MappedInputManager::Button::Left)) {
+      _upLeftComboHandled = false;
+    }
+
+    // Combo sets _upLongHandled=true, so wasLongPress covers both
+    // long-press and combo — no separate wasCombo needed.
     if (!wasLongPress) {
-      if (_mode == t4::T4Mode::PREDICT) {
-        if (_inputEngine.getCandidateCount() > 0) {
-          LOG_DBG("T4", "loop: Up → cycleCandidate (idx=%u/%u)", _inputEngine.getCandidateIndex() + 1,
-                  _inputEngine.getCandidateCount());
-          _inputEngine.cycleCandidate();
-          _candidateScrollX = 0;
-          requestUpdate();
-        }
-      } else if (_mode == t4::T4Mode::MULTI_TAP || _mode == t4::T4Mode::COMMAND) {
+      if (_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates) {
+        // Toggled to cycleCandidate mode
+        LOG_DBG("T4", "loop: Up → cycleCandidate (idx=%u/%u)", _inputEngine.getCandidateIndex() + 1,
+                _inputEngine.getCandidateCount());
+        _inputEngine.cycleCandidate();
+        _candidateScrollX = 0;
+        requestUpdate();
+      } else if (_mode == t4::T4Mode::PREDICT || _mode == t4::T4Mode::MULTI_TAP || _mode == t4::T4Mode::COMMAND) {
         LOG_DBG("T4", "loop: Up → backspace (mode=%d, textLen=%u)", static_cast<int>(_mode),
                 _inputEngine.getConfirmedTextLength());
         _inputEngine.backspace();
         _punctIndex = 0;
         _wordJustConfirmed = false;
+        _candidateScrollX = 0;
         requestUpdate();
       }
     } else {
@@ -379,19 +413,18 @@ void T4EntryActivity::loop() {
 
   // Button::Down release (side right) — mode-dependent
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (_mode == t4::T4Mode::COMMAND) {
-      LOG_DBG("T4", "loop: Down → undoDelete (CMD mode)");
-      _inputEngine.undoDelete();
-      requestUpdate();
-    } else {
+    if (_mode != t4::T4Mode::COMMAND) {
       LOG_DBG("T4", "loop: Down → punctuation (mode=%d)", static_cast<int>(_mode));
       handlePunctuation();
+      _upSideCyclesCandidates = false;
       requestUpdate();
     }
   }
 
   // --- COMMAND mode: long-press+hold Backspace (Side Up) ---
-  if (_mode == t4::T4Mode::COMMAND) {
+  // _upLongHandled is set by both long-press and combo, so this
+  // naturally skips when either is active.
+  if (_mode == t4::T4Mode::COMMAND && !_upLongHandled) {
     if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
       unsigned long held = mappedInput.getHeldTime();
       if (held >= BACKSPACE_INITIAL_DELAY_MS) {
@@ -442,6 +475,14 @@ void T4EntryActivity::onCancel() {
   result.isCancelled = true;
   setResult(std::move(result));
   finish();
+}
+
+// ── Text limit ───────────────────────────────────────────────────────────
+
+bool T4EntryActivity::isTextInputFull() const {
+  constexpr auto kMax = decltype(_inputEngine)::kMaxTextLen;
+  const size_t limit = (_maxLength < kMax) ? _maxLength : kMax;
+  return _inputEngine.getConfirmedTextLength() >= limit;
 }
 
 // ── Punctuation Handling ─────────────────────────────────────────────────
@@ -510,8 +551,14 @@ void T4EntryActivity::handlePunctuation() {
       if (text.length() >= prevLen) {
         text.erase(text.length() - prevLen);
       }
-      _punctIndex = (_punctIndex + 1) % PUNCT_COUNT;
-      text += PUNCT_CYCLE[_punctIndex];
+      uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
+      const char* nextPunct = PUNCT_CYCLE[nextIdx];
+      size_t nextLen = strlen(nextPunct);
+      // Only apply if it won't overflow the engine buffer
+      if (text.length() + nextLen <= decltype(_inputEngine)::kMaxTextLen) {
+        _punctIndex = nextIdx;
+        text += nextPunct;
+      }
       _lastConfirmMs = millis();
       LOG_DBG("T4", "handlePunct: PREDICT cycle punct[%d]='%s' → text='%s'", _punctIndex, PUNCT_CYCLE[_punctIndex],
               text.c_str());
@@ -523,6 +570,10 @@ void T4EntryActivity::handlePunctuation() {
 
   // First press: confirm current candidate into confirmed text
   if (hasCandidate) {
+    if (isTextInputFull()) {
+      // Buffer full — can't confirm candidate. Do nothing.
+      return;
+    }
     const char* word = _inputEngine.getCurrentCandidate();
     std::string capitalized;
     if (_autoCap && word && word[0] != '\0') {
@@ -549,7 +600,7 @@ void T4EntryActivity::handlePunctuation() {
     _candidateScrollX = 0;
     _lastConfirmMs = millis();
     LOG_DBG("T4", "handlePunct: PREDICT confirm '%s' → text='%s' autoCap=%d", word, text.c_str(), _autoCap);
-  } else {
+  } else if (!isTextInputFull()) {
     // No candidate: just append space
     text += ' ';
     _punctIndex = 0;
@@ -567,6 +618,12 @@ bool T4EntryActivity::enterCommandMode() {
           static_cast<int>(_prevMode), _inputEngine.getConfirmedText());
   if (_mode == t4::T4Mode::COMMAND) return false;
   _prevMode = _mode;  // Remember source mode for exit
+
+  // Force MULTI_TAP for COMMAND editing — restore on exit
+  if (_mode == t4::T4Mode::PREDICT) {
+    togglePredictMultiTap();
+  }
+
   _inputEngine.setMode(t4::T4Mode::COMMAND);
   _mode = _inputEngine.getMode();
   _wordJustConfirmed = false;
@@ -620,6 +677,7 @@ bool T4EntryActivity::togglePredictMultiTap() {
   _wordJustConfirmed = false;
   _punctIndex = 0;
   _candidateScrollX = 0;
+  _upSideCyclesCandidates = false;
   LOG_DBG("T4", "togglePredictMultiTap: done, _mode=%d text='%s'", static_cast<int>(_mode),
           _inputEngine.getConfirmedText());
   return true;
@@ -746,10 +804,13 @@ void T4EntryActivity::render(RenderLock&& lock) {
         } else if (!isPassword && _mode == t4::T4Mode::MULTI_TAP) {
           // Multi-tap: confirmed text + cycling letter highlighted
           renderer.drawText(UI_12_FONT_ID, lineStartX, inputStartY + inputHeight, lineText.c_str(), true);
-          char tapLetter = _inputEngine.getCurrentTapLetter();
+          uint8_t tapLen = 0;
+          const char* tapPtr = _inputEngine.getCurrentTapLetter(tapLen);
           int confW = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
-          if (tapLetter != '\0') {
-            const char tapStr[2] = {tapLetter, '\0'};
+          if (tapPtr && tapLen > 0) {
+            char tapStr[5];
+            memcpy(tapStr, tapPtr, tapLen);
+            tapStr[tapLen] = '\0';
             int tapW = renderer.getTextWidth(UI_12_FONT_ID, tapStr);
             int tapX = lineStartX + confW;
             renderer.fillRect(tapX, inputStartY + inputHeight, tapW + 4, lineHeight, true);
@@ -907,6 +968,11 @@ void T4EntryActivity::render(RenderLock&& lock) {
     const int hintTopY = pageHeight - 40;
     const int blocksBaseY = hintTopY - blockGapAbove - maxBlockH - lineHeight;
 
+    const bool highlightTap = (_mode == t4::T4Mode::MULTI_TAP);
+    const uint8_t activeBtn = highlightTap ? _inputEngine.getActiveButton() : 0;
+    uint8_t activeLen = 0;
+    const char* activePtr = highlightTap ? _inputEngine.getCurrentTapLetter(activeLen) : nullptr;
+
     for (int i = 0; i < 4; i++) {
       const char* group = t4::getGroup(_lang, i + 1);
       if (!group || !group[0]) continue;
@@ -941,6 +1007,7 @@ void T4EntryActivity::render(RenderLock&& lock) {
       }
 
       // Render each row
+      const int highlightBoxW = lineHeight;  // Fixed highlight box (square, font-based)
       for (int r = 0; r < rows; r++) {
         int rowCount = charsPerRow;
         if (r == rows - 1 && len % charsPerRow != 0) rowCount = len % charsPerRow;
@@ -964,7 +1031,16 @@ void T4EntryActivity::render(RenderLock&& lock) {
           const ChInfo& ci = chInfo[r * charsPerRow + c];
           memcpy(chBuf, ci.start, ci.byteLen);
           chBuf[ci.byteLen] = '\0';
-          renderer.drawText(UI_12_FONT_ID, cx, ry, chBuf, true);
+          const bool isActive =
+              highlightTap && (activeBtn == i + 1) && activePtr && ci.byteLen == activeLen &&
+              memcmp(chBuf, activePtr, activeLen) == 0;
+          if (isActive) {
+            const int boxX = cx - (highlightBoxW - rowCharsW[c]) / 2;
+            renderer.fillRect(boxX, ry, highlightBoxW, lineHeight, true);
+            renderer.drawText(UI_12_FONT_ID, cx, ry, chBuf, false);
+          } else {
+            renderer.drawText(UI_12_FONT_ID, cx, ry, chBuf, true);
+          }
           cx += rowCharsW[c] + gap;
         }
       }
@@ -976,7 +1052,8 @@ void T4EntryActivity::render(RenderLock&& lock) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, /*inactive=*/true);
 
     // ── 4d. Side button hints ──
-    const char* leftLabel = (_mode == t4::T4Mode::MULTI_TAP) ? tr(STR_T4_BACKSPACE) : tr(STR_T4_CYCLE);
+    const char* leftLabel = (_upSideCyclesCandidates && _mode == t4::T4Mode::PREDICT) ? tr(STR_T4_CYCLE)
+                                                                                       : tr(STR_T4_BACKSPACE);
     GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE));
   }
 

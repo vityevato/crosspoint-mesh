@@ -36,6 +36,7 @@ class T4EntryActivity : public Activity {
   void onCancel();
   void handlePunctuation();
   static bool isAutoCapPunct(const char* punct);
+  bool isTextInputFull() const;
 
   // Mode transition helpers
   bool enterCommandMode();
@@ -64,6 +65,10 @@ class T4EntryActivity : public Activity {
   bool _leftHeld, _leftLongHandled;
   bool _rightHeld, _rightLongHandled;
   bool _upHeld, _upLongHandled;
+  bool _upLeftComboHandled = false;
+
+  // Toggle for left side button action: false=backspace, true=cycleCandidate
+  bool _upSideCyclesCandidates = false;
 
   // Backspace long-press hold tracking (COMMAND mode)
   unsigned long _backspaceLastActionMs;

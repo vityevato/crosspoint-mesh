@@ -70,14 +70,39 @@ uint8_t getGroupLength(T4Language lang, uint8_t button) {
   return 0;
 }
 
-char getGroupLetter(T4Language lang, uint8_t button, uint8_t index) {
+const char* getGroupLetter(T4Language lang, uint8_t button, uint8_t index, uint8_t& outByteLen) {
   const char* group = getGroup(lang, button);
-  LOG_DBG("T4", "getGroupLetter: lang=%d btn=%u idx=%u -> '%c'",
-          static_cast<int>(lang), button, index, group ? (index < getGroupLength(lang, button) ? group[index] : '?') : '?');
-  if (!group) return '\0';
-  uint8_t len = getGroupLength(lang, button);
-  if (index >= len) return '\0';
-  return group[index];
+  if (!group) { outByteLen = 0; return nullptr; }
+  uint8_t charCount = getGroupLength(lang, button);
+  if (index >= charCount) { outByteLen = 0; return nullptr; }
+
+  // Walk through UTF-8 characters to find the index-th one
+  const char* p = group;
+  for (uint8_t i = 0; i < index; i++) {
+    unsigned char c0 = static_cast<unsigned char>(*p);
+    if ((c0 & 0xE0) == 0xC0)
+      p += 2;
+    else if ((c0 & 0xF0) == 0xE0)
+      p += 3;
+    else if ((c0 & 0xF8) == 0xF0)
+      p += 4;
+    else
+      p += 1;
+  }
+
+  unsigned char c0 = static_cast<unsigned char>(*p);
+  if ((c0 & 0xE0) == 0xC0)
+    outByteLen = 2;
+  else if ((c0 & 0xF0) == 0xE0)
+    outByteLen = 3;
+  else if ((c0 & 0xF8) == 0xF0)
+    outByteLen = 4;
+  else
+    outByteLen = 1;
+
+  LOG_DBG("T4", "getGroupLetter: lang=%d btn=%u idx=%u blen=%u",
+          static_cast<int>(lang), button, index, outByteLen);
+  return p;
 }
 
 const char* getLanguageCode(T4Language lang) {

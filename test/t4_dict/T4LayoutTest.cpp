@@ -21,8 +21,9 @@ TEST(T4Layout, GetGroupLengthInvalidButton) {
 }
 
 TEST(T4Layout, GetGroupLetterInvalidInput) {
-  EXPECT_EQ(getGroupLetter(T4Language::EN, 0, 0), '\0');
-  EXPECT_EQ(getGroupLetter(T4Language::EN, 1, 99), '\0');
+  uint8_t blen;
+  EXPECT_EQ(getGroupLetter(T4Language::EN, 0, 0, blen), nullptr);
+  EXPECT_EQ(getGroupLetter(T4Language::EN, 1, 99, blen), nullptr);
 }
 
 // ── English alphabet coverage ───────────────────────────────────────────
@@ -64,13 +65,26 @@ TEST(T4Layout, EnglishGroupSizes) {
 }
 
 TEST(T4Layout, EnglishGetGroupLetter) {
+  uint8_t blen;
+  const char* ptr;
   // btn1: abcdef
-  EXPECT_EQ(getGroupLetter(T4Language::EN, 1, 0), 'a');
-  EXPECT_EQ(getGroupLetter(T4Language::EN, 1, 1), 'b');
-  EXPECT_EQ(getGroupLetter(T4Language::EN, 1, 5), 'f');
+  ptr = getGroupLetter(T4Language::EN, 1, 0, blen);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(blen, 1u);
+  EXPECT_EQ(*ptr, 'a');
+  ptr = getGroupLetter(T4Language::EN, 1, 1, blen);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(*ptr, 'b');
+  ptr = getGroupLetter(T4Language::EN, 1, 5, blen);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(*ptr, 'f');
   // btn4: tuvwxyz
-  EXPECT_EQ(getGroupLetter(T4Language::EN, 4, 0), 't');
-  EXPECT_EQ(getGroupLetter(T4Language::EN, 4, 6), 'z');
+  ptr = getGroupLetter(T4Language::EN, 4, 0, blen);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(*ptr, 't');
+  ptr = getGroupLetter(T4Language::EN, 4, 6, blen);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(*ptr, 'z');
 }
 
 // ── Russian alphabet coverage ───────────────────────────────────────────

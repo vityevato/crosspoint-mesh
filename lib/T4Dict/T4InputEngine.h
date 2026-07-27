@@ -93,8 +93,9 @@ class T4InputEngine {
 
   // ── Multi-tap state (for UI display) ──────────────────────────────
 
-  /// Currently active letter in Multi-tap, or '\0' if none/idle.
-  char getCurrentTapLetter() const;
+  /// Currently active letter in Multi-tap (pointer into group string).
+  /// outByteLen receives UTF-8 byte length (1–4). Returns nullptr if idle.
+  const char* getCurrentTapLetter(uint8_t& outByteLen) const;
 
   /// Current button being multi-tapped (1–4), or 0 if idle.
   uint8_t getActiveButton() const;
@@ -131,9 +132,6 @@ class T4InputEngine {
   /// delegates to the mode stored in _prevMode.
   void backspace();
 
-  /// Restore what the last backspace removed.
-  void undoDelete();
-
   // ── Time-based updates ────────────────────────────────────────────
 
   /// Call periodically with current clock (ms). Checks Multi-tap
@@ -142,7 +140,7 @@ class T4InputEngine {
 
   // ── Full reset ────────────────────────────────────────────────────
 
-  /// Reset all state: sequence, confirmed text, undo stack, candidates.
+  /// Reset all state: sequence, confirmed text, candidates.
   /// Does NOT unload the dictionary or change language/mode.
   void reset();
 
@@ -155,9 +153,11 @@ class T4InputEngine {
   /// the current cycling letter is fixed and the next press starts a new letter.
   static constexpr uint32_t kMultiTapTimeoutMs = 800;
 
+  /// Maximum confirmed text length in bytes (UTF-8).
+  static constexpr uint16_t kMaxTextLen = 50;
+
  private:
   static constexpr uint8_t kMaxSeqLen = 31;
-  static constexpr uint16_t kMaxTextLen = 255;
 
   std::unique_ptr<Dict> _dict;
   T4Language _lang = T4Language::EN;
@@ -179,11 +179,6 @@ class T4InputEngine {
   // Confirmed text
   char _confirmedText[kMaxTextLen + 1] = {};
   uint16_t _textLen = 0;
-
-  // Undo stack (last backspace result)
-  char _undoBuf[64] = {};
-  uint8_t _undoLen = 0;
-  T4Mode _undoMode = T4Mode::PREDICT;
 
   // Scratch / error
   mutable char _candidateBuf[64] = {};
@@ -329,9 +324,9 @@ void T4InputEngine<Dict>::loadDictionaryForLanguage(T4Language lang) {
 }
 
 template <typename Dict>
-char T4InputEngine<Dict>::getCurrentTapLetter() const {
-  if (_activeButton == 0) return '\0';
-  return getGroupLetter(_lang, _activeButton, _tapIndex);
+const char* T4InputEngine<Dict>::getCurrentTapLetter(uint8_t& outByteLen) const {
+  if (_activeButton == 0) { outByteLen = 0; return nullptr; }
+  return getGroupLetter(_lang, _activeButton, _tapIndex, outByteLen);
 }
 
 // ── setLanguage ─────────────────────────────────────────────────────────
@@ -402,11 +397,13 @@ bool T4InputEngine<Dict>::pressButton(uint8_t btn) {
 
     // DIGIT language in Predict: just type the first digit in group
     if (_lang == T4Language::DIGIT) {
-      char digit = getGroupLetter(T4Language::DIGIT, btn, 0);
-      if (digit && _textLen < kMaxTextLen) {
-        _confirmedText[_textLen++] = digit;
+      uint8_t blen;
+      const char* digit = getGroupLetter(T4Language::DIGIT, btn, 0, blen);
+      if (digit && blen > 0 && _textLen + blen <= kMaxTextLen) {
+        memcpy(_confirmedText + _textLen, digit, blen);
+        _textLen += blen;
         _confirmedText[_textLen] = '\0';
-        LOG_DBG("T4", "pressButton: digit '%c' confirmed", digit);
+        LOG_DBG("T4", "pressButton: digit confirmed");
       }
       return true;
     }
@@ -589,65 +586,157 @@ void T4InputEngine<Dict>::backspace() {
           _textLen);
 
   if (effectiveMode == T4Mode::PREDICT) {
-    // Delete entire candidate word (reset sequence).
-    // In COMMAND mode, if no unconfirmed candidate exists,
-    // fall through to letter-level delete.
-    const char* cand = getCurrentCandidate();
-    bool hasUnconfirmed = (cand && cand[0] != '\0') || _seqLen > 0;
-    if (_mode != T4Mode::COMMAND || hasUnconfirmed) {
-      if (cand && cand[0] != '\0') {
-        auto len = strlen(cand);
-        if (len < sizeof(_undoBuf)) {
-          memcpy(_undoBuf, cand, len + 1);
-          _undoLen = static_cast<uint8_t>(len);
-          _undoMode = T4Mode::PREDICT;
+    // Go back one step in the prediction: remove last button press
+    // and rebuild the dictionary state from the shortened sequence.
+    if (_seqLen > 0) {
+      _seqLen--;
+      if (_dict) {
+        _dict->reset();
+        for (uint8_t i = 0; i < _seqLen; i++) {
+          _dict->pressButton(_sequence[i]);
         }
+        _candidatesLoaded = _dict->loadCandidates();
+        _candidateCount = _dict->getCandidateCount();
       }
-      if (_dict) _dict->reset();
-      clearSequence();
+      _candidateIndex = 0;
+      _candidateBuf[0] = '\0';
+      _savedCandidate[0] = '\0';
+      _savedSeqLen = 0;
       return;
     }
-    // COMMAND mode with no unconfirmed text: delete last letter
-  }
 
-  if (effectiveMode == T4Mode::MULTI_TAP || _mode == T4Mode::COMMAND) {
-    // Delete one letter
+    // Sequence is empty: delete trailing punctuation, or pull the last
+    // word back into the sequence for re-editing.
     if (_textLen == 0) return;
-    // Save undo data
-    _undoBuf[0] = _confirmedText[_textLen - 1];
-    _undoBuf[1] = '\0';
-    _undoLen = 1;
-    _undoMode = T4Mode::MULTI_TAP;
-    _textLen--;
+
+    // Find start byte of last UTF-8 character (scan backwards from end)
+    uint8_t blen = 1;
+    uint16_t lastStart = _textLen - 1;
+    while (lastStart > 0 && (_confirmedText[lastStart] & 0xC0) == 0x80) {
+      lastStart--;
+      blen++;
+    }
+
+    // Check if last char is a letter from any group — if not, it's punct/space
+    const char* lastCharPtr = _confirmedText + lastStart;
+    bool isLetter = false;
+    for (uint8_t btn = 1; btn <= 4; btn++) {
+      uint8_t groupLen = getGroupLength(_lang, btn);
+      for (uint8_t idx = 0; idx < groupLen; idx++) {
+        uint8_t charBlen;
+        const char* groupChar = getGroupLetter(_lang, btn, idx, charBlen);
+        if (groupChar && charBlen == blen && memcmp(groupChar, lastCharPtr, blen) == 0) {
+          isLetter = true;
+          break;
+        }
+      }
+      if (isLetter) break;
+    }
+
+    if (!isLetter) {
+      // Punctuation or space: just delete one character
+      _textLen -= blen;
+      _confirmedText[_textLen] = '\0';
+      return;
+    }
+
+    // It's a letter: extract the entire word from confirmed text,
+    // move it into the prediction sequence for re-editing.
+    uint16_t wordStart = _textLen;
+    while (wordStart > 0) {
+      // Find start byte of the character before wordStart
+      uint8_t prevBlen = 1;
+      uint16_t prevStart = wordStart - 1;
+      while (prevStart > 0 && (_confirmedText[prevStart] & 0xC0) == 0x80) {
+        prevStart--;
+        prevBlen++;
+      }
+      const char* prevChar = _confirmedText + prevStart;
+
+      // Is it a letter?
+      bool prevIsLetter = false;
+      for (uint8_t btn = 1; btn <= 4; btn++) {
+        uint8_t groupLen = getGroupLength(_lang, btn);
+        for (uint8_t idx = 0; idx < groupLen; idx++) {
+          uint8_t charBlen;
+          const char* gc = getGroupLetter(_lang, btn, idx, charBlen);
+          if (gc && charBlen == prevBlen && memcmp(gc, prevChar, prevBlen) == 0) {
+            prevIsLetter = true;
+            break;
+          }
+        }
+        if (prevIsLetter) break;
+      }
+      if (!prevIsLetter) break;
+      wordStart -= prevBlen;
+    }
+
+    // Extract word and its button sequence
+    uint8_t seqIdx = 0;
+    uint16_t pos = wordStart;
+    while (pos < _textLen && seqIdx < kMaxSeqLen) {
+      // Determine UTF-8 byte length from the start byte
+      uint8_t charBlen = 1;
+      unsigned char firstByte = static_cast<unsigned char>(_confirmedText[pos]);
+      if ((firstByte & 0xE0) == 0xC0)
+        charBlen = 2;
+      else if ((firstByte & 0xF0) == 0xE0)
+        charBlen = 3;
+      else if ((firstByte & 0xF8) == 0xF0)
+        charBlen = 4;
+
+      // Find the button that produces this character
+      bool found = false;
+      for (uint8_t btn = 1; btn <= 4; btn++) {
+        uint8_t groupLen = getGroupLength(_lang, btn);
+        for (uint8_t idx = 0; idx < groupLen; idx++) {
+          uint8_t gcBlen;
+          const char* gc = getGroupLetter(_lang, btn, idx, gcBlen);
+          if (gc && gcBlen == charBlen && memcmp(gc, _confirmedText + pos, charBlen) == 0) {
+            _sequence[seqIdx++] = btn;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      if (!found) break;  // shouldn't happen for keyboard-typed text
+      pos += charBlen;
+    }
+    _seqLen = seqIdx;
+
+    // Remove the word from confirmed text
+    _textLen = wordStart;
     _confirmedText[_textLen] = '\0';
+
+    // Navigate dictionary with the recovered sequence
+    if (_dict) {
+      _dict->reset();
+      for (uint8_t i = 0; i < _seqLen; i++) {
+        _dict->pressButton(_sequence[i]);
+      }
+      _candidatesLoaded = _dict->loadCandidates();
+      _candidateCount = _dict->getCandidateCount();
+    }
+    _candidateIndex = 0;
+    _candidateBuf[0] = '\0';
+    _savedCandidate[0] = '\0';
+    _savedSeqLen = 0;
     return;
   }
-}
 
-// ── undoDelete ──────────────────────────────────────────────────────────
-
-template <typename Dict>
-void T4InputEngine<Dict>::undoDelete() {
-  LOG_DBG("T4", "undoDelete: undoLen=%u undoMode=%d", _undoLen, static_cast<int>(_undoMode));
-  if (_undoLen == 0) return;
-
-  if (_undoMode == T4Mode::PREDICT) {
-    // Restore word: append to confirmed text
-    if (_textLen + _undoLen <= kMaxTextLen) {
-      memcpy(_confirmedText + _textLen, _undoBuf, _undoLen);
-      _textLen += _undoLen;
-      _confirmedText[_textLen] = '\0';
-    }
-  } else {
-    // Restore single letter
-    if (_textLen < kMaxTextLen) {
-      _confirmedText[_textLen++] = _undoBuf[0];
-      _confirmedText[_textLen] = '\0';
-    }
+  // Delete one UTF-8 character (may be 1–4 bytes)
+  if (_textLen == 0) return;
+  // Find start byte of last UTF-8 character
+  uint8_t blen = 1;
+  uint16_t startPos = _textLen - 1;
+  while (startPos > 0 && (_confirmedText[startPos] & 0xC0) == 0x80) {
+    startPos--;
+    blen++;
   }
-
-  _undoLen = 0;
-  _undoBuf[0] = '\0';
+  _textLen = startPos;
+  _confirmedText[startPos] = '\0';
+  return;
 }
 
 // ── poll ────────────────────────────────────────────────────────────────
@@ -677,8 +766,6 @@ void T4InputEngine<Dict>::reset() {
   _textLen = 0;
   _activeButton = 0;
   _tapIndex = 0;
-  _undoBuf[0] = '\0';
-  _undoLen = 0;
   if (_dict) _dict->reset();
 }
 
@@ -687,11 +774,13 @@ void T4InputEngine<Dict>::reset() {
 template <typename Dict>
 void T4InputEngine<Dict>::fixMultiTapLetter() {
   if (_activeButton == 0) return;
-  char letter = getGroupLetter(_lang, _activeButton, _tapIndex);
-  if (letter != '\0' && _textLen < kMaxTextLen) {
-    _confirmedText[_textLen++] = letter;
+  uint8_t blen;
+  const char* letter = getGroupLetter(_lang, _activeButton, _tapIndex, blen);
+  if (letter && blen > 0 && _textLen + blen <= kMaxTextLen) {
+    memcpy(_confirmedText + _textLen, letter, blen);
+    _textLen += blen;
     _confirmedText[_textLen] = '\0';
-    LOG_DBG("T4", "fixMultiTapLetter: '%c' -> text[%u]", letter, _textLen - 1);
+    LOG_DBG("T4", "fixMultiTapLetter: blen=%u -> text[%u]", blen, _textLen - blen);
   }
   _activeButton = 0;
   _tapIndex = 0;
