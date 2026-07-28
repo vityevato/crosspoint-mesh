@@ -58,6 +58,7 @@ struct ThemeMetrics {
 
   int buttonHintsHeight;
   int sideButtonHintsWidth;
+  int buttonHintCornerRadius;
 
   int progressBarHeight;
   int progressBarMarginTop;
@@ -138,6 +139,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .homeMenuTopOffset = 10,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
+                                 .buttonHintCornerRadius = 0,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
                                  .statusBarHorizontalMargin = 5,

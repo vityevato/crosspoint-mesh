@@ -345,9 +345,11 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
     if (labels[i] != nullptr && labels[i][0] != '\0') {
       // Draw the filled background (dithered when inactive) and border for a FULL-sized button
       if (inactive) {
-        renderer.fillRectDither(x, pageHeight - buttonY, buttonWidth, buttonHeight, Color::LightGray);
+        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                                 false, Color::LightGray);
       } else {
-        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, Color::White);
+        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                                 false, Color::White);
       }
       renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cornerRadius, true, true, false,
                                false, true);

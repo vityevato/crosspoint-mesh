@@ -413,11 +413,11 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
 
   // Ensure button hints always "win" visually even if other elements accidentally render into this area.
   if (inactive) {
-    renderer.fillRectDither(leftGroupX, hintY, groupWidth, hintHeight, Color::LightGray);
-    renderer.fillRectDither(rightGroupX, hintY, groupWidth, hintHeight, Color::LightGray);
+    renderer.fillRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::LightGray);
+    renderer.fillRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::LightGray);
   } else {
-    renderer.fillRect(leftGroupX, hintY, groupWidth, hintHeight, false);
-    renderer.fillRect(rightGroupX, hintY, groupWidth, hintHeight, false);
+    renderer.fillRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::White);
+    renderer.fillRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::White);
   }
 
   renderer.drawRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, 2, kBottomRadius, true);

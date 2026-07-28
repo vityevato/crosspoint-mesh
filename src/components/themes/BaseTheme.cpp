@@ -173,17 +173,27 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
   const int* buttonPositions = getButtonXPositions(gpio.deviceIsX3());
   const char* labels[] = {btn1, btn2, btn3, btn4};
+  const int cr = UITheme::getInstance().getMetrics().buttonHintCornerRadius;
 
   for (int i = 0; i < 4; i++) {
     // Only draw if the label is non-empty
     if (labels[i] != nullptr && labels[i][0] != '\0') {
       const int x = buttonPositions[i];
-      if (inactive) {
-        renderer.fillRectDither(x, pageHeight - buttonY, buttonWidth, buttonHeight, Color::LightGray);
+      if (cr > 0) {
+        if (inactive) {
+          renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cr, Color::LightGray);
+        } else {
+          renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cr, Color::White);
+        }
+        renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cr, true);
       } else {
-        renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
+        if (inactive) {
+          renderer.fillRectDither(x, pageHeight - buttonY, buttonWidth, buttonHeight, Color::LightGray);
+        } else {
+          renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
+        }
+        renderer.drawRect(x, pageHeight - buttonY, buttonWidth, buttonHeight);
       }
-      renderer.drawRect(x, pageHeight - buttonY, buttonWidth, buttonHeight);
       constexpr int maxLabelWidth = buttonWidth - 4;
       auto label = renderer.truncatedText(UI_10_FONT_ID, labels[i], maxLabelWidth);
       const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, label.c_str());
