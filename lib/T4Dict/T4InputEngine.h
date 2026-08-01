@@ -195,6 +195,13 @@ class T4InputEngine {
   char _confirmedText[kMaxTextLen + 1] = {};
   uint16_t _textLen = 0;
 
+  // Per-word language metadata (indexed by word order in confirmed text).
+  // Used by backspace to recover the correct language when pulling a word
+  // back for re-editing, and to auto-switch the input language to match.
+  static constexpr uint8_t kMaxWords = 32;
+  T4Language _wordLang[kMaxWords] = {};
+  uint8_t _wordCount = 0;
+
   // Scratch / error
   mutable char _candidateBuf[64] = {};
   char _lastError[64] = {};
@@ -210,6 +217,11 @@ class T4InputEngine {
   void clearSequence();
   void loadDictionaryForLanguage(T4Language lang);
   const char* dictPathForLanguage(T4Language lang);
+
+  /// Detect the dominant language of a UTF-8 word by inspecting lead bytes.
+  /// Cyrillic (0xD0–0xD1) → RU; otherwise EN. Returns EN for empty input.
+  /// Used when rebuilding _wordLang from raw text in setConfirmedText().
+  static T4Language detectWordLanguage(const char* word, uint16_t wordLen);
 };
 
 // ── Template implementation (inline for Dict-dependent parts) ───────────
@@ -276,6 +288,7 @@ void T4InputEngine<Dict>::setConfirmedText(const char* text) {
   if (!text) {
     _confirmedText[0] = '\0';
     _textLen = 0;
+    _wordCount = 0;
     return;
   }
   auto len = strlen(text);
@@ -283,6 +296,25 @@ void T4InputEngine<Dict>::setConfirmedText(const char* text) {
   memcpy(_confirmedText, text, len);
   _confirmedText[len] = '\0';
   _textLen = static_cast<uint16_t>(len);
+
+  // Rebuild per-word language metadata by scanning the text.
+  _wordCount = 0;
+  uint16_t pos = 0;
+  while (pos < _textLen && _wordCount < kMaxWords) {
+    // Skip leading spaces/punctuation
+    while (pos < _textLen && _confirmedText[pos] == ' ') pos++;
+    if (pos >= _textLen) break;
+
+    // Find end of this word (until space or end)
+    uint16_t wordStart = pos;
+    while (pos < _textLen && _confirmedText[pos] != ' ') pos++;
+    uint16_t wordLen = pos - wordStart;
+    if (wordLen > 0) {
+      _wordLang[_wordCount++] = detectWordLanguage(_confirmedText + wordStart, wordLen);
+    }
+    // Skip trailing spaces
+    while (pos < _textLen && _confirmedText[pos] == ' ') pos++;
+  }
 }
 
 template <typename Dict>
@@ -301,6 +333,26 @@ void T4InputEngine<Dict>::setError(const char* msg) {
   if (len > sizeof(_lastError) - 1) len = sizeof(_lastError) - 1;
   memcpy(_lastError, msg, len);
   _lastError[len] = '\0';
+}
+
+template <typename Dict>
+T4Language T4InputEngine<Dict>::detectWordLanguage(const char* word, uint16_t wordLen) {
+  if (!word || wordLen == 0) return T4Language::EN;
+  // Scan the word: any 2-byte UTF-8 Cyrillic lead byte → RU.
+  for (uint16_t i = 0; i < wordLen;) {
+    unsigned char c0 = static_cast<unsigned char>(word[i]);
+    if (c0 >= 0xD0 && c0 <= 0xD1) return T4Language::RU;
+    // Advance by UTF-8 byte length
+    if ((c0 & 0xE0) == 0xC0)
+      i += 2;
+    else if ((c0 & 0xF0) == 0xE0)
+      i += 3;
+    else if ((c0 & 0xF8) == 0xF0)
+      i += 4;
+    else
+      i += 1;
+  }
+  return T4Language::EN;
 }
 
 template <typename Dict>
@@ -575,6 +627,9 @@ void T4InputEngine<Dict>::confirmWord() {
         _textLen += len;
         _confirmedText[_textLen++] = ' ';
         _confirmedText[_textLen] = '\0';
+        // Record word language (for the Multi-tap path; in Predict the
+        // activity's subsequent setConfirmedText() call will rebuild this).
+        if (_wordCount < kMaxWords) _wordLang[_wordCount++] = _lang;
       }
     }
 
@@ -590,6 +645,7 @@ void T4InputEngine<Dict>::confirmWord() {
     if (_textLen < kMaxTextLen) {
       _confirmedText[_textLen++] = ' ';
       _confirmedText[_textLen] = '\0';
+      if (_wordCount < kMaxWords) _wordLang[_wordCount++] = _lang;
     }
     return;
   }
@@ -638,10 +694,20 @@ void T4InputEngine<Dict>::backspace() {
       blen++;
     }
 
-    // Check if last char is a letter from any group (case-insensitive, so a
-    // capitalized word is still recognized) — if not, it's punct/space.
+    // Check if last char is a letter (current language first, then fallback
+    // to other languages for cross-language words).
     const char* lastCharPtr = _confirmedText + lastStart;
     bool isLetter = buttonForLetter(_lang, lastCharPtr, blen) != 0;
+    if (!isLetter) {
+      for (uint8_t li = 0; li < kLanguageCount; li++) {
+        T4Language tl = static_cast<T4Language>(li);
+        if (tl == _lang || tl == T4Language::DIGIT) continue;
+        if (buttonForLetter(tl, lastCharPtr, blen) != 0) {
+          isLetter = true;
+          break;
+        }
+      }
+    }
 
     if (!isLetter) {
       // Punctuation or space: just delete one character
@@ -654,7 +720,6 @@ void T4InputEngine<Dict>::backspace() {
     // move it into the prediction sequence for re-editing.
     uint16_t wordStart = _textLen;
     while (wordStart > 0) {
-      // Find start byte of the character before wordStart
       uint8_t prevBlen = 1;
       uint16_t prevStart = wordStart - 1;
       while (prevStart > 0 && (_confirmedText[prevStart] & 0xC0) == 0x80) {
@@ -663,17 +728,30 @@ void T4InputEngine<Dict>::backspace() {
       }
       const char* prevChar = _confirmedText + prevStart;
 
-      // Is it a letter? (case-insensitive — capitalized letters count)
       bool prevIsLetter = buttonForLetter(_lang, prevChar, prevBlen) != 0;
+      if (!prevIsLetter) {
+        for (uint8_t li = 0; li < kLanguageCount; li++) {
+          T4Language tl = static_cast<T4Language>(li);
+          if (tl == _lang || tl == T4Language::DIGIT) continue;
+          if (buttonForLetter(tl, prevChar, prevBlen) != 0) {
+            prevIsLetter = true;
+            break;
+          }
+        }
+      }
       if (!prevIsLetter) break;
       wordStart -= prevBlen;
     }
 
-    // Extract word and its button sequence
+    // Determine the language of this word from stored metadata.
+    // Every word in confirmed text arrived via confirmWord() which records
+    // _lang at commit time, so the metadata is always available here.
+    T4Language wordLang = (_wordCount > 0) ? _wordLang[_wordCount - 1] : _lang;
+
+    // Extract word and its button sequence using the word's language.
     uint8_t seqIdx = 0;
     uint16_t pos = wordStart;
     while (pos < _textLen && seqIdx < kMaxSeqLen) {
-      // Determine UTF-8 byte length from the start byte
       uint8_t charBlen = 1;
       unsigned char firstByte = static_cast<unsigned char>(_confirmedText[pos]);
       if ((firstByte & 0xE0) == 0xC0)
@@ -683,10 +761,8 @@ void T4InputEngine<Dict>::backspace() {
       else if ((firstByte & 0xF8) == 0xF0)
         charBlen = 4;
 
-      // Find the button that produces this character (case-insensitive, so a
-      // capitalized word maps back to the same lowercase button sequence).
-      uint8_t btn = buttonForLetter(_lang, _confirmedText + pos, charBlen);
-      if (btn == 0) break;  // shouldn't happen for keyboard-typed text
+      uint8_t btn = buttonForLetter(wordLang, _confirmedText + pos, charBlen);
+      if (btn == 0) break;
       _sequence[seqIdx++] = btn;
       pos += charBlen;
     }
@@ -695,8 +771,30 @@ void T4InputEngine<Dict>::backspace() {
     // Remove the word from confirmed text
     _textLen = wordStart;
     _confirmedText[_textLen] = '\0';
+    if (_wordCount > 0) _wordCount--;
 
-    // Navigate dictionary with the recovered sequence
+    // Auto-switch input language to match the word being re-edited.
+    // Save the recovered sequence before clearing old-language state.
+    if (wordLang != _lang) {
+      uint8_t savedSeq[kMaxSeqLen];
+      uint8_t savedSeqLen = seqIdx;
+      memcpy(savedSeq, _sequence, seqIdx);
+
+      _lang = wordLang;
+      clearSequence();  // clear old-language state (candidates, buf)
+      if (_dict) {
+        _dict->close();
+        _dict.reset();
+      }
+      if (wordLang != T4Language::DIGIT) {
+        loadDictionaryForLanguage(wordLang);
+      }
+      // Restore the recovered button sequence (cleared by clearSequence above).
+      _seqLen = savedSeqLen;
+      memcpy(_sequence, savedSeq, savedSeqLen);
+    }
+
+    // Navigate the (possibly new) dictionary with the recovered sequence.
     if (_dict) {
       _dict->reset();
       for (uint8_t i = 0; i < _seqLen; i++) {
@@ -751,6 +849,7 @@ void T4InputEngine<Dict>::reset() {
   clearSequence();
   _confirmedText[0] = '\0';
   _textLen = 0;
+  _wordCount = 0;
   _activeButton = 0;
   _tapIndex = 0;
   _shiftLevel = 0;

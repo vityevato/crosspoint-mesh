@@ -414,6 +414,7 @@ void T4EntryActivity::loop() {
         LOG_DBG("T4", "loop: Up → backspace (mode=%d, textLen=%u)", static_cast<int>(_mode),
                 _inputEngine.getConfirmedTextLength());
         _inputEngine.backspace();
+        _lang = _inputEngine.getLanguage();  // may have auto-switched on cross-language word
         _punctIndex = 0;
         _wordJustConfirmed = false;
         _candidateScrollX = 0;
@@ -448,11 +449,13 @@ void T4EntryActivity::loop() {
           // First deletion after initial delay
           LOG_DBG("T4", "loop: CMD backspace hold start (held=%lums)", held);
           _inputEngine.backspace();
+          _lang = _inputEngine.getLanguage();  // may have auto-switched
           _backspaceLastActionMs = millis();
           requestUpdate();
         } else if (millis() - _backspaceLastActionMs >= BACKSPACE_REPEAT_MS) {
           // Repeat deletion (word-level)
           _inputEngine.backspace();
+          _lang = _inputEngine.getLanguage();  // may have auto-switched
           _backspaceLastActionMs = millis();
           requestUpdate();
         }

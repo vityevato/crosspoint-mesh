@@ -444,6 +444,34 @@ TEST_F(T4InputEngineTest, BackspacePullsBackCapitalizedWord) {
   EXPECT_EQ(seq[2], 3u);  // 'n' → btn3 (mnopqrs)
 }
 
+TEST_F(T4InputEngineTest, BackspacePullsBackCrossLanguageWord) {
+  // A Russian word is present in confirmed text while English is active.
+  // Backspace must pull the word back using the Russian layout and
+  // auto-switch the input language to RU.
+  predictor.setConfirmedText("привет ");  // setConfirmedText rebuilds _wordLang
+  EXPECT_EQ(predictor.getLanguage(), T4Language::EN);
+
+  // First backspace removes the trailing space.
+  predictor.backspace();
+  EXPECT_STREQ(predictor.getConfirmedText(), "привет");
+
+  // Second backspace pulls back the Russian word and switches language.
+  predictor.backspace();
+  EXPECT_EQ(predictor.getConfirmedTextLength(), 0u);
+  // Language must have auto-switched to RU so the letter blocks match.
+  EXPECT_EQ(predictor.getLanguage(), T4Language::RU);
+  // Button sequence must be extracted using the Russian layout.
+  ASSERT_EQ(predictor.getSequenceLength(), 6u);  // п р и в е т
+  const uint8_t* seq = predictor.getSequence();
+  ASSERT_NE(seq, nullptr);
+  EXPECT_EQ(seq[0], 3u);  // п → btn3 (RU: прстуфхц)
+  EXPECT_EQ(seq[1], 3u);  // р → btn3
+  EXPECT_EQ(seq[2], 2u);  // и → btn2 (RU: зийклмно)
+  EXPECT_EQ(seq[3], 1u);  // в → btn1 (RU: абвгдеёж-)
+  EXPECT_EQ(seq[4], 1u);  // е → btn1
+  EXPECT_EQ(seq[5], 3u);  // т → btn3
+}
+
 // ── COMMAND mode backspace (Multi-tap semantics) ────────────────────────
 
 TEST_F(T4InputEngineTest, CommandBackspaceFromMultiTap) {
