@@ -28,6 +28,7 @@ add_library(crosspoint_test_common INTERFACE)
 target_include_directories(crosspoint_test_common INTERFACE
   ${REPO_ROOT}
   ${REPO_ROOT}/lib
+  ${CMAKE_CURRENT_SOURCE_DIR}/stubs
 )
 target_compile_options(crosspoint_test_common INTERFACE
   -Wall

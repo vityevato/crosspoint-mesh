@@ -43,6 +43,13 @@ class T4EntryActivity : public Activity {
   bool exitCommandMode();
   bool togglePredictMultiTap();
 
+  // Shift/uppercase helpers
+  void cycleShift();
+  // Apply the active Shift/Caps state to a candidate word for display and
+  // commit (Caps → whole word, Shift/auto-cap → first letter only). Pure:
+  // reads state but does not consume the one-shot Shift / auto-cap.
+  std::string applyWordCase(const char* word) const;
+
   std::string _title;
   std::string _initialText;
   size_t _maxLength;
@@ -66,6 +73,9 @@ class T4EntryActivity : public Activity {
   bool _rightHeld, _rightLongHandled;
   bool _upHeld, _upLongHandled;
   bool _upLeftComboHandled = false;
+
+  // Down long-press tracking (toggles Shift/Caps; short press = punctuation)
+  bool _downHeld = false, _downLongHandled = false;
 
   // Toggle for left side button action: false=backspace, true=cycleCandidate
   bool _upSideCyclesCandidates = false;

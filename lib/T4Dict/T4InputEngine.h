@@ -106,6 +106,18 @@ class T4InputEngine {
   /// confirmed by timeout or next button press.
   void fixMultiTapLetter();
 
+  // ── Shift / uppercase ─────────────────────────────────────────────
+
+  /// Uppercase level applied to newly typed letters:
+  /// 0 = off, 1 = one-shot (next letter only), 2 = locked (Caps Lock).
+  /// In MULTI_TAP the level is applied when a letter is fixed; a
+  /// one-shot level resets to 0 after the first fixed letter. In
+  /// PREDICT the level is read by the UI layer at word-commit time.
+  void setShiftLevel(uint8_t level) { _shiftLevel = level; }
+
+  /// Current uppercase level (0 = off, 1 = one-shot, 2 = locked).
+  uint8_t getShiftLevel() const { return _shiftLevel; }
+
   // ── Text output ───────────────────────────────────────────────────
 
   /// Confirm current word (Predict) or space (Multi-tap).
@@ -154,7 +166,7 @@ class T4InputEngine {
   static constexpr uint32_t kMultiTapTimeoutMs = 800;
 
   /// Maximum confirmed text length in bytes (UTF-8).
-  static constexpr uint16_t kMaxTextLen = 50;
+  static constexpr uint16_t kMaxTextLen = 300;
 
  private:
   static constexpr uint8_t kMaxSeqLen = 31;
@@ -175,6 +187,9 @@ class T4InputEngine {
   uint8_t _activeButton = 0;
   uint8_t _tapIndex = 0;
   uint32_t _lastTapTime = 0;
+
+  // Uppercase level: 0 = off, 1 = one-shot (shift), 2 = locked (caps).
+  uint8_t _shiftLevel = 0;
 
   // Confirmed text
   char _confirmedText[kMaxTextLen + 1] = {};
@@ -325,7 +340,10 @@ void T4InputEngine<Dict>::loadDictionaryForLanguage(T4Language lang) {
 
 template <typename Dict>
 const char* T4InputEngine<Dict>::getCurrentTapLetter(uint8_t& outByteLen) const {
-  if (_activeButton == 0) { outByteLen = 0; return nullptr; }
+  if (_activeButton == 0) {
+    outByteLen = 0;
+    return nullptr;
+  }
   return getGroupLetter(_lang, _activeButton, _tapIndex, outByteLen);
 }
 
@@ -357,13 +375,15 @@ void T4InputEngine<Dict>::setMode(T4Mode mode) {
   LOG_DBG("T4", "setMode: %d (current=%d)", static_cast<int>(mode), static_cast<int>(_mode));
   if (mode == _mode) return;
 
-  // Entering COMMAND — remember where we came from
-  if (mode == T4Mode::COMMAND && _mode != T4Mode::COMMAND) {
+  // Entering COMMAND — remember where we came from.
+  // (mode != _mode is guaranteed above, so _mode != COMMAND here.)
+  if (mode == T4Mode::COMMAND) {
     _prevMode = _mode;
   }
 
-  // Exiting COMMAND — restore previous mode
-  if (_mode == T4Mode::COMMAND && mode != T4Mode::COMMAND) {
+  // Exiting COMMAND — restore previous mode.
+  // (mode != _mode is guaranteed above, so mode != COMMAND here.)
+  if (_mode == T4Mode::COMMAND) {
     _mode = mode;  // caller explicitly set mode, honor it
     return;
   }
@@ -410,8 +430,9 @@ bool T4InputEngine<Dict>::pressButton(uint8_t btn) {
 
     if (_seqLen >= kMaxSeqLen) return false;
 
-    // Save current candidate before navigating further (dead-end fallback)
-    if (_candidateCount > 0 && _candidatesLoaded && _dict) {
+    // Save current candidate before navigating further (dead-end fallback).
+    // _dict is non-null here (checked at the top of the PREDICT block).
+    if (_candidateCount > 0 && _candidatesLoaded) {
       const char* cur = _dict->getCandidate(_candidateIndex);
       if (cur && cur[0]) {
         auto clen = strlen(cur);
@@ -617,21 +638,10 @@ void T4InputEngine<Dict>::backspace() {
       blen++;
     }
 
-    // Check if last char is a letter from any group — if not, it's punct/space
+    // Check if last char is a letter from any group (case-insensitive, so a
+    // capitalized word is still recognized) — if not, it's punct/space.
     const char* lastCharPtr = _confirmedText + lastStart;
-    bool isLetter = false;
-    for (uint8_t btn = 1; btn <= 4; btn++) {
-      uint8_t groupLen = getGroupLength(_lang, btn);
-      for (uint8_t idx = 0; idx < groupLen; idx++) {
-        uint8_t charBlen;
-        const char* groupChar = getGroupLetter(_lang, btn, idx, charBlen);
-        if (groupChar && charBlen == blen && memcmp(groupChar, lastCharPtr, blen) == 0) {
-          isLetter = true;
-          break;
-        }
-      }
-      if (isLetter) break;
-    }
+    bool isLetter = buttonForLetter(_lang, lastCharPtr, blen) != 0;
 
     if (!isLetter) {
       // Punctuation or space: just delete one character
@@ -653,20 +663,8 @@ void T4InputEngine<Dict>::backspace() {
       }
       const char* prevChar = _confirmedText + prevStart;
 
-      // Is it a letter?
-      bool prevIsLetter = false;
-      for (uint8_t btn = 1; btn <= 4; btn++) {
-        uint8_t groupLen = getGroupLength(_lang, btn);
-        for (uint8_t idx = 0; idx < groupLen; idx++) {
-          uint8_t charBlen;
-          const char* gc = getGroupLetter(_lang, btn, idx, charBlen);
-          if (gc && charBlen == prevBlen && memcmp(gc, prevChar, prevBlen) == 0) {
-            prevIsLetter = true;
-            break;
-          }
-        }
-        if (prevIsLetter) break;
-      }
+      // Is it a letter? (case-insensitive — capitalized letters count)
+      bool prevIsLetter = buttonForLetter(_lang, prevChar, prevBlen) != 0;
       if (!prevIsLetter) break;
       wordStart -= prevBlen;
     }
@@ -685,22 +683,11 @@ void T4InputEngine<Dict>::backspace() {
       else if ((firstByte & 0xF8) == 0xF0)
         charBlen = 4;
 
-      // Find the button that produces this character
-      bool found = false;
-      for (uint8_t btn = 1; btn <= 4; btn++) {
-        uint8_t groupLen = getGroupLength(_lang, btn);
-        for (uint8_t idx = 0; idx < groupLen; idx++) {
-          uint8_t gcBlen;
-          const char* gc = getGroupLetter(_lang, btn, idx, gcBlen);
-          if (gc && gcBlen == charBlen && memcmp(gc, _confirmedText + pos, charBlen) == 0) {
-            _sequence[seqIdx++] = btn;
-            found = true;
-            break;
-          }
-        }
-        if (found) break;
-      }
-      if (!found) break;  // shouldn't happen for keyboard-typed text
+      // Find the button that produces this character (case-insensitive, so a
+      // capitalized word maps back to the same lowercase button sequence).
+      uint8_t btn = buttonForLetter(_lang, _confirmedText + pos, charBlen);
+      if (btn == 0) break;  // shouldn't happen for keyboard-typed text
+      _sequence[seqIdx++] = btn;
       pos += charBlen;
     }
     _seqLen = seqIdx;
@@ -766,6 +753,7 @@ void T4InputEngine<Dict>::reset() {
   _textLen = 0;
   _activeButton = 0;
   _tapIndex = 0;
+  _shiftLevel = 0;
   if (_dict) _dict->reset();
 }
 
@@ -777,10 +765,29 @@ void T4InputEngine<Dict>::fixMultiTapLetter() {
   uint8_t blen;
   const char* letter = getGroupLetter(_lang, _activeButton, _tapIndex, blen);
   if (letter && blen > 0 && _textLen + blen <= kMaxTextLen) {
-    memcpy(_confirmedText + _textLen, letter, blen);
-    _textLen += blen;
-    _confirmedText[_textLen] = '\0';
-    LOG_DBG("T4", "fixMultiTapLetter: blen=%u -> text[%u]", blen, _textLen - blen);
+    // SOH sentinel (\x01) = newline action
+    if (blen == 1 && *letter == '\x01') {
+      _confirmedText[_textLen++] = '\n';
+      _confirmedText[_textLen] = '\0';
+      LOG_DBG("T4", "fixMultiTapLetter: newline");
+    } else {
+      // Apply uppercase when Shift/Caps is active (no-op for symbols).
+      char upper[4];
+      uint8_t writeLen = blen;
+      const char* src = letter;
+      if (_shiftLevel != 0) {
+        writeLen = upperLetterUtf8(letter, blen, upper);
+        src = upper;
+      }
+      if (_textLen + writeLen <= kMaxTextLen) {
+        memcpy(_confirmedText + _textLen, src, writeLen);
+        _textLen += writeLen;
+        _confirmedText[_textLen] = '\0';
+        LOG_DBG("T4", "fixMultiTapLetter: blen=%u shift=%u -> text[%u]", writeLen, _shiftLevel, _textLen - writeLen);
+      }
+      // One-shot Shift resets after a single fixed letter.
+      if (_shiftLevel == 1) _shiftLevel = 0;
+    }
   }
   _activeButton = 0;
   _tapIndex = 0;

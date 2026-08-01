@@ -18,9 +18,11 @@ gtest_discover_tests(T4DictionaryTest)
 add_executable(T4LayoutTest
   T4LayoutTest.cpp
   ${REPO_ROOT}/lib/T4Dict/T4Layout.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../stubs/HardwareSerial.cpp
 )
 target_include_directories(T4LayoutTest PRIVATE
   ${REPO_ROOT}/lib/T4Dict
+  ${REPO_ROOT}/lib/Logging
 )
 target_link_libraries(T4LayoutTest PRIVATE
   crosspoint_test_common
@@ -32,10 +34,12 @@ gtest_discover_tests(T4LayoutTest)
 add_executable(T4InputEngineTest
   T4InputEngineTest.cpp
   ${REPO_ROOT}/lib/T4Dict/T4Layout.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../stubs/HardwareSerial.cpp
 )
 target_include_directories(T4InputEngineTest PRIVATE
   ${REPO_ROOT}/lib/T4Dict
   ${REPO_ROOT}/lib
+  ${REPO_ROOT}/lib/Logging
 )
 target_link_libraries(T4InputEngineTest PRIVATE
   crosspoint_test_common

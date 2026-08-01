@@ -84,14 +84,11 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 - **Storage**: SD card (SdFat via `HalStorage`). No database.
   Settings persist as `/settings.json`. EPUB caches persist as
   binary files under `.crosspoint/` on the SD card.
-- **Testing**: Host-side Google Test (v1.17.0, fetched via CMake
-  `FetchContent`) unit tests for core algorithms (JSON parsers,
-  hyphenation, differential rounding, UTF-8 compose, T4 dictionary),
-  built and run with CMake/CTest. A standalone shell script
-  (`test/run_t4_dict_test.sh`) exercises the T4 dictionary build
-  pipeline. Desktop simulator (`pio run -e simulator`) provides
-  UI-level testing on macOS/Linux without a device. No on-device unit
-  test framework — hardware testing is manual.
+- **Testing**: Shell-script-driven desktop tests for core algorithms
+  (JSON parser, hyphenation, differential rounding). Desktop simulator
+  (`pio run -e simulator`) provides UI-level testing on macOS/Linux
+  without a device. No on-device unit test framework — hardware
+  testing is manual.
 - **Target platform**: Xteink X4 hardware only (ESP32-C3 + SD card +
   800x480 e-ink + physical buttons)
 - **Project type**: Embedded firmware (single device)
@@ -109,13 +106,10 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 ├── GOVERNANCE.md            # Project governance
 ├── README.md                # User-facing project overview and install guide
 ├── USER_GUIDE.md            # End-user operating instructions
-├── LICENSE                  # Project license
-├── requirements.txt         # Python tooling dependencies (build scripts)
 ├── bin/                     # Developer scripts (clang-format-fix)
 ├── .githooks/               # Git hooks (pre-commit runs clang-format)
 ├── .github/workflows/       # CI: build, format check, cppcheck, releases
 ├── docs/                    # Technical and contributor documentation
-│   ├── *.md                 # Topic docs (file-formats, i18n, webserver, …)
 │   ├── contributing/        # Getting started, architecture, workflow, testing
 │   └── images/              # Documentation images (comparison, focus-reading, wifi)
 ├── scripts/                 # Build-time and utility scripts (Python/Bash)
@@ -144,16 +138,16 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   │   ├── network/         # WiFi selection, web server activity
 │   │   ├── boot_sleep/      # Boot and deep sleep transitions
 │   │   ├── browser/         # OPDS book browser
-│   │   ├── meshcore/        # MeshCore BLE activities (hub, discover, scan, thread)
+│   │   ├── meshcore/        # MeshCore BLE activities (hub, discover, scan, chat, thread)
 │   │   └── util/            # Keyboard entry, full-screen messages
 │   ├── components/          # UI theme system, icons, themes
 │   │   ├── UITheme.h/cpp    # GUI singleton — orientation-aware rendering
 │   │   ├── icons/           # Icon headers (book, bookmark, cover, folder, wifi, …)
-│   │   └── themes/          # Theme implementations (lyra/, roundedraff/)
+│   │   └── themes/          # Lyra, Lyra3Covers, RoundedRaff themes
 │   ├── images/              # Image data (logo, loading icon, moon icon)
 │   ├── simulator/           # Simulator stubs: NimBLE, FreeRTOS, MeshCore mock
 │   ├── network/             # Web server, OTA updater, WebDAV, HTTP downloader
-│   │   └── html/            # HTML/JS sources (→ *.generated.h at build time)
+│   │   └── html/            # HTML page sources (→ *.generated.h at build time)
 │   ├── util/                # Button navigator, string/URL/QR/screenshot utils
 │   └── platform/            # Platform-level patches (efuse check skip)
 ├── lib/
@@ -184,17 +178,9 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 ├── open-x4-sdk/             # Hardware SDK submodule (display, input, storage, battery)
 ├── fs_/                     # Simulator virtual SD card (./fs_/books/ maps to /books/)
 │   └── meshcore_mock.json   # MeshCore mock data for simulator
-└── test/                    # Desktop Google Test suites (CMake/CTest)
-    ├── CMakeLists.txt       # Test build (fetches Google Test v1.17.0)
-    ├── streaming_json_parser/ # Streaming JSON parser tests
-    ├── release_json_parser/ # Release JSON parser tests
-    ├── differential_rounding/ # Differential rounding tests
-    ├── hyphenation_eval/    # Hyphenation evaluation tests + resources
-    ├── utf8_compose/        # UTF-8 composition tests
-    ├── t4_dict/             # T4 dictionary tests + fixtures + validate_trie.py
-    ├── run_t4_dict_test.sh  # T4 dictionary build-pipeline shell test
+└── test/                    # Desktop algorithm tests (JSON, hyphenation, rounding)
     ├── epubs/               # Sample EPUB files for manual testing
-    └── language/            # Language-specific tests (RTL)
+    └── language/             # Language-specific tests (RTL)
 ```
 
 ## Build And Test Commands
@@ -235,15 +221,21 @@ python3 scripts/debugging_monitor.py
 pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high
 
 # Configure, build, and run desktop unit tests (Google Test + CTest)
-cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/test
+cmake -S test -B build/test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/test -j
 ctest --test-dir build/test --output-on-failure -j
 
-# Run a single test suite directly
-cmake --build build/test --target StreamingJsonParserTest
-build/test/streaming_json_parser/StreamingJsonParserTest
+# Run a single test suite
+ctest --test-dir build/test --output-on-failure -R T4Layout
 
-# Run the T4 dictionary build-pipeline test
+# Run a single test directly
+build/test/t4_dict/T4LayoutTest
+
+# Older shell-script test runners (alternative to CTest)
+bash test/run_release_json_parser_test.sh
+bash test/run_streaming_json_parser_test.sh
+bash test/run_hyphenation_eval.sh
+bash test/run_differential_rounding_test.sh
 bash test/run_t4_dict_test.sh
 
 # Regenerate i18n files (also runs automatically during build)
@@ -289,8 +281,8 @@ from RISC-V flags like `-march=rv32imc_zicsr_zifencei`):
   do not break existing functionality:
 
     ```sh
-    cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release
-    cmake --build build/test
+    cmake -S test -B build/test -DCMAKE_BUILD_TYPE=Release
+    cmake --build build/test -j
     ctest --test-dir build/test --output-on-failure -j
     ```
 
@@ -544,24 +536,19 @@ renderer-coordinate math where the semantics are self-evident (e.g.,
 
 ### Testing
 
-- **Desktop unit tests**: Google Test suites under `test/<suite>/`
-  verify core algorithms (JSON parsing, hyphenation, differential
-  rounding, UTF-8 compose, T4 dictionary) on the host CPU before
-  embedding. Build and run them with CMake/CTest after modifying the
-  corresponding library code. Google Test is fetched via CMake
-  `FetchContent` (pinned to v1.17.0 in `test/CMakeLists.txt`).
+- **Desktop algorithm tests**: Shell scripts in `test/` verify core
+  algorithms (JSON parsing, hyphenation, differential rounding) on
+  the host CPU before embedding. Run these after modifying the
+  corresponding library code.
 - **On-device testing**: Manual. Flash firmware, test on hardware,
   check serial output. No on-device unit test framework (typical
   for embedded with ~380 KB RAM).
-- **Test file placement**: `test/<suite_name>/` directories, each with
-  its own `CMakeLists.txt` and a `*Test.cpp` file, registered via
-  `add_subdirectory` in `test/CMakeLists.txt`.
+- **Test file placement**: `test/<suite_name>/` directories with a
+  corresponding `test/run_<suite_name>_test.sh` entry point.
 - **Test data**: Sample EPUB files in `test/epubs/` for manual
-  testing; per-suite fixtures live inside the suite directory (e.g.,
-  `test/t4_dict/`, `test/hyphenation_eval/resources/`).
-- **CI gates**: Build, clang-format, cppcheck, and unit-tests must
-  pass. All four are required checks on pull requests (see the
-  `test-status` job in `.github/workflows/ci.yml`).
+  testing.
+- **CI gates**: Build, clang-format, and cppcheck must pass. All
+  three are required checks on pull requests.
 
 ### Dependency Management
 
@@ -709,29 +696,3 @@ I18N        // I18n::getInstance()
 - Each `std::function<>` adds ~2-4 KB per unique signature and
   heap-allocates. Prefer raw function pointers or
   `struct { void* ctx; void (*fn)(void*); }`.
-
-### Chat Response Formatting
-
-**CRITICAL** — ALL file references in chat responses MUST use
-clickable `file://` links:
-
-```text
-[display name](file:///absolute/path#L<line>)
-```
-
-- **Never** use plain backtick-wrapped paths (`` `src/foo.cpp` ``)
-  or bare paths as the primary reference — always wrap them in a
-  clickable link.
-- When discussing a range of lines, use `#L<start>-L<end>`.
-- When referencing a specific code location, always include the
-  line anchor (`#L<line>`).
-
-**Examples**:
-
-| ✅ Correct | ❌ Wrong |
-| --- | --- |
-| `[backspace() in T4InputEngine.h](file:///Users/lala/Documents/dev/crosspoint-mesh/lib/T4Dict/T4InputEngine.h#L590)` | `` `lib/T4Dict/T4InputEngine.h` `` |
-| `[T4EntryActivity.cpp:402-407](file:///Users/lala/Documents/dev/crosspoint-mesh/src/activities/util/T4EntryActivity.cpp#L402)` | `src/activities/util/T4EntryActivity.cpp` |
-
-This rule overrides all other formatting conventions for file
-references and applies to every response that mentions a file path.

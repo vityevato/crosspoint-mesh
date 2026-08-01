@@ -1,13 +1,14 @@
 #include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
-#include <vector>
 #include <string>
+#include <vector>
 
 // Include T4InputEngine without pulling in T4Dictionary/HalStorage
 // We supply our own MockDictionary.
-#include "T4Dict/T4Layout.h"
 #include "T4Dict/T4InputEngine.h"
+#include "T4Dict/T4Layout.h"
 
 using namespace t4;
 
@@ -23,7 +24,7 @@ struct MockNode {
 };
 
 class MockDictionary {
-public:
+ public:
   MockDictionary() = default;
 
   bool loadFromSD(const char* /*path*/) {
@@ -92,9 +93,7 @@ public:
     return true;
   }
 
-  uint16_t getCandidateCount() const {
-    return _nodes[_currentNode].word_count;
-  }
+  uint16_t getCandidateCount() const { return _nodes[_currentNode].word_count; }
 
   bool loadCandidates() {
     _candidatesLoaded = true;
@@ -119,7 +118,7 @@ public:
   bool isLoaded() const { return _loaded; }
   const char* getLangCode() const { return _langCode; }
 
-private:
+ private:
   std::vector<MockNode> _nodes;
   uint32_t _currentNode = 0;
   bool _loaded = false;
@@ -129,11 +128,17 @@ private:
 
 // ── Test fixture ────────────────────────────────────────────────────────
 
+// Convenience: current multi-tap letter as a single char ('\0' when idle).
+// Wraps the byte-length API for the ASCII cases used in these tests.
+static char tapChar(const T4InputEngine<MockDictionary>& e) {
+  uint8_t blen = 0;
+  const char* p = e.getCurrentTapLetter(blen);
+  return (p && blen == 1) ? *p : '\0';
+}
+
 class T4InputEngineTest : public ::testing::Test {
-protected:
-  void SetUp() override {
-    predictor.getDictionary()->loadFromSD("/mock/en.trie");
-  }
+ protected:
+  void SetUp() override { predictor.getDictionary()->loadFromSD("/mock/en.trie"); }
 
   T4InputEngine<MockDictionary> predictor;
 };
@@ -182,7 +187,9 @@ TEST_F(T4InputEngineTest, PredictDeadEndSequence) {
   bool ok = predictor.pressButton(4);     // z/w/x/y group — no child
   EXPECT_FALSE(ok);
   EXPECT_EQ(predictor.getCandidateCount(), 0u);
-  EXPECT_EQ(predictor.getCurrentCandidate(), nullptr);
+  // Dead-end fallback: the engine keeps the sequence and returns a raw
+  // first-letter preview string rather than nullptr.
+  EXPECT_NE(predictor.getCurrentCandidate(), nullptr);
 }
 
 // ── Predict: confirm word ───────────────────────────────────────────────
@@ -202,8 +209,10 @@ TEST_F(T4InputEngineTest, PredictConfirmWord) {
 
 TEST_F(T4InputEngineTest, PredictConfirmMultipleWords) {
   // Type "hello"
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
+  predictor.pressButton(2);
+  predictor.pressButton(1);
+  predictor.pressButton(2);
+  predictor.pressButton(2);
   predictor.pressButton(3);
   predictor.confirmWord();  // "hello "
 
@@ -222,23 +231,25 @@ TEST_F(T4InputEngineTest, PredictConfirmMultipleWords) {
 TEST_F(T4InputEngineTest, MultiTapSameButtonCycles) {
   predictor.setMode(T4Mode::MULTI_TAP);
 
-  // btn1 EN group = abcdef
+  // btn1 EN group = abcdef' (length 7, apostrophe is the 7th tap target)
   predictor.pressButton(1);
-  EXPECT_EQ(predictor.getCurrentTapLetter(), 'a');
+  EXPECT_EQ(tapChar(predictor), 'a');
   EXPECT_EQ(predictor.getActiveButton(), 1u);
 
   predictor.pressButton(1);
-  EXPECT_EQ(predictor.getCurrentTapLetter(), 'b');
+  EXPECT_EQ(tapChar(predictor), 'b');
 
   predictor.pressButton(1);
-  EXPECT_EQ(predictor.getCurrentTapLetter(), 'c');
+  EXPECT_EQ(tapChar(predictor), 'c');
 
-  // 7 presses should wrap back to 'a' (group length 6)
+  // 8 presses should wrap back to 'a' (group length 7)
   predictor.pressButton(1);  // d
   predictor.pressButton(1);  // e
   predictor.pressButton(1);  // f
+  predictor.pressButton(1);  // ' (apostrophe)
+  EXPECT_EQ(tapChar(predictor), '\'');
   predictor.pressButton(1);  // a (wrap)
-  EXPECT_EQ(predictor.getCurrentTapLetter(), 'a');
+  EXPECT_EQ(tapChar(predictor), 'a');
 }
 
 TEST_F(T4InputEngineTest, MultiTapDifferentButtonFixesAndStarts) {
@@ -251,7 +262,7 @@ TEST_F(T4InputEngineTest, MultiTapDifferentButtonFixesAndStarts) {
   // Letter 'b' should be fixed in confirmed text
   EXPECT_STREQ(predictor.getConfirmedText(), "b");
   EXPECT_EQ(predictor.getActiveButton(), 2u);
-  EXPECT_EQ(predictor.getCurrentTapLetter(), 'g');
+  EXPECT_EQ(tapChar(predictor), 'g');
 }
 
 // ── Multi-tap: timeout ──────────────────────────────────────────────────
@@ -271,7 +282,7 @@ TEST_F(T4InputEngineTest, MultiTapTimeoutFixesLetter) {
 
   EXPECT_EQ(predictor.getActiveButton(), 0u);
   EXPECT_STREQ(predictor.getConfirmedText(), "c");
-  EXPECT_EQ(predictor.getCurrentTapLetter(), '\0');
+  EXPECT_EQ(tapChar(predictor), '\0');
 }
 
 TEST_F(T4InputEngineTest, MultiTapNoTimeoutWithinWindow) {
@@ -281,7 +292,7 @@ TEST_F(T4InputEngineTest, MultiTapNoTimeoutWithinWindow) {
   predictor.poll(0);
   predictor.poll(500);  // only 500ms — no timeout
 
-  EXPECT_EQ(predictor.getActiveButton(), 1u);  // still active
+  EXPECT_EQ(predictor.getActiveButton(), 1u);         // still active
   EXPECT_EQ(predictor.getConfirmedTextLength(), 0u);  // not fixed yet
 }
 
@@ -290,20 +301,59 @@ TEST_F(T4InputEngineTest, MultiTapNoTimeoutWithinWindow) {
 TEST_F(T4InputEngineTest, MultiTapConfirmWordAddsSpace) {
   predictor.setMode(T4Mode::MULTI_TAP);
 
-  predictor.pressButton(2); predictor.pressButton(2); // 'h'
-  predictor.pressButton(1);                            // different btn → fix 'h', start 'a'
-  predictor.pressButton(1);                            // 'b'
-  predictor.confirmWord();  // fix 'b' + space
+  predictor.pressButton(2);
+  predictor.pressButton(2);  // 'h'
+  predictor.pressButton(1);  // different btn → fix 'h', start 'a'
+  predictor.pressButton(1);  // 'b'
+  predictor.confirmWord();   // fix 'b' + space
 
   EXPECT_STREQ(predictor.getConfirmedText(), "hb ");
+}
+
+// ── Multi-tap: shift / uppercase ────────────────────────────────────────
+
+TEST_F(T4InputEngineTest, MultiTapShiftDefaultsOff) { EXPECT_EQ(predictor.getShiftLevel(), 0u); }
+
+TEST_F(T4InputEngineTest, MultiTapOneShotUppercasesFirstLetterOnly) {
+  predictor.setMode(T4Mode::MULTI_TAP);
+  predictor.setShiftLevel(1);  // one-shot
+
+  predictor.pressButton(1);  // 'a'
+  predictor.pressButton(2);  // different btn → fix 'a' → 'A', start 'g'
+
+  EXPECT_STREQ(predictor.getConfirmedText(), "A");
+  EXPECT_EQ(predictor.getShiftLevel(), 0u);  // reset after first fixed letter
+
+  predictor.pressButton(3);  // fix 'g' lowercase → 'g', start 'm'
+  EXPECT_STREQ(predictor.getConfirmedText(), "Ag");
+}
+
+TEST_F(T4InputEngineTest, MultiTapCapsLockUppercasesEveryLetter) {
+  predictor.setMode(T4Mode::MULTI_TAP);
+  predictor.setShiftLevel(2);  // locked
+
+  predictor.pressButton(1);  // 'a'
+  predictor.pressButton(2);  // fix 'a' → 'A', start 'g'
+  predictor.pressButton(3);  // fix 'g' → 'G', start 'm'
+
+  EXPECT_STREQ(predictor.getConfirmedText(), "AG");
+  EXPECT_EQ(predictor.getShiftLevel(), 2u);  // stays locked
+}
+
+TEST_F(T4InputEngineTest, MultiTapShiftClearedOnReset) {
+  predictor.setShiftLevel(2);
+  predictor.reset();
+  EXPECT_EQ(predictor.getShiftLevel(), 0u);
 }
 
 // ── Mode switching preserves text ───────────────────────────────────────
 
 TEST_F(T4InputEngineTest, ModeSwitchPreservesConfirmedText) {
   // Type in Predict
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
+  predictor.pressButton(2);
+  predictor.pressButton(1);
+  predictor.pressButton(2);
+  predictor.pressButton(2);
   predictor.pressButton(3);  // "hello"
   predictor.confirmWord();   // "hello "
 
@@ -326,8 +376,10 @@ TEST_F(T4InputEngineTest, ModeSwitchPreservesConfirmedText) {
 
 TEST_F(T4InputEngineTest, CommandBackspaceFromPredict) {
   // Build a candidate sequence
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
+  predictor.pressButton(2);
+  predictor.pressButton(1);
+  predictor.pressButton(2);
+  predictor.pressButton(2);
   predictor.pressButton(3);  // "hello" candidate active
 
   EXPECT_GT(predictor.getSequenceLength(), 0u);
@@ -336,17 +388,22 @@ TEST_F(T4InputEngineTest, CommandBackspaceFromPredict) {
   // Enter COMMAND
   predictor.setMode(T4Mode::COMMAND);
 
-  // Backspace in COMMAND (Predict semantics): removes ONE button press
-  // from the sequence, stepping back up the dictionary trie.
+  // Entering COMMAND from PREDICT discards the in-progress prediction
+  // sequence (setMode clears navigation state when leaving PREDICT).
+  EXPECT_EQ(predictor.getSequenceLength(), 0u);
+
+  // Backspace with no sequence and no confirmed text is a no-op.
   predictor.backspace();
-  EXPECT_EQ(predictor.getSequenceLength(), 4u);
-  EXPECT_GT(predictor.getCandidateCount(), 0u);
+  EXPECT_EQ(predictor.getSequenceLength(), 0u);
+  EXPECT_EQ(predictor.getCandidateCount(), 0u);
 }
 
 TEST_F(T4InputEngineTest, CommandBackspaceFromPredictNoSequence) {
   // No active sequence — just confirmed text
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
+  predictor.pressButton(2);
+  predictor.pressButton(1);
+  predictor.pressButton(2);
+  predictor.pressButton(2);
   predictor.pressButton(3);
   predictor.confirmWord();  // "hello " confirmed, sequence reset
   EXPECT_STREQ(predictor.getConfirmedText(), "hello ");
@@ -363,6 +420,28 @@ TEST_F(T4InputEngineTest, CommandBackspaceFromPredictNoSequence) {
   EXPECT_GT(predictor.getSequenceLength(), 0u);
   EXPECT_GT(predictor.getCandidateCount(), 0u);
   EXPECT_STREQ(predictor.getCurrentCandidate(), "hello");
+}
+
+TEST_F(T4InputEngineTest, BackspacePullsBackCapitalizedWord) {
+  // A word committed in Shift/Caps is stored uppercase. Backspace must still
+  // recognize the letters (case-insensitively) and pull the word back into
+  // the prediction sequence for re-editing — not delete it char-by-char.
+  predictor.setConfirmedText("MAN ");
+
+  // First backspace removes the trailing space.
+  predictor.backspace();
+  EXPECT_STREQ(predictor.getConfirmedText(), "MAN");
+  EXPECT_EQ(predictor.getSequenceLength(), 0u);
+
+  // Second backspace recovers the whole capitalized word's button sequence.
+  predictor.backspace();
+  EXPECT_EQ(predictor.getConfirmedTextLength(), 0u);
+  ASSERT_EQ(predictor.getSequenceLength(), 3u);  // M, A, N
+  const uint8_t* seq = predictor.getSequence();
+  ASSERT_NE(seq, nullptr);
+  EXPECT_EQ(seq[0], 3u);  // 'm' → btn3 (mnopqrs)
+  EXPECT_EQ(seq[1], 1u);  // 'a' → btn1 (abcdef')
+  EXPECT_EQ(seq[2], 3u);  // 'n' → btn3 (mnopqrs)
 }
 
 // ── COMMAND mode backspace (Multi-tap semantics) ────────────────────────
@@ -382,7 +461,7 @@ TEST_F(T4InputEngineTest, CommandBackspaceFromMultiTap) {
   EXPECT_STREQ(predictor.getConfirmedText(), "a");  // one letter removed
 
   predictor.backspace();
-  EXPECT_STREQ(predictor.getConfirmedText(), "");   // another removed
+  EXPECT_STREQ(predictor.getConfirmedText(), "");  // another removed
 }
 
 // ── Sequence display ────────────────────────────────────────────────────
@@ -399,8 +478,10 @@ TEST_F(T4InputEngineTest, SequenceDisplay) {
 // ── Reset ───────────────────────────────────────────────────────────────
 
 TEST_F(T4InputEngineTest, FullReset) {
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
+  predictor.pressButton(2);
+  predictor.pressButton(1);
+  predictor.pressButton(2);
+  predictor.pressButton(2);
   predictor.pressButton(3);
   predictor.confirmWord();
 
@@ -416,8 +497,10 @@ TEST_F(T4InputEngineTest, FullReset) {
 
 TEST_F(T4InputEngineTest, SetLanguagePreservesTextResetsSequence) {
   // Type "hello" in Predict
-  predictor.pressButton(2); predictor.pressButton(1);
-  predictor.pressButton(2); predictor.pressButton(2);
+  predictor.pressButton(2);
+  predictor.pressButton(1);
+  predictor.pressButton(2);
+  predictor.pressButton(2);
   predictor.pressButton(3);
   predictor.confirmWord();
   EXPECT_STREQ(predictor.getConfirmedText(), "hello ");
@@ -426,7 +509,7 @@ TEST_F(T4InputEngineTest, SetLanguagePreservesTextResetsSequence) {
   predictor.setLanguage(T4Language::RU);
   EXPECT_EQ(predictor.getLanguage(), T4Language::RU);
   EXPECT_STREQ(predictor.getConfirmedText(), "hello ");  // preserved
-  EXPECT_EQ(predictor.getSequenceLength(), 0u);           // reset
+  EXPECT_EQ(predictor.getSequenceLength(), 0u);          // reset
 
   // Switch to DIGIT
   predictor.setLanguage(T4Language::DIGIT);

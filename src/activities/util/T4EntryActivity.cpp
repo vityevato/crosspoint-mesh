@@ -173,11 +173,18 @@ void T4EntryActivity::loop() {
 
   // Up long-press → toggle Predict ↔ Multi-tap (not in COMMAND)
   if (_upHeld && !_upLongHandled && _mode != t4::T4Mode::COMMAND &&
-      mappedInput.isPressed(MappedInputManager::Button::Up) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+      mappedInput.isPressed(MappedInputManager::Button::Up) && mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _upLongHandled = true;
     LOG_DBG("T4", "loop: Up long-press → toggle Predict/Multi-tap (mode=%d)", static_cast<int>(_mode));
     togglePredictMultiTap();
+    requestUpdate();
+  }
+
+  // Down long-press → toggle Shift/Caps (not in COMMAND)
+  if (_downHeld && !_downLongHandled && _mode != t4::T4Mode::COMMAND &&
+      mappedInput.isPressed(MappedInputManager::Button::Down) && mappedInput.getHeldTime() > LONG_PRESS_MS) {
+    _downLongHandled = true;
+    cycleShift();
     requestUpdate();
   }
 
@@ -211,6 +218,12 @@ void T4EntryActivity::loop() {
   if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
     _upHeld = true;
     _upLongHandled = false;
+  }
+
+  // Button::Down — press tracking (short = punctuation, long = Shift/Caps)
+  if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
+    _downHeld = true;
+    _downLongHandled = false;
   }
 
   // ── Simultaneous Up+Left → toggle backspace/cycleCandidate ──
@@ -413,7 +426,10 @@ void T4EntryActivity::loop() {
 
   // Button::Down release (side right) — mode-dependent
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (_mode != t4::T4Mode::COMMAND) {
+    bool wasLongPress = _downLongHandled;
+    _downHeld = false;
+    _downLongHandled = false;
+    if (!wasLongPress && _mode != t4::T4Mode::COMMAND) {
       LOG_DBG("T4", "loop: Down → punctuation (mode=%d)", static_cast<int>(_mode));
       handlePunctuation();
       _upSideCyclesCandidates = false;
@@ -575,13 +591,14 @@ void T4EntryActivity::handlePunctuation() {
       return;
     }
     const char* word = _inputEngine.getCurrentCandidate();
-    std::string capitalized;
-    if (_autoCap && word && word[0] != '\0') {
-      capitalized += static_cast<char>(toupper(static_cast<unsigned char>(word[0])));
-      capitalized += (word + 1);
-      word = capitalized.c_str();
-      _autoCap = false;
-    }
+    // Apply the active Shift/Caps state (Caps → whole word, Shift/auto-cap →
+    // first letter). Returns the raw candidate when neither is active.
+    std::string cased = applyWordCase(word);
+    if (!cased.empty()) word = cased.c_str();
+    // Consume the one-shot state: auto-cap and one-shot Shift last for a
+    // single word; Caps Lock stays on until toggled off.
+    _autoCap = false;
+    if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
 
     if (!text.empty() && text.back() != ' ') {
       text += ' ';
@@ -683,6 +700,52 @@ bool T4EntryActivity::togglePredictMultiTap() {
   return true;
 }
 
+// ── Shift / Uppercase ────────────────────────────────────────────────────
+
+void T4EntryActivity::cycleShift() {
+  // All modes cycle Off → Shift → Caps → Off. In Predict, Shift capitalizes
+  // the first letter of the confirmed word and Caps uppercases the whole
+  // word; the level carries over unchanged between modes.
+  uint8_t level = (_inputEngine.getShiftLevel() + 1) % 3;
+  _inputEngine.setShiftLevel(level);
+  LOG_DBG("T4", "cycleShift: mode=%d level=%u", static_cast<int>(_mode), level);
+}
+
+std::string T4EntryActivity::applyWordCase(const char* word) const {
+  if (!word || word[0] == '\0') return std::string();
+
+  const uint8_t level = _inputEngine.getShiftLevel();
+  const bool capsLock = (level == 2);
+  const bool firstOnly = (level == 1) || _autoCap;
+  if (!capsLock && !firstOnly) return std::string(word);
+
+  // Caps: uppercase every letter. Shift/auto-cap: only the first letter.
+  std::string out;
+  const char* p = word;
+  bool firstDone = false;
+  while (*p) {
+    unsigned char c0 = static_cast<unsigned char>(*p);
+    uint8_t blen = 1;
+    if ((c0 & 0xE0) == 0xC0)
+      blen = 2;
+    else if ((c0 & 0xF0) == 0xE0)
+      blen = 3;
+    else if ((c0 & 0xF8) == 0xF0)
+      blen = 4;
+
+    if (capsLock || !firstDone) {
+      char up[4];
+      uint8_t upLen = t4::upperLetterUtf8(p, blen, up);
+      out.append(up, upLen);
+    } else {
+      out.append(p, blen);
+    }
+    firstDone = true;
+    p += blen;
+  }
+  return out;
+}
+
 // ── Rendering ────────────────────────────────────────────────────────────
 
 void T4EntryActivity::render(RenderLock&& lock) {
@@ -707,7 +770,19 @@ void T4EntryActivity::render(RenderLock&& lock) {
     default:
       modeLabel = tr(STR_T4_MODE_PREDICT);
   }
-  snprintf(subtitle, sizeof(subtitle), "%s %s", t4::getLanguageName(_lang), modeLabel);
+  // Shift indicator: "Aa" = one-shot Shift, "AB" = Caps Lock.
+  const char* shiftLabel = "";
+  switch (_inputEngine.getShiftLevel()) {
+    case 1:
+      shiftLabel = " Aa";
+      break;
+    case 2:
+      shiftLabel = " AB";
+      break;
+    default:
+      shiftLabel = "";
+  }
+  snprintf(subtitle, sizeof(subtitle), "%s %s%s", t4::getLanguageName(_lang), modeLabel, shiftLabel);
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, _title.c_str(), subtitle);
 
   // --- 2. Text field: confirmed text + current candidate ---
@@ -718,6 +793,15 @@ void T4EntryActivity::render(RenderLock&& lock) {
 
   const char* candidate = _inputEngine.getCurrentCandidate();
   bool hasCandidate = (candidate != nullptr) && (candidate[0] != '\0');
+
+  // Show the candidate in its committed case form so Shift/Caps is WYSIWYG.
+  // Uppercasing preserves byte length for supported scripts, so downstream
+  // width/offset math against the confirmed-text length stays valid.
+  std::string candCased;
+  if (hasCandidate && _inputType != InputType::Password) {
+    candCased = applyWordCase(candidate);
+    if (!candCased.empty()) candidate = candCased.c_str();
+  }
 
   // In MULTI_TAP/COMMAND, the predictor owns the confirmed text
   const char* confirmedText = _inputEngine.getConfirmedText();
@@ -770,13 +854,23 @@ void T4EntryActivity::render(RenderLock&& lock) {
   int cursorLineY = inputStartY;
 
   while (true) {
+    // Hard newline: force line break at \n before pixel-width check
+    bool hardBreak = false;
+    {
+      size_t nlPos = displayText.find('\n', lineStartIdx);
+      if (nlPos != std::string::npos && static_cast<int>(nlPos) < lineEndIdx) {
+        lineEndIdx = static_cast<int>(nlPos);
+        hardBreak = true;
+      }
+    }
+
     std::string lineText = displayText.substr(lineStartIdx, lineEndIdx - lineStartIdx);
     textWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
     if (textWidth <= maxLineWidth) {
       const int lineStartX = effectiveMargin;
-      const bool isLastLine = (lineEndIdx == static_cast<int>(displayText.length()));
+      const bool isLastSegment = (lineEndIdx == static_cast<int>(displayText.length()));
 
-      if (isLastLine) {
+      if (isLastSegment) {
         // Last line: handle candidate/tap-letter highlighting + cursor
         size_t confLen = strlen(confirmedText);
         int confLenInLine = static_cast<int>(confLen) - lineStartIdx;
@@ -809,8 +903,13 @@ void T4EntryActivity::render(RenderLock&& lock) {
           int confW = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
           if (tapPtr && tapLen > 0) {
             char tapStr[5];
-            memcpy(tapStr, tapPtr, tapLen);
-            tapStr[tapLen] = '\0';
+            uint8_t dispLen = tapLen;
+            if (_inputEngine.getShiftLevel() != 0) {
+              dispLen = t4::upperLetterUtf8(tapPtr, tapLen, tapStr);
+            } else {
+              memcpy(tapStr, tapPtr, tapLen);
+            }
+            tapStr[dispLen] = '\0';
             int tapW = renderer.getTextWidth(UI_12_FONT_ID, tapStr);
             int tapX = lineStartX + confW;
             renderer.fillRect(tapX, inputStartY + inputHeight, tapW + 4, lineHeight, true);
@@ -832,7 +931,7 @@ void T4EntryActivity::render(RenderLock&& lock) {
       // Non-last line: draw normally
       renderer.drawText(UI_12_FONT_ID, lineStartX, inputStartY + inputHeight, lineText.c_str(), true);
       inputHeight += lineHeight;
-      lineStartIdx = lineEndIdx;
+      lineStartIdx = hardBreak ? (lineEndIdx + 1) : lineEndIdx;
       lineEndIdx = displayText.length();
     } else {
       lineEndIdx -= 1;
@@ -989,7 +1088,7 @@ void T4EntryActivity::render(RenderLock&& lock) {
         const char* start;
         uint8_t byteLen;
       };
-      ChInfo chInfo[12];  // Max group length
+      ChInfo chInfo[12] = {};  // Max group length
       {
         const char* p = group;
         for (int ci = 0; ci < len; ci++) {
@@ -1019,8 +1118,14 @@ void T4EntryActivity::render(RenderLock&& lock) {
         char chBuf[5];
         for (int c = 0; c < rowCount; c++) {
           const ChInfo& ci = chInfo[r * charsPerRow + c];
-          memcpy(chBuf, ci.start, ci.byteLen);
-          chBuf[ci.byteLen] = '\0';
+          if (ci.byteLen == 1 && ci.start[0] == '\x01') {
+            // SOH sentinel → display as newline marker \n
+            memcpy(chBuf, "\\n", 2);
+            chBuf[2] = '\0';
+          } else {
+            memcpy(chBuf, ci.start, ci.byteLen);
+            chBuf[ci.byteLen] = '\0';
+          }
           rowCharsW[c] = renderer.getTextWidth(UI_12_FONT_ID, chBuf);
           totalCW += rowCharsW[c];
         }
@@ -1029,17 +1134,27 @@ void T4EntryActivity::render(RenderLock&& lock) {
         int cx = bx + gap;
         for (int c = 0; c < rowCount; c++) {
           const ChInfo& ci = chInfo[r * charsPerRow + c];
-          memcpy(chBuf, ci.start, ci.byteLen);
-          chBuf[ci.byteLen] = '\0';
-          const bool isActive =
-              highlightTap && (activeBtn == i + 1) && activePtr && ci.byteLen == activeLen &&
-              memcmp(chBuf, activePtr, activeLen) == 0;
+          // Build raw byte buffer for active-highlight comparison
+          if (ci.byteLen == 1 && ci.start[0] == '\x01') {
+            chBuf[0] = '\x01';
+            chBuf[1] = '\0';
+          } else {
+            memcpy(chBuf, ci.start, ci.byteLen);
+            chBuf[ci.byteLen] = '\0';
+          }
+          const bool isActive = highlightTap && (activeBtn == i + 1) && activePtr && ci.byteLen == activeLen &&
+                                memcmp(chBuf, activePtr, activeLen) == 0;
+          // Substitute newline marker \n for display
+          const char* displayBuf = chBuf;
+          if (ci.byteLen == 1 && ci.start[0] == '\x01') {
+            displayBuf = "\\n";
+          }
           if (isActive) {
             const int boxX = cx - (highlightBoxW - rowCharsW[c]) / 2;
             renderer.fillRect(boxX, ry, highlightBoxW, lineHeight, true);
-            renderer.drawText(UI_12_FONT_ID, cx, ry, chBuf, false);
+            renderer.drawText(UI_12_FONT_ID, cx, ry, displayBuf, false);
           } else {
-            renderer.drawText(UI_12_FONT_ID, cx, ry, chBuf, true);
+            renderer.drawText(UI_12_FONT_ID, cx, ry, displayBuf, true);
           }
           cx += rowCharsW[c] + gap;
         }
@@ -1052,8 +1167,8 @@ void T4EntryActivity::render(RenderLock&& lock) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, /*inactive=*/true);
 
     // ── 4d. Side button hints ──
-    const char* leftLabel = (_upSideCyclesCandidates && _mode == t4::T4Mode::PREDICT) ? tr(STR_T4_CYCLE)
-                                                                                       : tr(STR_T4_BACKSPACE);
+    const char* leftLabel =
+        (_upSideCyclesCandidates && _mode == t4::T4Mode::PREDICT) ? tr(STR_T4_CYCLE) : tr(STR_T4_BACKSPACE);
     GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE));
   }
 
