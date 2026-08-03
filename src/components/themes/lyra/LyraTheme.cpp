@@ -419,6 +419,11 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
   }
 }
 
+int LyraTheme::getSideButtonDownBottomY() const {
+  if (gpio.deviceIsX3()) return 155 + 78;  // x3ButtonY + buttonHeight
+  return 345 + 78 + 5 + 78;                // topHintButtonY + btnH + gap + btnH (X4)
+}
+
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                     const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                     bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {

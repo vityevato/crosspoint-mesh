@@ -31,6 +31,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .homeMenuTopOffset = 16,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
+                                 .sideButtonHintsMargin = 0,
                                  .buttonHintCornerRadius = 6,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
@@ -92,6 +93,7 @@ class LyraTheme : public BaseTheme {
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
                        bool inactive = false) const override;
   void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const override;
+  int getSideButtonDownBottomY() const override;
   int getButtonHintWidth() const override { return 80; }
   const int* getButtonXPositions(bool isX3) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,

@@ -50,7 +50,6 @@ class T4InputEngine {
   // ── Mode ──────────────────────────────────────────────────────────
 
   /// Switch input mode. Preserves language and confirmed text.
-  /// When entering COMMAND, stores current mode in _prevMode for return.
   void setMode(T4Mode mode);
 
   /// Current mode.
@@ -61,7 +60,6 @@ class T4InputEngine {
   /// Handle a button press (1–4) according to current mode.
   /// In PREDICT: appends to sequence, navigates trie, loads candidates.
   /// In MULTI_TAP: cycles letter within group or fixes + starts new.
-  /// In COMMAND: ignored (command mode has its own button handlers).
   /// @return true if the press produced a valid result.
   bool pressButton(uint8_t btn);
 
@@ -69,6 +67,9 @@ class T4InputEngine {
 
   /// Cycle to the next candidate. Wraps around after last.
   void cycleCandidate();
+
+  /// Cycle to the previous candidate. Wraps around after first.
+  void cycleCandidateBackward();
 
   /// Current candidate word, or nullptr if none.
   const char* getCurrentCandidate();
@@ -140,8 +141,7 @@ class T4InputEngine {
   // ── Editing ───────────────────────────────────────────────────────
 
   /// Backspace. In Predict: deletes entire candidate word (resets
-  /// sequence). In Multi-tap: deletes last fixed letter. In COMMAND:
-  /// delegates to the mode stored in _prevMode.
+  /// sequence). In Multi-tap: deletes last fixed letter.
   void backspace();
 
   // ── Time-based updates ────────────────────────────────────────────
@@ -174,7 +174,6 @@ class T4InputEngine {
   std::unique_ptr<Dict> _dict;
   T4Language _lang = T4Language::EN;
   T4Mode _mode = T4Mode::PREDICT;
-  T4Mode _prevMode = T4Mode::PREDICT;
 
   // Predict state
   uint8_t _sequence[kMaxSeqLen + 1] = {};
@@ -427,19 +426,6 @@ void T4InputEngine<Dict>::setMode(T4Mode mode) {
   LOG_DBG("T4", "setMode: %d (current=%d)", static_cast<int>(mode), static_cast<int>(_mode));
   if (mode == _mode) return;
 
-  // Entering COMMAND — remember where we came from.
-  // (mode != _mode is guaranteed above, so _mode != COMMAND here.)
-  if (mode == T4Mode::COMMAND) {
-    _prevMode = _mode;
-  }
-
-  // Exiting COMMAND — restore previous mode.
-  // (mode != _mode is guaranteed above, so mode != COMMAND here.)
-  if (_mode == T4Mode::COMMAND) {
-    _mode = mode;  // caller explicitly set mode, honor it
-    return;
-  }
-
   _mode = mode;
 
   // Discard PREDICT navigation state when leaving PREDICT mode —
@@ -449,9 +435,8 @@ void T4InputEngine<Dict>::setMode(T4Mode mode) {
     if (_dict) _dict->reset();
   }
 
-  // Fix any in-progress multi-tap letter on mode switch away from
-  // MULTI_TAP, but not when entering COMMAND (preserve state for return).
-  if (_activeButton != 0 && mode != T4Mode::MULTI_TAP && mode != T4Mode::COMMAND) {
+  // Fix any in-progress multi-tap letter on mode switch away from MULTI_TAP.
+  if (_activeButton != 0 && mode != T4Mode::MULTI_TAP) {
     fixMultiTapLetter();
   }
 }
@@ -547,7 +532,6 @@ bool T4InputEngine<Dict>::pressButton(uint8_t btn) {
     return true;
   }
 
-  // COMMAND mode — button presses not handled here (UI layer)
   return false;
 }
 
@@ -558,6 +542,13 @@ void T4InputEngine<Dict>::cycleCandidate() {
   if (_candidateCount == 0) return;
   _candidateIndex = (_candidateIndex + 1) % _candidateCount;
   LOG_DBG("T4", "cycleCandidate: %u/%u", _candidateIndex, _candidateCount);
+}
+
+template <typename Dict>
+void T4InputEngine<Dict>::cycleCandidateBackward() {
+  if (_candidateCount == 0) return;
+  _candidateIndex = (_candidateIndex == 0) ? _candidateCount - 1 : _candidateIndex - 1;
+  LOG_DBG("T4", "cycleCandidateBackward: %u/%u", _candidateIndex, _candidateCount);
 }
 
 // ── getCurrentCandidate ─────────────────────────────────────────────────
@@ -655,14 +646,9 @@ void T4InputEngine<Dict>::confirmWord() {
 
 template <typename Dict>
 void T4InputEngine<Dict>::backspace() {
-  T4Mode effectiveMode = _mode;
-  if (_mode == T4Mode::COMMAND) {
-    effectiveMode = _prevMode;
-  }
-  LOG_DBG("T4", "backspace: mode=%d effective=%d textLen=%u", static_cast<int>(_mode), static_cast<int>(effectiveMode),
-          _textLen);
+  LOG_DBG("T4", "backspace: mode=%d textLen=%u", static_cast<int>(_mode), _textLen);
 
-  if (effectiveMode == T4Mode::PREDICT) {
+  if (_mode == T4Mode::PREDICT) {
     // Go back one step in the prediction: remove last button press
     // and rebuild the dictionary state from the shortened sequence.
     if (_seqLen > 0) {
@@ -768,6 +754,15 @@ void T4InputEngine<Dict>::backspace() {
     }
     _seqLen = seqIdx;
 
+    // Save the word before removing it from confirmed text so we can
+    // restore the correct candidate index after reloading candidates.
+    uint16_t wordLen = _textLen - wordStart;
+    char savedWord[64] = {};
+    if (wordLen < sizeof(savedWord)) {
+      memcpy(savedWord, _confirmedText + wordStart, wordLen);
+      savedWord[wordLen] = '\0';
+    }
+
     // Remove the word from confirmed text
     _textLen = wordStart;
     _confirmedText[_textLen] = '\0';
@@ -803,7 +798,19 @@ void T4InputEngine<Dict>::backspace() {
       _candidatesLoaded = _dict->loadCandidates();
       _candidateCount = _dict->getCandidateCount();
     }
+
+    // Restore the previously selected candidate index by matching the
+    // saved word against the reloaded candidate list.
     _candidateIndex = 0;
+    if (savedWord[0] != '\0') {
+      for (uint16_t i = 0; i < _candidateCount; i++) {
+        const char* cand = _dict->getCandidate(i);
+        if (cand && strcmp(cand, savedWord) == 0) {
+          _candidateIndex = i;
+          break;
+        }
+      }
+    }
     _candidateBuf[0] = '\0';
     _savedCandidate[0] = '\0';
     _savedSeqLen = 0;

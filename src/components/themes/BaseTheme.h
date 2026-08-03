@@ -58,6 +58,7 @@ struct ThemeMetrics {
 
   int buttonHintsHeight;
   int sideButtonHintsWidth;
+  int sideButtonHintsMargin;
   int buttonHintCornerRadius;
 
   int progressBarHeight;
@@ -139,6 +140,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .homeMenuTopOffset = 10,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
+                                 .sideButtonHintsMargin = 4,
                                  .buttonHintCornerRadius = 0,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
@@ -198,6 +200,9 @@ class BaseTheme {
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
   /// Width of a single button hint rectangle. Used to align overlaid elements with physical buttons.
   virtual int getButtonHintWidth() const { return 106; }
+  /// Bottom Y of the Down side-button hint (right on X3, bottom-right on X4).
+  /// Used by T4 punctuation popup to anchor below the key that triggers it.
+  virtual int getSideButtonDownBottomY() const;
   /// X-positions of the 4 front-button hint rectangles. Returns pointer to static array of 4 ints.
   /// Used internally by drawButtonHints() and externally to align overlaid elements (e.g. T4 letter blocks).
   virtual const int* getButtonXPositions(bool isX3) const;

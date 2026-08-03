@@ -39,8 +39,6 @@ class T4EntryActivity : public Activity {
   bool isTextInputFull() const;
 
   // Mode transition helpers
-  bool enterCommandMode();
-  bool exitCommandMode();
   bool togglePredictMultiTap();
 
   // Shift/uppercase helpers
@@ -50,6 +48,25 @@ class T4EntryActivity : public Activity {
   // reads state but does not consume the one-shot Shift / auto-cap.
   std::string applyWordCase(const char* word) const;
 
+  // ── Render helpers (called from render()) ─────────────────────────────
+
+  // Draw header bar: title, language badge, mode, and shift indicator.
+  void renderHeader();
+
+  // Draw text input field: confirmed text + unconfirmed candidate with
+  // word-wrap, cursor, optional password toggle, and vertical overflow
+  // clamping (maxHeight = 0 disables the limit). Returns the Y
+  // coordinate just below the field for chaining the next section.
+  int renderTextField(int startY, int lineHeight, int maxHeight);
+
+  // Draw candidate scroll row (Predict mode only). Returns the Y
+  // coordinate after the row (same as startY when there are no candidates).
+  int renderCandidateRow(int startY);
+
+  // Draw letter blocks for Predict/Multi-tap modes plus long-press hints
+  // and side-button hints.
+  void renderButtonHints(int lineHeight);
+
   std::string _title;
   std::string _initialText;
   size_t _maxLength;
@@ -58,7 +75,6 @@ class T4EntryActivity : public Activity {
   t4::T4InputEngine<> _inputEngine;
   t4::T4Language _lang;
   t4::T4Mode _mode;         // Tracks _inputEngine.getMode() for rendering
-  t4::T4Mode _prevMode;     // Source mode stored on entering COMMAND
   int _punctIndex;          // 0 = space (just-confirmed), 1-7 = punct
   bool _wordJustConfirmed;  // true after confirmWord, false after next input
   bool _autoCap;            // next confirmWord should capitalize
@@ -72,7 +88,7 @@ class T4EntryActivity : public Activity {
   bool _leftHeld, _leftLongHandled;
   bool _rightHeld, _rightLongHandled;
   bool _upHeld, _upLongHandled;
-  bool _upLeftComboHandled = false;
+  bool _upRightComboHandled = false;
 
   // Down long-press tracking (toggles Shift/Caps; short press = punctuation)
   bool _downHeld = false, _downLongHandled = false;
@@ -80,7 +96,7 @@ class T4EntryActivity : public Activity {
   // Toggle for left side button action: false=backspace, true=cycleCandidate
   bool _upSideCyclesCandidates = false;
 
-  // Backspace long-press hold tracking (COMMAND mode)
+  // Backspace long-press hold tracking (auto-repeat on Up button)
   unsigned long _backspaceLastActionMs;
 
   // Punctuation cycle timeout tracking

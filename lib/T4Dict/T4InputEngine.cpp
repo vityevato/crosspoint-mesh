@@ -1,7 +1,8 @@
 #include "T4InputEngine.h"
-#include "T4Dictionary.h"
 
 #include <Logging.h>
+
+#include "T4Dictionary.h"
 
 namespace t4 {
 

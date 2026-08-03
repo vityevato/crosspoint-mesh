@@ -270,6 +270,11 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
   }
 }
 
+int BaseTheme::getSideButtonDownBottomY() const {
+  if (gpio.deviceIsX3()) return 155 + 80;  // x3ButtonY + buttonHeight
+  return 345 + 80 + 80;                    // topButtonY + 2 * buttonHeight (X4, bottom of second btn)
+}
+
 int BaseTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
   int rowHeight = (hasSubtitle) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
   return contentHeight / rowHeight;

@@ -372,56 +372,6 @@ TEST_F(T4InputEngineTest, ModeSwitchPreservesConfirmedText) {
   EXPECT_STREQ(predictor.getConfirmedText(), "hello tg");
 }
 
-// ── COMMAND mode backspace (Predict semantics) ──────────────────────────
-
-TEST_F(T4InputEngineTest, CommandBackspaceFromPredict) {
-  // Build a candidate sequence
-  predictor.pressButton(2);
-  predictor.pressButton(1);
-  predictor.pressButton(2);
-  predictor.pressButton(2);
-  predictor.pressButton(3);  // "hello" candidate active
-
-  EXPECT_GT(predictor.getSequenceLength(), 0u);
-  EXPECT_STREQ(predictor.getCurrentCandidate(), "hello");
-
-  // Enter COMMAND
-  predictor.setMode(T4Mode::COMMAND);
-
-  // Entering COMMAND from PREDICT discards the in-progress prediction
-  // sequence (setMode clears navigation state when leaving PREDICT).
-  EXPECT_EQ(predictor.getSequenceLength(), 0u);
-
-  // Backspace with no sequence and no confirmed text is a no-op.
-  predictor.backspace();
-  EXPECT_EQ(predictor.getSequenceLength(), 0u);
-  EXPECT_EQ(predictor.getCandidateCount(), 0u);
-}
-
-TEST_F(T4InputEngineTest, CommandBackspaceFromPredictNoSequence) {
-  // No active sequence — just confirmed text
-  predictor.pressButton(2);
-  predictor.pressButton(1);
-  predictor.pressButton(2);
-  predictor.pressButton(2);
-  predictor.pressButton(3);
-  predictor.confirmWord();  // "hello " confirmed, sequence reset
-  EXPECT_STREQ(predictor.getConfirmedText(), "hello ");
-
-  predictor.setMode(T4Mode::COMMAND);
-
-  // First backspace: deletes trailing space (punctuation)
-  predictor.backspace();
-  EXPECT_STREQ(predictor.getConfirmedText(), "hello");
-
-  // Second backspace: extracts "hello" back into the prediction sequence
-  predictor.backspace();
-  EXPECT_STREQ(predictor.getConfirmedText(), "");
-  EXPECT_GT(predictor.getSequenceLength(), 0u);
-  EXPECT_GT(predictor.getCandidateCount(), 0u);
-  EXPECT_STREQ(predictor.getCurrentCandidate(), "hello");
-}
-
 TEST_F(T4InputEngineTest, BackspacePullsBackCapitalizedWord) {
   // A word committed in Shift/Caps is stored uppercase. Backspace must still
   // recognize the letters (case-insensitively) and pull the word back into
@@ -470,26 +420,6 @@ TEST_F(T4InputEngineTest, BackspacePullsBackCrossLanguageWord) {
   EXPECT_EQ(seq[3], 1u);  // в → btn1 (RU: абвгдеёж-)
   EXPECT_EQ(seq[4], 1u);  // е → btn1
   EXPECT_EQ(seq[5], 3u);  // т → btn3
-}
-
-// ── COMMAND mode backspace (Multi-tap semantics) ────────────────────────
-
-TEST_F(T4InputEngineTest, CommandBackspaceFromMultiTap) {
-  predictor.setMode(T4Mode::MULTI_TAP);
-  predictor.pressButton(1);  // 'a'
-  predictor.pressButton(2);  // fix 'a', start 'g'
-  predictor.pressButton(2);  // 'h'
-  predictor.pressButton(3);  // fix 'h', start 'm'
-  // confirmed: "ah"
-
-  EXPECT_STREQ(predictor.getConfirmedText(), "ah");
-
-  predictor.setMode(T4Mode::COMMAND);
-  predictor.backspace();
-  EXPECT_STREQ(predictor.getConfirmedText(), "a");  // one letter removed
-
-  predictor.backspace();
-  EXPECT_STREQ(predictor.getConfirmedText(), "");  // another removed
 }
 
 // ── Sequence display ────────────────────────────────────────────────────

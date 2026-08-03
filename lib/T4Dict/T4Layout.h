@@ -15,7 +15,6 @@ enum class T4Language : uint8_t {
 enum class T4Mode : uint8_t {
   PREDICT = 0,    ///< Predictive word input (T4)
   MULTI_TAP = 1,  ///< Multi-tap letter-by-letter
-  COMMAND = 2,    ///< Command mode (backspace, undo, actions)
 };
 
 /// Return the letter group string for a given language and 1-based button
