@@ -57,7 +57,10 @@ class T4EntryActivity : public Activity {
   // word-wrap, cursor, optional password toggle, and vertical overflow
   // clamping (maxHeight = 0 disables the limit). Returns the Y
   // coordinate just below the field for chaining the next section.
-  int renderTextField(int startY, int lineHeight, int maxHeight);
+  int renderTextField(int startY, int lineHeight, int maxHeight, bool& overflowOut);
+
+  // Draw info line above text field: ^^^^^^ 45/140
+  void renderInfoLine(int aboveTextY, bool overflow);
 
   // Draw candidate scroll row (Predict mode only). Returns the Y
   // coordinate after the row (same as startY when there are no candidates).
@@ -66,6 +69,30 @@ class T4EntryActivity : public Activity {
   // Draw letter blocks for Predict/Multi-tap modes plus long-press hints
   // and side-button hints.
   void renderButtonHints(int lineHeight);
+
+  // ── Button dispatch (called from loop()) ──────────────────────────────
+
+  // Phase 1: long-press detection. Returns true if loop must exit early
+  // (Back→cancel, Confirm→finish).
+  bool handleLongPresses();
+
+  // Phase 2: record press-start for all 6 buttons.
+  void trackButtonPresses();
+
+  // Phase 3: simultaneous Up+Right → toggle candidate-cycle mode.
+  void handleUpRightCombo();
+
+  // Phase 4: short-press actions on button release for all 6 buttons.
+  void handleShortPressReleases();
+
+  // Phase 5: auto-repeat backspace while Up is held.
+  void handleBackspaceHoldRepeat();
+
+  // Phase 6: time-based updates (punctuation popup timeout + predictor poll).
+  void pollTimeBasedState();
+
+  // Shared: press a letter group (1-4), resetting punctuation/candidate state.
+  void pressLetterGroup(uint8_t groupNum);
 
   std::string _title;
   std::string _initialText;

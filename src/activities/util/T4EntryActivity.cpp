@@ -91,7 +91,7 @@ void T4EntryActivity::onExit() {
   Activity::onExit();
 }
 
-// ── Button Dispatch ──────────────────────────────────────────────────────
+// ── Button dispatch helpers ──────────────────────────────────────────────
 
 void T4EntryActivity::loop() {
   // NOTE: Do NOT call mappedInput.update() here — gpio.update() is already
@@ -99,15 +99,86 @@ void T4EntryActivity::loop() {
   // A second update() on real hardware would clear the press/release events
   // already latched by the first call, making buttons unresponsive.
 
-  // --- Long-press detection (check before short-press to set longHandled flags) ---
+  // Phase 1: long-press detection (may return early on cancel/complete)
+  if (handleLongPresses()) return;
 
+  // Phase 2: record button press state
+  trackButtonPresses();
+
+  // Phase 3: simultaneous Up+Right combo
+  handleUpRightCombo();
+
+  // Phase 4: short-press actions on release
+  handleShortPressReleases();
+
+  // Phase 5: backspace hold auto-repeat
+  handleBackspaceHoldRepeat();
+
+  // Phase 6: time-based state updates
+  pollTimeBasedState();
+}
+
+// ── Completion / Cancellation ────────────────────────────────────────────
+
+void T4EntryActivity::render(RenderLock&& lock) {
+  (void)lock;
+
+  renderer.clearScreen();
+
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const auto& metrics = UITheme::getInstance().getMetrics();
+
+  renderHeader();
+
+  const int inputStartY = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing +
+                          metrics.verticalSpacing * 4 + metrics.keyboardVerticalOffset;
+
+  // Compute the vertical limit for the text field so it cannot overflow
+  // into the letter-block area at the bottom of the screen.  The
+  // calculation mirrors renderButtonHints' blocksBaseY derivation.
+  static constexpr int kBlockPadY = 6;
+  static constexpr int kBlockRowGap = 6;
+  static constexpr int kBlockGapAbove = 12;
+  static constexpr int kCharsPerRow = 3;
+
+  int maxBlockH = 0;
+  for (int i = 0; i < 4; i++) {
+    int len = t4::getGroupLength(_lang, i + 1);
+    int rows = (len + kCharsPerRow - 1) / kCharsPerRow;
+    int h = rows * lineHeight + (rows - 1) * kBlockRowGap + 2 * kBlockPadY;
+    if (h > maxBlockH) maxBlockH = h;
+  }
+  const int hintTopY = renderer.getScreenHeight() - 40;
+  const int blocksBaseY = hintTopY - kBlockGapAbove - maxBlockH - lineHeight;
+  // Reserve lineHeight for the candidate row + counter row + gap.
+  static constexpr int kCounterRowH = 12;
+  const int maxTextFieldBottom = blocksBaseY - lineHeight - kCounterRowH - metrics.verticalSpacing;
+  const int maxTextFieldHeight = maxTextFieldBottom - inputStartY;
+
+  bool textOverflow = false;
+  int y = renderTextField(inputStartY, lineHeight, maxTextFieldHeight, textOverflow);
+
+  renderInfoLine(inputStartY, textOverflow);
+
+  y = y + lineHeight + metrics.verticalSpacing;
+  renderCandidateRow(y);
+  renderButtonHints(lineHeight);
+
+  renderer.displayBuffer();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PRIVATE METHODS
+// ══════════════════════════════════════════════════════════════════
+
+bool T4EntryActivity::handleLongPresses() {
   // Back long-press → cancel
   if (_backHeld && !_backLongHandled && mappedInput.isPressed(MappedInputManager::Button::Back) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS) {
     _backLongHandled = true;
     LOG_DBG("T4", "loop: long-press Back → cancel");
     onCancel();
-    return;
+    return true;
   }
 
   // Confirm long-press → finish with result
@@ -117,7 +188,7 @@ void T4EntryActivity::loop() {
     LOG_DBG("T4", "loop: long-press Confirm → finish, mode=%d text='%s'", static_cast<int>(_mode),
             _inputEngine.getConfirmedText());
     onComplete();
-    return;
+    return true;
   }
 
   // Left long-press → cycle language (disabled in cycle mode)
@@ -173,47 +244,37 @@ void T4EntryActivity::loop() {
     requestUpdate();
   }
 
-  // --- Press tracking ---
+  return false;
+}
 
-  // Button::Back — press tracking
+void T4EntryActivity::trackButtonPresses() {
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     _backHeld = true;
     _backLongHandled = false;
   }
-
-  // Button::Confirm — press tracking
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     _confirmHeld = true;
     _confirmLongHandled = false;
   }
-
-  // Button::Left — press tracking
   if (mappedInput.wasPressed(MappedInputManager::Button::Left)) {
     _leftHeld = true;
     _leftLongHandled = false;
   }
-
-  // Button::Right — press tracking
   if (mappedInput.wasPressed(MappedInputManager::Button::Right)) {
     _rightHeld = true;
     _rightLongHandled = false;
   }
-
-  // Button::Up — press tracking
   if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
     _upHeld = true;
     _upLongHandled = false;
   }
-
-  // Button::Down — press tracking (short = punctuation, long = Shift/Caps)
   if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
     _downHeld = true;
     _downLongHandled = false;
   }
+}
 
-  // ── Simultaneous Up+Right → toggle cycle (candidate navigation) mode ──
-  // Placed AFTER press tracking so that _rightLongHandled / _upLongHandled
-  // set here are not immediately cleared by the press-tracking block above.
+void T4EntryActivity::handleUpRightCombo() {
   if (!_upRightComboHandled && mappedInput.isPressed(MappedInputManager::Button::Up) &&
       mappedInput.isPressed(MappedInputManager::Button::Right)) {
     _upRightComboHandled = true;
@@ -225,29 +286,31 @@ void T4EntryActivity::loop() {
       requestUpdate();
     }
   }
+}
 
-  // --- Short-press detection on release ---
+void T4EntryActivity::pressLetterGroup(uint8_t groupNum) {
+  LOG_DBG("T4", "loop: press group %u (mode=%d)", groupNum, static_cast<int>(_mode));
+  _inputEngine.pressButton(groupNum);
+  _punctIndex = 0;
+  _wordJustConfirmed = false;
+  _candidateScrollX = 0;
+  // One-shot Shift: consume after first letter so the key caps
+  // revert to lowercase; _autoCap preserves the intent for the
+  // candidate display (applyWordCase checks _autoCap).
+  if (_mode == t4::T4Mode::PREDICT && _inputEngine.getShiftLevel() == 1) {
+    _autoCap = true;
+    _inputEngine.setShiftLevel(0);
+  }
+  requestUpdate();
+}
 
-  // PREDICT / MULTI_TAP: front buttons = letter groups
-
+void T4EntryActivity::handleShortPressReleases() {
   // Button::Back — letter group 1 (disabled in cycle mode)
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     if (_backHeld && !_backLongHandled) {
       if (!(_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates)) {
         if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
-          LOG_DBG("T4", "loop: press group 1 (mode=%d)", static_cast<int>(_mode));
-          _inputEngine.pressButton(1);
-          _punctIndex = 0;
-          _wordJustConfirmed = false;
-          _candidateScrollX = 0;
-          // One-shot Shift: consume after first letter so the key caps
-          // revert to lowercase; _autoCap preserves the intent for the
-          // candidate display (applyWordCase checks _autoCap).
-          if (_mode == t4::T4Mode::PREDICT && _inputEngine.getShiftLevel() == 1) {
-            _autoCap = true;
-            _inputEngine.setShiftLevel(0);
-          }
-          requestUpdate();
+          pressLetterGroup(1);
         }
       }
     }
@@ -260,15 +323,7 @@ void T4EntryActivity::loop() {
     if (_confirmHeld && !_confirmLongHandled) {
       if (!(_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates)) {
         if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
-          _inputEngine.pressButton(2);
-          _punctIndex = 0;
-          _wordJustConfirmed = false;
-          _candidateScrollX = 0;
-          if (_mode == t4::T4Mode::PREDICT && _inputEngine.getShiftLevel() == 1) {
-            _autoCap = true;
-            _inputEngine.setShiftLevel(0);
-          }
-          requestUpdate();
+          pressLetterGroup(2);
         }
       }
     }
@@ -286,15 +341,7 @@ void T4EntryActivity::loop() {
         _candidateScrollX = 0;
         requestUpdate();
       } else if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
-        _inputEngine.pressButton(3);
-        _punctIndex = 0;
-        _wordJustConfirmed = false;
-        _candidateScrollX = 0;
-        if (_mode == t4::T4Mode::PREDICT && _inputEngine.getShiftLevel() == 1) {
-          _autoCap = true;
-          _inputEngine.setShiftLevel(0);
-        }
-        requestUpdate();
+        pressLetterGroup(3);
       }
     }
     _leftHeld = false;
@@ -315,24 +362,14 @@ void T4EntryActivity::loop() {
         _candidateScrollX = 0;
         requestUpdate();
       } else if (_mode != t4::T4Mode::MULTI_TAP || !isTextInputFull()) {
-        _inputEngine.pressButton(4);
-        _punctIndex = 0;
-        _wordJustConfirmed = false;
-        _candidateScrollX = 0;
-        if (_mode == t4::T4Mode::PREDICT && _inputEngine.getShiftLevel() == 1) {
-          _autoCap = true;
-          _inputEngine.setShiftLevel(0);
-        }
-        requestUpdate();
+        pressLetterGroup(4);
       }
     }
     _rightHeld = false;
     _rightLongHandled = false;
   }
 
-  // --- Side button release ---
-
-  // Button::Up release (side left) — mode-dependent
+  // Button::Up release (side left) — backspace
   if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
     bool wasLongPress = _upLongHandled;
     _upHeld = false;
@@ -344,15 +381,12 @@ void T4EntryActivity::loop() {
       _upRightComboHandled = false;
     }
 
-    // Combo sets _upLongHandled=true, so wasLongPress covers both
-    // long-press and combo — no separate wasCombo needed.
     if (!wasLongPress) {
-      // Up always = backspace. In cycle mode Left/Right handle navigation.
       if (_mode == t4::T4Mode::PREDICT || _mode == t4::T4Mode::MULTI_TAP) {
         LOG_DBG("T4", "loop: Up → backspace (mode=%d, textLen=%u)", static_cast<int>(_mode),
                 _inputEngine.getConfirmedTextLength());
         _inputEngine.backspace();
-        _lang = _inputEngine.getLanguage();  // may have auto-switched on cross-language word
+        _lang = _inputEngine.getLanguage();
         _punctIndex = 0;
         _wordJustConfirmed = false;
         _candidateScrollX = 0;
@@ -363,7 +397,7 @@ void T4EntryActivity::loop() {
     }
   }
 
-  // Button::Down release (side right) — mode-dependent
+  // Button::Down release (side right) — punctuation
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     bool wasLongPress = _downLongHandled;
     _downHeld = false;
@@ -375,32 +409,34 @@ void T4EntryActivity::loop() {
       requestUpdate();
     }
   }
+}
 
-  // --- Long-press+hold Backspace (Side Up) with auto-repeat ---
+void T4EntryActivity::handleBackspaceHoldRepeat() {
   // _upLongHandled is set by both long-press and combo, so this
   // naturally skips when either is active.
-  if (!_upLongHandled) {
-    if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
-      unsigned long held = mappedInput.getHeldTime();
-      if (held >= BACKSPACE_INITIAL_DELAY_MS) {
-        if (_backspaceLastActionMs == 0) {
-          // First deletion after initial delay
-          LOG_DBG("T4", "loop: CMD backspace hold start (held=%lums)", held);
-          _inputEngine.backspace();
-          _lang = _inputEngine.getLanguage();  // may have auto-switched
-          _backspaceLastActionMs = millis();
-          requestUpdate();
-        } else if (millis() - _backspaceLastActionMs >= BACKSPACE_REPEAT_MS) {
-          // Repeat deletion (word-level)
-          _inputEngine.backspace();
-          _lang = _inputEngine.getLanguage();  // may have auto-switched
-          _backspaceLastActionMs = millis();
-          requestUpdate();
-        }
-      }
-    }
-  }
+  if (_upLongHandled) return;
+  if (!mappedInput.isPressed(MappedInputManager::Button::Up)) return;
 
+  unsigned long held = mappedInput.getHeldTime();
+  if (held < BACKSPACE_INITIAL_DELAY_MS) return;
+
+  if (_backspaceLastActionMs == 0) {
+    // First deletion after initial delay
+    LOG_DBG("T4", "loop: CMD backspace hold start (held=%lums)", held);
+    _inputEngine.backspace();
+    _lang = _inputEngine.getLanguage();
+    _backspaceLastActionMs = millis();
+    requestUpdate();
+  } else if (millis() - _backspaceLastActionMs >= BACKSPACE_REPEAT_MS) {
+    // Repeat deletion (word-level)
+    _inputEngine.backspace();
+    _lang = _inputEngine.getLanguage();
+    _backspaceLastActionMs = millis();
+    requestUpdate();
+  }
+}
+
+void T4EntryActivity::pollTimeBasedState() {
   // Auto-hide punctuation popup when the cycle timeout expires.
   if (_wordJustConfirmed && (millis() - _lastConfirmMs > t4::T4InputEngine<>::kMultiTapTimeoutMs)) {
     _wordJustConfirmed = false;
@@ -408,9 +444,6 @@ void T4EntryActivity::loop() {
   }
 
   // Poll predictor for any time-based state changes.
-  // In MULTI_TAP, poll() may call fixMultiTapLetter() on timeout — the
-  // active button is cleared but no requestUpdate() fires, so the inverted
-  // highlight stays stuck on the last letter until the next user action.
   const bool hadActiveTap = (_mode == t4::T4Mode::MULTI_TAP && _inputEngine.getActiveButton() != 0);
   _inputEngine.poll(millis());
   if (hadActiveTap && _inputEngine.getActiveButton() == 0) {
@@ -418,7 +451,7 @@ void T4EntryActivity::loop() {
   }
 }
 
-// ── Completion / Cancellation ────────────────────────────────────────────
+// ── Button Dispatch ──────────────────────────────────────────────────────
 
 void T4EntryActivity::onComplete() {
   const char* text = _inputEngine.getConfirmedText();
@@ -661,46 +694,33 @@ std::string T4EntryActivity::applyWordCase(const char* word) const {
 
 // ── Rendering ────────────────────────────────────────────────────────────
 
-void T4EntryActivity::render(RenderLock&& lock) {
-  (void)lock;
-
-  renderer.clearScreen();
-
-  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+void T4EntryActivity::renderInfoLine(int aboveTextY, bool overflow) {
   const auto& metrics = UITheme::getInstance().getMetrics();
+  int availableW = renderer.getScreenWidth();
+  if (gpio.deviceIsX3()) availableW -= 2 * metrics.sideButtonHintsWidth;
+  const int effMargin = (renderer.getScreenWidth() - availableW * metrics.keyboardTextFieldWidthPercent / 100) / 2;
+  const int rightX = renderer.getScreenWidth() - effMargin;
+  const int infoY = aboveTextY - renderer.getLineHeight(UI_12_FONT_ID);
+  char buf[32];
 
-  renderHeader();
-
-  const int inputStartY = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing +
-                          metrics.verticalSpacing * 4 + metrics.keyboardVerticalOffset;
-
-  // Compute the vertical limit for the text field so it cannot overflow
-  // into the letter-block area at the bottom of the screen.  The
-  // calculation mirrors renderButtonHints' blocksBaseY derivation.
-  static constexpr int kBlockPadY = 6;
-  static constexpr int kBlockRowGap = 6;
-  static constexpr int kBlockGapAbove = 12;
-  static constexpr int kCharsPerRow = 3;
-
-  int maxBlockH = 0;
-  for (int i = 0; i < 4; i++) {
-    int len = t4::getGroupLength(_lang, i + 1);
-    int rows = (len + kCharsPerRow - 1) / kCharsPerRow;
-    int h = rows * lineHeight + (rows - 1) * kBlockRowGap + 2 * kBlockPadY;
-    if (h > maxBlockH) maxBlockH = h;
+  // Measure total width for right-alignment
+  int totalW = 0;
+  const char* overflowStr = "^^^^^^  ";
+  int overflowW = 0;
+  if (overflow) {
+    overflowW = renderer.getTextWidth(UI_12_FONT_ID, overflowStr);
+    totalW += overflowW;
   }
-  const int hintTopY = renderer.getScreenHeight() - 40;
-  const int blocksBaseY = hintTopY - kBlockGapAbove - maxBlockH - lineHeight;
-  // Reserve one lineHeight for the candidate row + verticalSpacing gap.
-  const int maxTextFieldBottom = blocksBaseY - lineHeight - metrics.verticalSpacing;
-  const int maxTextFieldHeight = maxTextFieldBottom - inputStartY;
+  snprintf(buf, sizeof(buf), "%u/%u", _inputEngine.getConfirmedTextLength(), (unsigned)_maxLength);
+  totalW += renderer.getTextWidth(UI_12_FONT_ID, buf);
 
-  int y = renderTextField(inputStartY, lineHeight, maxTextFieldHeight);
-  y = y + lineHeight + metrics.verticalSpacing;
-  renderCandidateRow(y);
-  renderButtonHints(lineHeight);
-
-  renderer.displayBuffer();
+  int infoX = rightX - totalW;
+  if (overflow) {
+    renderer.drawText(UI_12_FONT_ID, infoX, infoY, overflowStr, true);
+    infoX += overflowW;
+  }
+  snprintf(buf, sizeof(buf), "%u/%u", _inputEngine.getConfirmedTextLength(), (unsigned)_maxLength);
+  renderer.drawText(UI_12_FONT_ID, infoX, infoY, buf, true);
 }
 
 // ── renderHeader ─────────────────────────────────────────────────────────
@@ -736,7 +756,7 @@ void T4EntryActivity::renderHeader() {
 
 // ── renderTextField ──────────────────────────────────────────────────────
 
-int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight) {
+int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, bool& overflowOut) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
 
@@ -954,15 +974,7 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight) 
   GUI.drawTextField(renderer, Rect{0, startY, pageWidth, visibleHeight}, fieldWidth, false, effectiveMargin,
                     pageWidth - 2 * effectiveMargin);
 
-  // ── Overflow indicator (^^^^^^ at top-right when content is clipped) ───────
-  if (overflow) {
-    static constexpr int kIndicatorW = 14 * 6;  // 6 chars wide
-    const int indX = pageWidth - effectiveMargin - kIndicatorW - 4;
-    const int indY = startY + 2;
-    // Inverted background so the mark is visible over any text behind it.
-    // renderer.fillRect(indX, indY, kIndicatorW, lineHeight - 2, true);
-    renderer.drawText(SMALL_FONT_ID, indX + 3, indY, "^^^^^^", true);
-  }
+  overflowOut = overflow;
 
   // ── Serif cursor at end of text ───────────────────────────────────────
   {
@@ -1005,67 +1017,106 @@ int T4EntryActivity::renderCandidateRow(int startY) {
   }
   const int effectiveMargin = (pageWidth - availableWidth * metrics.keyboardTextFieldWidthPercent / 100) / 2;
   const int textAreaWidth = pageWidth - 2 * effectiveMargin;
+  const int rightEdge = effectiveMargin + textAreaWidth;
 
   uint16_t activeIdx = _inputEngine.getCandidateIndex();
+  const int sepW = renderer.getTextWidth(UI_12_FONT_ID, "  ");
+  const int ellipsisW = renderer.getTextWidth(UI_12_FONT_ID, "\u2026");
+  const int leftEllipsisW = renderer.getTextWidth(UI_12_FONT_ID, "\u2026 ");
 
-  // First pass: measure total width and find active candidate position
-  int totalW = 0;
-  int activeStartX = 0;
-  int candWidths[20];
-  int candCountMeasured = candCount < 20 ? (int)candCount : 20;
+  // ── Active candidate: measure, center on screen ─────────────────────
+  const char* activeName = _inputEngine.getCandidate(activeIdx);
+  int activeW = renderer.getTextWidth(UI_12_FONT_ID, activeName);
+  int activeX = effectiveMargin + (textAreaWidth - activeW) / 2;
 
-  for (int i = 0; i < candCountMeasured; i++) {
-    const char* name = _inputEngine.getCandidate(i);
-    if (!name) continue;
-    if (i > 0) totalW += renderer.getTextWidth(SMALL_FONT_ID, "  ");
-    candWidths[i] = renderer.getTextWidth(SMALL_FONT_ID, name);
-    if (i == (int)activeIdx) activeStartX = totalW;
-    totalW += candWidths[i];
-  }
-
-  // Compute scroll offset to keep active candidate visible
-  if (totalW > textAreaWidth) {
-    _candidateScrollX = activeStartX - (textAreaWidth / 2) + (candWidths[activeIdx] / 2);
-    if (_candidateScrollX < 0) _candidateScrollX = 0;
-    if (_candidateScrollX > totalW - textAreaWidth) _candidateScrollX = totalW - textAreaWidth;
-  } else {
-    _candidateScrollX = 0;
-  }
-
-  // Draw candidates with scroll and clipping
-  int drawX = effectiveMargin - _candidateScrollX;
-
-  // Left ellipsis if scrolled
-  if (_candidateScrollX > 0) {
-    renderer.drawText(SMALL_FONT_ID, effectiveMargin, startY, "\u2026 ", true);
-  }
-
-  for (int i = 0; i < candCountMeasured; i++) {
-    const char* name = _inputEngine.getCandidate(i);
-    if (!name) continue;
-
-    // Skip if fully off-screen left
-    if (drawX + candWidths[i] < effectiveMargin) {
-      drawX += candWidths[i] + renderer.getTextWidth(SMALL_FONT_ID, "  ");
-      continue;
+  // ── Right side: collect from activeIdx+1 outward ────────────────────
+  struct Item { int idx; int w; };
+  Item rightItems[30];
+  int rightCount = 0;
+  bool hasRightEllipsis = false;
+  {
+    int rightX = activeX + activeW;
+    for (int off = 1; off < (int)candCount; off++) {
+      int idx = (activeIdx + off) % candCount;
+      if (idx == (int)activeIdx) break;
+      int w = renderer.getTextWidth(UI_12_FONT_ID, _inputEngine.getCandidate(idx));
+      if (rightX + sepW + w + ellipsisW > rightEdge) {
+        hasRightEllipsis = true;
+        break;
+      }
+      rightItems[rightCount++] = {idx, w};
+      rightX += sepW + w;
     }
-    // Stop if fully off-screen right
-    if (drawX > effectiveMargin + textAreaWidth - 30) {
-      renderer.drawText(SMALL_FONT_ID, effectiveMargin + textAreaWidth - 30, startY, "\u2026", true);
-      break;
-    }
-
-    if (i == (int)activeIdx) {
-      // Active candidate: draw with underline
-      renderer.drawText(SMALL_FONT_ID, drawX, startY, name, true);
-      int underlineY = startY + renderer.getTextHeight(SMALL_FONT_ID) + 2;
-      renderer.fillRect(drawX, underlineY, candWidths[i], 2, true);
-    } else {
-      renderer.drawText(SMALL_FONT_ID, drawX, startY, name, true);
-    }
-
-    drawX += candWidths[i] + renderer.getTextWidth(SMALL_FONT_ID, "  ");
   }
+
+  // ── Left side: collect from activeIdx-1 outward ─────────────────────
+  Item leftItems[30];
+  int leftCount = 0;
+  bool hasLeftEllipsis = false;
+  {
+    int leftX = activeX;
+    for (int off = 1; off < (int)candCount; off++) {
+      int idx = (activeIdx - off + candCount) % candCount;
+      if (idx == (int)activeIdx) break;
+      int w = renderer.getTextWidth(UI_12_FONT_ID, _inputEngine.getCandidate(idx));
+      int need = (leftCount > 0 ? sepW : 0) + w + ellipsisW;
+      if (leftX - need < effectiveMargin) {
+        hasLeftEllipsis = true;
+        break;
+      }
+      leftItems[leftCount++] = {idx, w};
+      leftX -= sepW + w;
+    }
+  }
+
+  // ── Compute total width of visible candidates (incl. separators) ────
+  int totalVisibleW = activeW;
+  for (int i = 0; i < leftCount; i++) totalVisibleW += sepW + leftItems[i].w;
+  for (int i = 0; i < rightCount; i++) totalVisibleW += sepW + rightItems[i].w;
+
+  // ── Center the candidate block in the full text area ─────────────────
+  int drawX = effectiveMargin + (textAreaWidth - totalVisibleW) / 2;
+  if (drawX < effectiveMargin) drawX = effectiveMargin;
+
+  // ── Draw: left ellipsis → left candidates → active → right → right ellipsis ──
+  if (hasLeftEllipsis) {
+    int lx = drawX - leftEllipsisW;
+    if (lx < effectiveMargin) lx = effectiveMargin;
+    renderer.drawText(UI_12_FONT_ID, lx, startY, "\u2026 ", true);
+  }
+
+  // Left candidates (collected closest-to-active first; draw in reverse)
+  for (int i = leftCount - 1; i >= 0; i--) {
+    const char* name = _inputEngine.getCandidate(leftItems[i].idx);
+    renderer.drawText(UI_12_FONT_ID, drawX, startY, name, true);
+    drawX += leftItems[i].w + sepW;
+  }
+
+  // Active candidate (underlined)
+  renderer.drawText(UI_12_FONT_ID, drawX, startY, activeName, true);
+  int ulY = startY + renderer.getTextHeight(UI_12_FONT_ID) + 2;
+  renderer.fillRect(drawX, ulY, activeW, 2, true);
+  drawX += activeW + sepW;
+
+  // Right candidates
+  for (int i = 0; i < rightCount; i++) {
+    const char* name = _inputEngine.getCandidate(rightItems[i].idx);
+    renderer.drawText(UI_12_FONT_ID, drawX, startY, name, true);
+    drawX += rightItems[i].w + sepW;
+  }
+
+  // Right ellipsis — attached right after last candidate
+  if (hasRightEllipsis) {
+    renderer.drawText(UI_12_FONT_ID, drawX, startY, "\u2026", true);
+  }
+
+  // ── Counter: "15 / 228" centered below ──────────────────────────────
+  char counter[16];
+  snprintf(counter, sizeof(counter), "%u / %u", activeIdx + 1, candCount);
+  int counterW = renderer.getTextWidth(UI_12_FONT_ID, counter);
+  int counterX = effectiveMargin + (textAreaWidth - counterW) / 2;
+  int counterY = startY + renderer.getLineHeight(UI_12_FONT_ID) + 4;
+  renderer.drawText(UI_12_FONT_ID, counterX, counterY, counter, true);
 
   return startY;
 }
