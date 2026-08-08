@@ -18,9 +18,15 @@ bool ThreadScroller::loadBatch(uint32_t startId, bool up) {
     accH = 0;
     for (uint8_t i = 0; i < loaded; ++i) {
       accH += msgs[i].heightPx;
-      if (accH > static_cast<uint16_t>(ch)) {
-        accH -= msgs[i].heightPx;
-        lastId = msgs[i - 1].id;
+      if (accH > static_cast<uint32_t>(ch)) {
+        if (i == 0) {
+          // Single message taller than viewport: keep full height for
+          // correct scrollbar maths (positionPx += real height).
+          lastId = msgs[0].id;
+        } else {
+          accH -= msgs[i].heightPx;
+          lastId = msgs[i - 1].id;
+        }
         break;
       }
     }
@@ -40,7 +46,7 @@ void ThreadScroller::savePos() {
 void ThreadScroller::scrollDownPage() {
   LOG_DBG("MESH", "scrollDownPage: posPx=%u accH=%u totalPx=%u ch=%d lastId=%u endId=%u", meta.positionPx, accH,
           meta.totalPx, ch, lastId, meta.endId);
-  if (meta.totalPx <= static_cast<uint16_t>(ch)) {
+  if (meta.totalPx <= static_cast<uint32_t>(ch)) {
     LOG_DBG("MESH", "scrollDownPage: skip — fits in one page");
     return;
   }
@@ -87,8 +93,8 @@ void ThreadScroller::scrollUpPage() {
 void ThreadScroller::scrollToEnd() {
   if (meta.count == 0) return;
   loadBatch(meta.endId, true);
-  if (meta.totalPx > static_cast<uint16_t>(ch)) {
-    meta.positionPx = meta.totalPx - static_cast<uint16_t>(ch);
+  if (meta.totalPx > static_cast<uint32_t>(ch)) {
+    meta.positionPx = meta.totalPx - static_cast<uint32_t>(ch);
   } else {
     meta.positionPx = 0;
   }
@@ -112,8 +118,8 @@ void ThreadScroller::scrollDownByMessage() {
   meta.positionPx = (meta.positionPx >= accH) ? meta.positionPx - accH + msgs[count - 1].heightPx : 0;
   LOG_DBG("MESH", "scrollDownByMsg: final posPx=%u posId=%u", meta.positionPx, meta.positionId);
   savePos();
-  if (meta.positionPx > meta.totalPx - static_cast<uint16_t>(ch)) {
-    meta.positionPx = (meta.totalPx > static_cast<uint16_t>(ch)) ? meta.totalPx - static_cast<uint16_t>(ch) : 0;
+  if (meta.positionPx > meta.totalPx - static_cast<uint32_t>(ch)) {
+    meta.positionPx = (meta.totalPx > static_cast<uint32_t>(ch)) ? meta.totalPx - static_cast<uint32_t>(ch) : 0;
   }
   loadBatch(meta.positionId > 0 ? meta.positionId : meta.startId, false);
   savePos();

@@ -90,7 +90,7 @@ class MeshCoreThreadActivity final : public Activity {
   ConvMeta _meta = {};
 
   // Rendering bookkeeping (derived during draw, reset on scroll)
-  uint16_t _accHeight = 0;
+  uint32_t _accHeight = 0;
   uint32_t _firstVisibleId = 0;
   uint32_t _lastVisibleId = 0;
 

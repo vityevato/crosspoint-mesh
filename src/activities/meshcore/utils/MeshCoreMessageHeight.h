@@ -17,6 +17,20 @@ class GfxRenderer;
 inline uint16_t meshcoreMessageGapPx(int lineHeight) { return static_cast<uint16_t>(lineHeight); }
 
 /**
+ * Compute the vertical content-area height available for the thread message
+ * list (screen height minus header, tab bar, spacing, button hints and
+ * subtitle). This is the maximum height a single message bubble can visually
+ * occupy — taller messages are clipped with "..." at render time — so it is
+ * the single source of truth used both by the thread activity's layout and by
+ * measureMeshCoreMessageHeight() to cap measured heights.
+ *
+ * @param renderer GfxRenderer for the current screen height
+ * @param metrics  ThemeMetrics for header/tab-bar/hint dimensions
+ * @return Content-area height in pixels
+ */
+int meshCoreThreadContentHeight(const GfxRenderer& renderer, const ThemeMetrics& metrics);
+
+/**
  * Word-wrap message body text, respecting \n as hard line breaks.
  * Normalizes \r\n → \n.  Preserves empty lines from consecutive newlines.
  * This is the single source of truth for \n-aware word-wrapping — both
@@ -44,7 +58,12 @@ std::vector<std::string> wrapMessageBody(const GfxRenderer& renderer, int fontId
  *                     false = DM (never shows sender name)
  * @param msg          The message to measure
  * @param metrics      ThemeMetrics for contentSidePadding etc.
- * @return Total pixel height of the message bubble
+ * @param maxHeight    Precomputed content-area height used to cap the result.
+ *                     Pass a value >= 0 (e.g. a cached contentHeight) when
+ *                     measuring many messages in a loop to avoid recomputing
+ *                     it per call. Pass -1 (default) to derive it internally
+ *                     from renderer + metrics.
+ * @return Total pixel height of the message bubble (capped to maxHeight)
  */
 uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, int contentWidth, bool isChannel,
-                                      const MeshCoreMessage& msg, const ThemeMetrics& metrics);
+                                      const MeshCoreMessage& msg, const ThemeMetrics& metrics, int maxHeight = -1);

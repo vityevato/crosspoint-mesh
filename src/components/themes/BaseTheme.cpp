@@ -352,9 +352,9 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
-void BaseTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
-                              uint16_t scrollOffsetPx) const {
-  if (totalPixels <= rect.height) return;
+void BaseTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                              uint32_t scrollOffsetPx) const {
+  if (totalPixels <= static_cast<uint32_t>(rect.height)) return;
 
   constexpr int indicatorWidth = 20;
   constexpr int arrowSize = 6;

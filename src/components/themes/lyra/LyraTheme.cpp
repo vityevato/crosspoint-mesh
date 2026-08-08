@@ -305,14 +305,14 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
-void LyraTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
-                              uint16_t scrollOffsetPx) const {
+void LyraTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                              uint32_t scrollOffsetPx) const {
   if (totalPixels <= rect.height) return;
 
   const int barW = LyraMetrics::values.scrollBarWidth;
   const int barX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
-  const int thumbH = std::max(10, (rect.height * rect.height) / totalPixels);
-  const int maxTravel = std::max(1, totalPixels - rect.height);
+  const int thumbH = std::max(10, static_cast<int>((rect.height * rect.height) / totalPixels));
+  const int maxTravel = std::max(1, static_cast<int>(totalPixels - rect.height));
   const int clampedOffset = std::clamp(static_cast<int>(scrollOffsetPx), 0, static_cast<int>(maxTravel));
   const int thumbY = rect.y + (clampedOffset * (rect.height - thumbH)) / maxTravel;
 

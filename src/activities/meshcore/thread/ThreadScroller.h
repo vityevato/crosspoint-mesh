@@ -15,7 +15,7 @@ struct ThreadScroller {
   MeshCoreMessage* const msgs;
   uint8_t& count;
   MeshCoreMessage& filler;
-  uint16_t& accH;
+  uint32_t& accH;
   uint32_t& firstId;
   uint32_t& lastId;
   const int ch;

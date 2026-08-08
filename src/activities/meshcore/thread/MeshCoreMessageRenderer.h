@@ -30,5 +30,5 @@ struct ThreadRenderCtx {
 /// The filler message (if its id != 0) is rendered with clipToFit=true in the
 /// remaining space at the bottom of the viewport.
 void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMessage* msgs, uint8_t count,
-                        const MeshCoreMessage& filler, ThreadRenderCtx& ctx, bool isChannel, uint16_t totalPx,
-                        uint16_t positionPx, bool scanOnly);
+                        const MeshCoreMessage& filler, ThreadRenderCtx& ctx, bool isChannel, uint32_t totalPx,
+                        uint32_t positionPx, bool scanOnly);

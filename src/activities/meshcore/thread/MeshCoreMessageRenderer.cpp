@@ -19,8 +19,8 @@ ThreadRenderCtx::ThreadRenderCtx(const GfxRenderer& renderer, const Rect& rect, 
       maxTextWidth(rect.width - 2 * metrics.contentSidePadding) {}
 
 void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMessage* msgs, uint8_t count,
-                        const MeshCoreMessage& filler, ThreadRenderCtx& ctx, bool isChannel, uint16_t totalPx,
-                        uint16_t positionPx, bool scanOnly) {
+                        const MeshCoreMessage& filler, ThreadRenderCtx& ctx, bool isChannel, uint32_t totalPx,
+                        uint32_t positionPx, bool scanOnly) {
   if (count == 0) return;
 
   constexpr int maxLines = 100;
@@ -96,16 +96,24 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
       auto lines = wrapMessageBody(renderer, ctx.bodyFontId, msg.text, ctx.maxTextWidth, maxLines);
       for (const auto& line : lines) {
         if (!fits(ctx.bodyLineH)) break;
+
+        // In non-clipToFit mode, if this line won't fit fully, replace it
+        // with "..." so the user knows there's more content to scroll.
+        bool willOverflow = (!clipToFit && yPos + ctx.bodyLineH > bottom);
+
         if (!line.empty()) {
           if (outgoing) {
-            int textW = renderer.getTextWidth(ctx.bodyFontId, line.c_str());
+            int textW = renderer.getTextWidth(ctx.bodyFontId, willOverflow ? "..." : line.c_str());
             renderer.drawText(ctx.bodyFontId, rect.x + rect.width - ctx.metrics.contentSidePadding - textW, yPos,
-                              line.c_str(), true);
+                              willOverflow ? "..." : line.c_str(), true);
           } else {
-            renderer.drawText(ctx.bodyFontId, rect.x + ctx.metrics.contentSidePadding, yPos, line.c_str(), true);
+            renderer.drawText(ctx.bodyFontId, rect.x + ctx.metrics.contentSidePadding, yPos,
+                              willOverflow ? "..." : line.c_str(), true);
           }
         }
         yPos += ctx.bodyLineH;
+
+        if (willOverflow) break;
       }
     }
 
@@ -175,7 +183,9 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
     const int screenW = renderer.getScreenWidth();
     const int screenH = renderer.getScreenHeight();
     if (rect.y > 0) renderer.fillRect(0, 0, screenW, rect.y, false);
-    const int belowY = rect.y + rect.height;
+    // Use actual render Y rather than rect boundary — a tall message
+    // may extend past rect.y+rect.height (clipped with "...").
+    const int belowY = (y > rect.y + rect.height) ? y : rect.y + rect.height;
     if (belowY < screenH) renderer.fillRect(0, belowY, screenW, screenH - belowY, false);
   }
 }

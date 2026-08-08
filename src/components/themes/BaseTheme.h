@@ -241,8 +241,8 @@ class BaseTheme {
   /// Draw scrollbar indicator for a scrollable area.
   /// @param totalPixels   Total scrollable content height in pixels.
   /// @param scrollOffsetPx  Current scroll offset from top in pixels.
-  virtual void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
-                             uint16_t scrollOffsetPx) const;
+  virtual void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                             uint32_t scrollOffsetPx) const;
 
  public:
   // Shared constants and helpers for battery drawing (used by all themes)

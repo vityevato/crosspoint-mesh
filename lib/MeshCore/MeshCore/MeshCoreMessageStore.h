@@ -14,8 +14,8 @@ struct ConvMeta {
   uint32_t endId = 0;       ///< Id of the newest message
   uint32_t positionId = 0;  ///< Id of the viewed message (scroll restore) which
                             ///< corresponds to positionPx below
-  uint16_t totalPx = 0;     ///< Total pixel height of all messages in this thread
-  uint16_t positionPx = 0;  ///< Pixel offset of the messages list (scroll restore),
+  uint32_t totalPx = 0;     ///< Total pixel height of all messages in this thread
+  uint32_t positionPx = 0;  ///< Pixel offset of the messages list (scroll restore),
                             ///< measured from the top of the first message and
                             ///< corresponds to the top of the viewport on screen.
   int fontId = 0;           ///< Font ID used to render this thread (for scroll restore)

@@ -102,8 +102,8 @@ class LyraTheme : public BaseTheme {
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;
-  void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
-                     uint16_t scrollOffsetPx) const override;
+  void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                     uint32_t scrollOffsetPx) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   bool showsFileIcons() const override { return true; }
 };

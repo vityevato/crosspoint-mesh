@@ -98,8 +98,8 @@ class RoundedRaffTheme : public BaseTheme {
                 const std::function<UIIcon(int index)>& rowIcon = nullptr,
                 const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
                 const std::function<bool(int index)>& rowDimmed = nullptr) const override;
-  void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
-                     uint16_t scrollOffsetPx) const override;
+  void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                     uint32_t scrollOffsetPx) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
                        bool inactive = false) const override;
   int getButtonHintWidth() const override { return 106; }

@@ -122,8 +122,8 @@ bool MeshCoreMessageStore::readMeta(const char* convPath, ConvMeta& out) {
   if (file.read(reinterpret_cast<uint8_t*>(&out.startId), 4) != 4) return false;
   if (file.read(reinterpret_cast<uint8_t*>(&out.endId), 4) != 4) return false;
   if (file.read(reinterpret_cast<uint8_t*>(&out.positionId), 4) != 4) return false;
-  if (file.read(reinterpret_cast<uint8_t*>(&out.totalPx), 2) != 2) return false;
-  if (file.read(reinterpret_cast<uint8_t*>(&out.positionPx), 2) != 2) return false;
+  if (file.read(reinterpret_cast<uint8_t*>(&out.totalPx), 4) != 4) return false;
+  if (file.read(reinterpret_cast<uint8_t*>(&out.positionPx), 4) != 4) return false;
   int32_t fontIdRaw = 0;
   if (file.read(reinterpret_cast<uint8_t*>(&fontIdRaw), 4) != 4) return false;
   out.fontId = fontIdRaw;
@@ -143,8 +143,8 @@ bool MeshCoreMessageStore::writeMeta(const char* convPath, const ConvMeta& meta)
   if (file.write(reinterpret_cast<const uint8_t*>(&meta.startId), 4) != 4) return false;
   if (file.write(reinterpret_cast<const uint8_t*>(&meta.endId), 4) != 4) return false;
   if (file.write(reinterpret_cast<const uint8_t*>(&meta.positionId), 4) != 4) return false;
-  if (file.write(reinterpret_cast<const uint8_t*>(&meta.totalPx), 2) != 2) return false;
-  if (file.write(reinterpret_cast<const uint8_t*>(&meta.positionPx), 2) != 2) return false;
+  if (file.write(reinterpret_cast<const uint8_t*>(&meta.totalPx), 4) != 4) return false;
+  if (file.write(reinterpret_cast<const uint8_t*>(&meta.positionPx), 4) != 4) return false;
   int32_t fontIdRaw = meta.fontId;
   if (file.write(reinterpret_cast<uint8_t*>(&fontIdRaw), 4) != 4) return false;
   return true;
@@ -156,8 +156,8 @@ bool MeshCoreMessageStore::dropOldestMessage(const char* convPath, ConvMeta& met
   // Read the message to subtract its height from totalPx and adjust scroll offset
   MeshCoreMessage msg;
   if (readMessage(convPath, meta.startId, msg)) {
-    meta.totalPx = (meta.totalPx > msg.heightPx) ? static_cast<uint16_t>(meta.totalPx - msg.heightPx) : 0;
-    meta.positionPx = (meta.positionPx > msg.heightPx) ? static_cast<uint16_t>(meta.positionPx - msg.heightPx) : 0;
+    meta.totalPx = (meta.totalPx > msg.heightPx) ? static_cast<uint32_t>(meta.totalPx - msg.heightPx) : 0;
+    meta.positionPx = (meta.positionPx > msg.heightPx) ? static_cast<uint32_t>(meta.positionPx - msg.heightPx) : 0;
   }
 
   // Delete the oldest message file
@@ -455,7 +455,11 @@ bool MeshCoreMessageStore::loadMessages(const char* convPath, uint32_t startId, 
         }
 
         if (file.read(reinterpret_cast<uint8_t*>(&out[loaded]), sizeof(MeshCoreMessage)) == sizeof(MeshCoreMessage)) {
-          if (accumulated + out[loaded].heightPx > maxHeightPx) break;
+          if (accumulated + out[loaded].heightPx > maxHeightPx) {
+            if (loaded > 0) break;
+            // First message taller than viewport: accept it anyway.
+            // The renderer clips it with "..." and scroll can advance.
+          }
           accumulated += out[loaded].heightPx;
           loaded++;
         }
@@ -497,7 +501,14 @@ bool MeshCoreMessageStore::loadMessages(const char* convPath, uint32_t startId, 
 
         if (file.read(reinterpret_cast<uint8_t*>(&out[loaded]), sizeof(MeshCoreMessage)) == sizeof(MeshCoreMessage)) {
           if (accumulated + out[loaded].heightPx > maxHeightPx) {
-            overflowed = true;
+            if (loaded > 0) {
+              overflowed = true;
+              break;
+            }
+            // First message taller than viewport: accept it anyway.
+            // The renderer clips it with "..." and scroll can advance.
+            accumulated += out[loaded].heightPx;
+            loaded++;
             break;
           }
           accumulated += out[loaded].heightPx;

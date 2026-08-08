@@ -78,8 +78,8 @@ void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const Activity
       store.getDirectMeta(pubkey, act._meta);
     }
     act.loadMessages(act._meta.endId, true);
-    act._meta.positionPx = (act._meta.totalPx > static_cast<uint16_t>(act._contentAreaHeight))
-                               ? act._meta.totalPx - static_cast<uint16_t>(act._contentAreaHeight)
+    act._meta.positionPx = (act._meta.totalPx > static_cast<uint32_t>(act._contentAreaHeight))
+                               ? act._meta.totalPx - static_cast<uint32_t>(act._contentAreaHeight)
                                : 0;
     act._meta.positionId = (act._visibleCount > 0) ? act._visibleMsgs[0].id : act._meta.endId;
     act.savePosition();

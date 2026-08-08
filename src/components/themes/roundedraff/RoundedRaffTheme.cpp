@@ -362,16 +362,16 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
   drawScrollBar(renderer, rect, itemCount * rowStep, pageStartIndex * rowStep);
 }
 
-void RoundedRaffTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint16_t totalPixels,
-                                     uint16_t scrollOffsetPx) const {
+void RoundedRaffTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                                     uint32_t scrollOffsetPx) const {
   if (totalPixels <= rect.height) return;
 
   const int barW = RoundedRaffMetrics::values.scrollBarWidth;
   const int barX = rect.x + rect.width - RoundedRaffMetrics::values.scrollBarRightOffset - barW;
   const int barH = rect.height;
 
-  const int thumbH = std::max(10, (barH * barH) / totalPixels);
-  const int maxTravel = std::max(1, totalPixels - barH);
+  const int thumbH = std::max(10, static_cast<int>((barH * barH) / totalPixels));
+  const int maxTravel = std::max(1, static_cast<int>(totalPixels - barH));
   const int clampedOffset = std::clamp(static_cast<int>(scrollOffsetPx), 0, static_cast<int>(maxTravel));
   const int thumbY = rect.y + (clampedOffset * (barH - thumbH)) / maxTravel;
 

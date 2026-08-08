@@ -148,9 +148,15 @@ bool MeshCoreThreadActivity::loadMessages(uint32_t startId, bool up) {
     _accHeight = 0;
     for (uint8_t i = 0; i < loaded; ++i) {
       _accHeight += _visibleMsgs[i].heightPx;
-      if (_accHeight > static_cast<uint16_t>(_contentAreaHeight)) {
-        _accHeight -= _visibleMsgs[i].heightPx;
-        _lastVisibleId = _visibleMsgs[i - 1].id;
+      if (_accHeight > static_cast<uint32_t>(_contentAreaHeight)) {
+        if (i == 0) {
+          // Single message taller than viewport: keep full height for
+          // correct scrollbar maths (positionPx += real height).
+          _lastVisibleId = _visibleMsgs[0].id;
+        } else {
+          _accHeight -= _visibleMsgs[i].heightPx;
+          _lastVisibleId = _visibleMsgs[i - 1].id;
+        }
         break;
       }
     }
@@ -160,12 +166,7 @@ bool MeshCoreThreadActivity::loadMessages(uint32_t startId, bool up) {
 }
 
 int MeshCoreThreadActivity::contentHeight() const {
-  const auto pageHeight = renderer.getScreenHeight();
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  int tabBarTop = metrics.topPadding + metrics.headerHeight;
-  int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
-  return pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing - metrics.subtitleBottomMargin -
-         metrics.bottomSubtitleHeight;
+  return meshCoreThreadContentHeight(renderer, UITheme::getInstance().getMetrics());
 }
 
 void MeshCoreThreadActivity::scrollDownPage() {
@@ -262,14 +263,14 @@ void MeshCoreThreadActivity::_loopDetectNewMessages() {
   if (hasMeta && currentMeta.count > _meta.count) {
     // New messages arrived
     bool wasAtEnd =
-        (_meta.positionPx + static_cast<uint16_t>(_contentAreaHeight) >= _meta.totalPx || _meta.totalPx == 0);
+        (_meta.positionPx + static_cast<uint32_t>(_contentAreaHeight) >= _meta.totalPx || _meta.totalPx == 0);
     LOG_DBG("MESH", "New msgs detected: old.count=%u new.count=%u old.fontId=%d new.fontId=%d wasAtEnd=%d", _meta.count,
             currentMeta.count, _meta.fontId, currentMeta.fontId, wasAtEnd);
     _meta = currentMeta;
     if (wasAtEnd) {
       loadMessages(_meta.endId, /*up=*/true);
-      _meta.positionPx = (_meta.totalPx > static_cast<uint16_t>(_contentAreaHeight))
-                             ? _meta.totalPx - static_cast<uint16_t>(_contentAreaHeight)
+      _meta.positionPx = (_meta.totalPx > static_cast<uint32_t>(_contentAreaHeight))
+                             ? _meta.totalPx - static_cast<uint32_t>(_contentAreaHeight)
                              : 0;
       _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
     } else {
@@ -610,8 +611,9 @@ void MeshCoreThreadActivity::completeUnlistOp(bool success) {
 void MeshCoreThreadActivity::sendMessage() {
   ThreadMessenger messenger{client, store, isChannel, channelIdx, contactPubkey, threadName, _bodyFontId};
   startActivityForResult(
-      std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_SEND), "\na\na\na\na\na\na\na\na\na\na\na\n\na\na\na\n\na\na\na\n", MESHCORE_SEND_CHAR_LIMIT,
-                                        InputType::Text),
+      std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_SEND),
+                                        "\na\na\na\na\na\na\na\na\na\na\na\n\na\na\na\n\na\na\na\n",
+                                        MESHCORE_SEND_CHAR_LIMIT, InputType::Text),
       [this, messenger](const ActivityResult& result) mutable { messenger.onSendComplete(*this, result); });
 }
 
@@ -717,7 +719,7 @@ void MeshCoreThreadActivity::drawVisibleMessages(const GfxRenderer& renderer, Re
 
 void MeshCoreThreadActivity::_rebuildMessageHeights() {
   const auto& tmetrics = UITheme::getInstance().getMetrics();
-  uint16_t newTotalPx = 0;
+  uint32_t newTotalPx = 0;
   const int oldFontId = _meta.fontId;
   const uint32_t t0 = millis();
 
@@ -740,7 +742,8 @@ void MeshCoreThreadActivity::_rebuildMessageHeights() {
       renderer.ensureSdCardFontReady(_bodyFontId, msg.text, /*styleMask=*/0x01);
     }
 
-    msg.heightPx = measureMeshCoreMessageHeight(renderer, _bodyFontId, _contentAreaWidth, isChannel, msg, tmetrics);
+    msg.heightPx = measureMeshCoreMessageHeight(renderer, _bodyFontId, _contentAreaWidth, isChannel, msg, tmetrics,
+                                                _contentAreaHeight);
 
     if (isChannel) {
       store.updateChannelMessage(channelIdx, gid, msg);
@@ -758,7 +761,7 @@ void MeshCoreThreadActivity::_rebuildMessageHeights() {
 
   // Proportionally scale scroll position
   if (_meta.totalPx > 0) {
-    _meta.positionPx = static_cast<uint16_t>((static_cast<uint32_t>(_meta.positionPx) * newTotalPx) / _meta.totalPx);
+    _meta.positionPx = static_cast<uint32_t>((static_cast<uint64_t>(_meta.positionPx) * newTotalPx) / _meta.totalPx);
   }
   _meta.totalPx = newTotalPx;
   _meta.fontId = _bodyFontId;
