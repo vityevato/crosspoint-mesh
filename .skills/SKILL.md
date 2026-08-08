@@ -163,6 +163,13 @@ pio run -e simulator
 | P      | Power                              |
 | S      | Simulate sleep                     |
 
+**Headless automation (stdin)**: the simulator accepts control
+commands on stdin (`TAP`, `PRESS`, `RELEASE`, `HOLD`, `SCREENSHOT`,
+`QUIT`, `HELP`) — see `src/simulator/SimulatorControl.h` for the
+protocol and AGENTS.md "Simulator Visual Debugging" for the full
+agent workflow (control FIFO in `fs_/tmp/`, BMP→PNG conversion via
+`src/simulator/convert_screenshot.sh`).
+
 **Architecture**:
 - `platform = native` — compiles firmware as a host binary, not ESP32 firmware
 - `lib_ignore = hal, WebSockets` — simulator provides its own HAL layer
@@ -173,6 +180,10 @@ pio run -e simulator
 - `src/simulator/NimBLEDevice.h` — project-local NimBLE stub (no-op BLE for simulator)
 - `src/simulator/MockSession.h` / `.cpp` — mock JSON loading and session management
 - `src/simulator/MeshCoreMockHotkeys.h` — mock hotkey handler (keys 0-9)
+- `src/simulator/SimulatorControl.{h,cpp}` — stdin automation: injects button
+  events and screenshot requests for headless/agent-driven sessions
+- `src/simulator/convert_screenshot.sh` — converts the newest screenshot BMP
+  to PNG in `fs_/tmp/` (no arguments)
 - `-Isrc/simulator` before `-Isrc` in simulator `build_flags` — project stubs take priority over
   real libraries when both provide the same header
 - `build_src_filter` excludes ESP32-only files (networking, OTA, efuse check)

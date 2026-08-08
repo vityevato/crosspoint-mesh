@@ -160,13 +160,10 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
 
   // Skip optional fields
   if (flags & 0x10) {
-    off += 4;
+    // ADV_LATLON_MASK: a single bit gates both lat and lon (4 bytes each)
+    off += 8;
     if (off > decodedLen) return false;
-  }  // lat
-  if (flags & 0x10) {
-    off += 4;
-    if (off > decodedLen) return false;
-  }  // lon
+  }
   if (flags & 0x20) {
     off += 2;
     if (off > decodedLen) return false;

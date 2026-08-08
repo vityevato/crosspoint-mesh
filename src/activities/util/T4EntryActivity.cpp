@@ -1175,7 +1175,7 @@ int T4EntryActivity::renderCandidateRow(int startY) {
 
   // ── Counter: "15 / 228" centered below ──────────────────────────────
   char counter[16];
-  snprintf(counter, sizeof(counter), "%u / %u", activeIdx + 1, candCount);
+  snprintf(counter, sizeof(counter), "%u / %u", static_cast<unsigned>(activeIdx + 1), static_cast<unsigned>(candCount));
   int counterW = renderer.getTextWidth(UI_12_FONT_ID, counter);
   int counterX = effectiveMargin + (textAreaWidth - counterW) / 2;
   int counterY = startY + renderer.getLineHeight(UI_12_FONT_ID) + 4;

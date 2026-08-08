@@ -34,6 +34,10 @@
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
+#ifdef SIMULATOR
+#include "simulator/SimulatorControl.h"
+#endif
+
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
@@ -534,6 +538,17 @@ void loop() {
       }
     }
   }
+
+#ifdef SIMULATOR
+  // stdin automation channel — protocol in src/simulator/SimulatorControl.h.
+  // begin() is idempotent and safe here: the first loop() iteration only
+  // runs after setup() initialized SDL.
+  SimulatorControl::begin();
+  if (SimulatorControl::consumeScreenshotRequest()) {
+    RenderLock lock;
+    ScreenshotUtil::takeScreenshot(renderer);
+  }
+#endif
 
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();

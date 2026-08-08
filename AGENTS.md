@@ -4,6 +4,7 @@
 - [Technical Context](#technical-context)
 - [Project Structure](#project-structure)
 - [Build And Test Commands](#build-and-test-commands)
+- [Simulator Visual Debugging](#simulator-visual-debugging)
 - [Contribution Instructions](#contribution-instructions)
 - [Code Guidelines](#code-guidelines)
     - [System Design](#system-design)
@@ -145,7 +146,8 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   │   ├── icons/           # Icon headers (book, bookmark, cover, folder, wifi, …)
 │   │   └── themes/          # Lyra, Lyra3Covers, RoundedRaff themes
 │   ├── images/              # Image data (logo, loading icon, moon icon)
-│   ├── simulator/           # Simulator stubs: NimBLE, FreeRTOS, MeshCore mock
+│   ├── simulator/           # Simulator stubs (NimBLE, FreeRTOS, MeshCore mock),
+│                            #   stdin automation + screenshot converter
 │   ├── network/             # Web server, OTA updater, WebDAV, HTTP downloader
 │   │   └── html/            # HTML page sources (→ *.generated.h at build time)
 │   ├── util/                # Button navigator, string/URL/QR/screenshot utils
@@ -175,7 +177,9 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   ├── XmlParserUtils/      # XML parsing helpers (wraps expat)
 │   ├── expat/               # Vendored XML parser library
 │   └── uzlib/               # Vendored zlib decompression
-├── open-x4-sdk/             # Hardware SDK submodule (display, input, storage, battery)
+├── ├── meshcore_mock.json   # MeshCore mock data for simulator
+│   ├── screenshots/         # Simulator screenshot BMPs (SCREENSHOT command)
+│   └── tmp/                 # Simulator scratch space: control FIFO, logs, PNGs input, storage, battery)
 ├── fs_/                     # Simulator virtual SD card (./fs_/books/ maps to /books/)
 │   └── meshcore_mock.json   # MeshCore mock data for simulator
 └── test/                    # Desktop algorithm tests (JSON, hyphenation, rounding)
@@ -198,6 +202,9 @@ pio run -e simulator
 
 # Build + launch simulator in one command
 pio run -e simulator -t run_simulator
+
+# Convert newest simulator screenshot BMP to PNG (see below)
+./src/simulator/convert_screenshot.sh
 
 # Clean build artifacts
 pio run -t clean
@@ -261,6 +268,80 @@ from RISC-V flags like `-march=rv32imc_zicsr_zifencei`):
 3. **`.clangd`** is configured with `Compiler: clang++` and `Remove` rules for
    incompatible flags as a safety net. Both `.clangd` and `compile_commands*.json`
    are gitignored — local dev setup only.
+
+## Simulator Visual Debugging
+
+The desktop simulator can be driven headlessly over stdin, which turns
+it into a closed-loop visual debugging tool for AI agents and test
+scripts: inject button presses → capture the framebuffer → convert
+the screenshot → inspect the image. Implementation lives in
+`src/simulator/SimulatorControl.{h,cpp}` (compiled only when
+`-DSIMULATOR` is set; device builds are unaffected).
+
+**Protocol** — one command per line on stdin, case-insensitive.
+Replies go to **stdout** (`OK ...` / `ERR <reason>`), firmware logs
+go to **stderr** — the streams never mix, so stdout is safe to parse.
+
+| Command            | Effect                                        |
+| ------------------ | --------------------------------------------- |
+| `HELP`             | List commands                                 |
+| `TAP <btn>`        | Short press (~60 ms)                          |
+| `PRESS <btn>`      | Press and hold until `RELEASE`                |
+| `RELEASE <btn>`    | Release a held button                         |
+| `HOLD <btn> <ms>`  | Press, hold `<ms>`, release (long-press)      |
+| `SCREENSHOT`       | Save framebuffer BMP to `fs_/screenshots/`    |
+| `QUIT`             | Exit the simulator                            |
+
+`<btn>` = `BACK | CONFIRM | LEFT | RIGHT | UP | DOWN | POWER`
+(or digits `0..6`).
+
+**Agent session recipe** — the control FIFO and logs live under
+`fs_/tmp/` (the simulator's own data dir) to avoid any `/tmp`
+sandboxing or permission issues. The FIFO is opened read-write so
+stdin never hits EOF:
+
+```sh
+pio run -e simulator
+mkdir -p fs_/tmp && mkfifo fs_/tmp/xp_in
+exec 9<>fs_/tmp/xp_in
+.pio/build/simulator/program < fs_/tmp/xp_in > fs_/tmp/xp_sim.log 2>&1 &
+
+echo "TAP CONFIRM" >&9          # interact
+echo "SCREENSHOT" >&9           # capture framebuffer
+./src/simulator/convert_screenshot.sh   # newest BMP -> fs_/tmp/*.png
+echo "QUIT" >&9
+exec 9>&-                       # close the FIFO when done
+```
+
+`convert_screenshot.sh` (in `src/simulator/`, no arguments) picks the
+newest BMP in `fs_/screenshots/` by modification time, converts it to
+PNG in `fs_/tmp/` (macOS `sips`, ImageMagick fallback), and prints the
+absolute PNG path — feed that path to any image viewer or AI vision
+model.
+
+**Visual debugging sequence** for verifying a UI change:
+
+1. Build and start the simulator attached to a FIFO (recipe above).
+2. Navigate to the screen under test with `TAP`/`HOLD` commands
+   (e.g. `TAP CONFIRM` to open a list item, `HOLD POWER 1200` for
+   sleep).
+3. `SCREENSHOT` after each action, convert with
+   `convert_screenshot.sh`, inspect the PNG.
+4. Compare before/after frames to confirm the expected change.
+5. Check `fs_/tmp/xp_sim.log` (stderr) for `LOG_ERR` entries.
+6. `QUIT` and close the FIFO.
+
+**Notes**:
+
+- Screenshot filenames use `millis()` and reset on simulator restart —
+  always pick the newest file by *modification time* (`ls -t`), never
+  by the number in the filename.
+- `SCREENSHOT` also flashes a border on the SDL window and waits
+  ~1 s, matching on-device behaviour.
+- Long presses (`HOLD`) are real timed holds — useful for sleep/wake
+  and other hold-triggered actions.
+- MeshCore activities can be exercised with mock data via
+  `fs_/meshcore_mock.json` (see CLAUDE.md, "MeshCore on simulator").
 
 ## Contribution Instructions
 

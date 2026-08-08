@@ -713,7 +713,6 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
   //   discoveredNodes[discoveredNodeCount] = node;
   //   discoveredNodes[discoveredNodeCount].lastSeen = now;
   //   // Look for a matching saved contact to fill in name/type/path
-  bool foundSaved = false;
   //   for (uint8_t i = 0; i < savedContactCount; ++i) {
   //     if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
   //       memcpy(discoveredNodes[discoveredNodeCount].name, savedContacts[i].name, sizeof(MeshCoreContact::name));
@@ -732,7 +731,7 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
   // the contact to its own contacts[] — from its perspective the contact is now
   // "known". Pull the freshly added full record with an incremental GET_CONTACTS
   // so the name/type arrive; the companion never pushes them on its own.
-  if (!foundSaved && client.getState() == BleConnectionState::CONNECTED) {
+  if (client.getState() == BleConnectionState::CONNECTED) {
     client.requestNewContacts();
   }
   // }
@@ -954,7 +953,6 @@ void MeshCoreHubActivity::loadContactsFromFile() {
 
       // Parse the URL using the shared parser utility
       MeshCoreContact contact;
-      bool accepted = false;
       if (parseMeshCoreContactUrl(line, contact)) {
         char keyLabel[MeshCoreContact::PUBLIC_KEY_DISPLAY_LEN];
         contact.getPublicKeyLabel(keyLabel);
@@ -989,7 +987,6 @@ void MeshCoreHubActivity::loadContactsFromFile() {
 
           if (!skip && _pendingFileContactCount < MAX_VISIBLE_CONTACTS) {
             _pendingFileContacts[_pendingFileContactCount++] = contact;
-            accepted = true;
             LOG_DBG("MESH", "loadContactsFromFile: accepted [%d/%d]", _pendingFileContactCount, MAX_VISIBLE_CONTACTS);
           }
         } else {
