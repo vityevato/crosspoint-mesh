@@ -408,8 +408,8 @@ TEST_F(T4InputEngineTest, BackspacePullsBackCrossLanguageWord) {
   // Second backspace pulls back the Russian word and switches language.
   predictor.backspace();
   EXPECT_EQ(predictor.getConfirmedTextLength(), 0u);
-  // Language must have auto-switched to RU so the letter blocks match.
-  EXPECT_EQ(predictor.getLanguage(), T4Language::RU);
+  // Language must have auto-switched to ADDITIONAL (Russian) so the letter blocks match.
+  EXPECT_EQ(predictor.getLanguage(), T4Language::ADDITIONAL);
   // Button sequence must be extracted using the Russian layout.
   ASSERT_EQ(predictor.getSequenceLength(), 6u);  // п р и в е т
   const uint8_t* seq = predictor.getSequence();
@@ -464,8 +464,8 @@ TEST_F(T4InputEngineTest, SetLanguagePreservesTextResetsSequence) {
   EXPECT_STREQ(predictor.getConfirmedText(), "hello ");
 
   // Switch to Russian
-  predictor.setLanguage(T4Language::RU);
-  EXPECT_EQ(predictor.getLanguage(), T4Language::RU);
+  predictor.setLanguage(T4Language::ADDITIONAL);
+  EXPECT_EQ(predictor.getLanguage(), T4Language::ADDITIONAL);
   EXPECT_STREQ(predictor.getConfirmedText(), "hello ");  // preserved
   EXPECT_EQ(predictor.getSequenceLength(), 0u);          // reset
 

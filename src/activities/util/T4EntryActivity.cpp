@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "CrossPointSettings.h"
 #include "KeyboardEntryActivity.h"
 #include "Logging.h"
 #include "MappedInputManager.h"
@@ -60,6 +61,11 @@ void T4EntryActivity::onEnter() {
     finish();
     return;
   }
+
+  // Apply the user-selected additional keyboard layout (System settings ▸
+  // Additional Keyboard Layout) to the middle EN/ADDITIONAL/DIGIT cycle slot
+  // before loading its dictionary.
+  t4::setActiveAdditionalLayout(SETTINGS.t4AdditionalLayout);
 
   _inputEngine.setLanguage(_lang);
 
@@ -1209,6 +1215,17 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
     const uint8_t shiftLevel = _inputEngine.getShiftLevel();
     const bool shiftActive = (shiftLevel > 0);
 
+    // Uppercase the active tap letter for comparison when shift/caps is active,
+    // since the panel glyphs (chBuf) are already uppercased but the engine
+    // returns the raw lowercase group letter.
+    char tapCmp[5];
+    const char* tapCmpPtr = activePtr;
+    uint8_t tapCmpLen = activeLen;
+    if (shiftActive && activePtr) {
+      tapCmpLen = t4::upperLetterUtf8(activePtr, activeLen, tapCmp);
+      tapCmpPtr = tapCmp;
+    }
+
     for (int i = 0; i < 4; i++) {
       const char* group = t4::getGroup(_lang, i + 1);
       if (!group || !group[0]) continue;
@@ -1300,8 +1317,8 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
             memcpy(chBuf, ci.start, ci.byteLen);
             chBuf[ci.byteLen] = '\0';
           }
-          const bool isActive = highlightTap && (activeBtn == i + 1) && activePtr && ci.byteLen == activeLen &&
-                                memcmp(chBuf, activePtr, activeLen) == 0;
+          const bool isActive = highlightTap && (activeBtn == i + 1) && activePtr && ci.byteLen == tapCmpLen &&
+                                memcmp(chBuf, tapCmpPtr, tapCmpLen) == 0;
           const char* displayBuf = chBuf;
           if (ci.byteLen == 1 && ci.start[0] == '\x01') {
             displayBuf = "\\n";

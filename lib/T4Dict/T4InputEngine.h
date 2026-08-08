@@ -337,19 +337,28 @@ void T4InputEngine<Dict>::setError(const char* msg) {
 template <typename Dict>
 T4Language T4InputEngine<Dict>::detectWordLanguage(const char* word, uint16_t wordLen) {
   if (!word || wordLen == 0) return T4Language::EN;
-  // Scan the word: any 2-byte UTF-8 Cyrillic lead byte → RU.
+  // Classify by the active ADDITIONAL layout: any non-ASCII letter that
+  // belongs to that layout's groups marks the word as ADDITIONAL. English
+  // uses only ASCII, so ASCII-only words fall through to EN. This works for
+  // any additional layout (Cyrillic, Latin-with-diacritics, …) without a
+  // per-language heuristic. When no additional layout is selected, every
+  // word is treated as English.
+  if (!hasActiveAdditionalLayout()) return T4Language::EN;
   for (uint16_t i = 0; i < wordLen;) {
     unsigned char c0 = static_cast<unsigned char>(word[i]);
-    if (c0 >= 0xD0 && c0 <= 0xD1) return T4Language::RU;
-    // Advance by UTF-8 byte length
+    uint8_t clen;
     if ((c0 & 0xE0) == 0xC0)
-      i += 2;
+      clen = 2;
     else if ((c0 & 0xF0) == 0xE0)
-      i += 3;
+      clen = 3;
     else if ((c0 & 0xF8) == 0xF0)
-      i += 4;
+      clen = 4;
     else
-      i += 1;
+      clen = 1;
+    if (clen > 1 && (i + clen) <= wordLen && buttonForLetter(T4Language::ADDITIONAL, word + i, clen) != 0) {
+      return T4Language::ADDITIONAL;
+    }
+    i += clen;
   }
   return T4Language::EN;
 }

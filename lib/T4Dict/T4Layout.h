@@ -4,11 +4,15 @@
 
 namespace t4 {
 
-/// Input language for T4 predictive text.
+/// Input language for T4 predictive text. The keyboard always cycles through
+/// exactly three slots: English → Additional → Digits. The ADDITIONAL slot is
+/// user-configurable (System settings ▸ Additional Keyboard Layout) and backed
+/// by one of the registered additional layouts (default: Russian). English and
+/// Digits are fixed.
 enum class T4Language : uint8_t {
-  EN = 0,     ///< English
-  RU = 1,     ///< Russian
-  DIGIT = 2,  ///< Digits + symbols
+  EN = 0,          ///< English (fixed)
+  ADDITIONAL = 1,  ///< Configurable additional layout (default: Russian)
+  DIGIT = 2,       ///< Digits + symbols (fixed)
 };
 
 /// Input mode for T4 keyboard.
@@ -52,7 +56,7 @@ const char* getLanguageCode(T4Language lang);
 /// Return a human-readable language name (e.g., "EN", "RU", "12").
 const char* getLanguageName(T4Language lang);
 
-/// Cycle to the next language: EN → RU → DIGIT → EN.
+/// Cycle to the next language: EN → ADDITIONAL → DIGIT → EN.
 T4Language cycleLanguage(T4Language current);
 
 /// Return the SD-card path to the predictive dictionary for @p lang, or
@@ -60,6 +64,47 @@ T4Language cycleLanguage(T4Language current);
 /// this file on the SD card determines whether predictive input is available
 /// for the language.
 const char* getDictionaryPath(T4Language lang);
+
+// ── Additional (configurable) keyboard layouts ──────────────────────────
+//
+// The ADDITIONAL cycle slot resolves to whichever layout is currently active.
+// These accessors let the settings UI enumerate the choices and select one;
+// getGroup/getGroupLength/getLanguageCode/getLanguageName/getDictionaryPath
+// for T4Language::ADDITIONAL all follow the active selection. When no layout
+// is active (kNoAdditionalLayout), the ADDITIONAL slot is skipped and the
+// cycle is English -> Digits only.
+
+/// Sentinel value for setActiveAdditionalLayout / getActiveAdditionalLayout /
+/// CrossPointSettings::t4AdditionalLayout meaning "no additional layout
+/// selected" — the ADDITIONAL cycle slot is skipped.
+constexpr uint8_t kNoAdditionalLayout = 0xFF;
+
+/// Number of additional layouts the firmware ships letter tables for.
+uint8_t getAdditionalLayoutCount();
+
+/// T4 language code (2-char lowercase, e.g. "ru") for the additional layout at
+/// @p index — also the dictionary filename stem. Returns "" if out of range.
+const char* getAdditionalLayoutCode(uint8_t index);
+
+/// i18n ISO code (e.g. "RU") for the additional layout at @p index, used to
+/// look up a localized display name. Returns "" if out of range.
+const char* getAdditionalLayoutI18nCode(uint8_t index);
+
+/// Select the active additional layout (the middle cycle slot), or
+/// kNoAdditionalLayout to disable it. Other out-of-range values are ignored.
+void setActiveAdditionalLayout(uint8_t index);
+
+/// Index of the currently active additional layout, or kNoAdditionalLayout
+/// when none is selected.
+uint8_t getActiveAdditionalLayout();
+
+/// True when an additional layout is active (the ADDITIONAL slot participates
+/// in the cycle). False when kNoAdditionalLayout is selected.
+bool hasActiveAdditionalLayout();
+
+/// Find an additional layout index by its T4 code (e.g. "ru"). Returns
+/// kNoAdditionalLayout when @p code is null, empty, or not a known layout.
+uint8_t additionalLayoutIndexForCode(const char* code);
 
 /// Return the number of supported languages.
 constexpr uint8_t kLanguageCount = 3;

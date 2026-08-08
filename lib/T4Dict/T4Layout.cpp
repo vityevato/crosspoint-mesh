@@ -20,15 +20,32 @@ static constexpr const char* kEnGroups[4] = {
 
 static constexpr uint8_t kEnGroupLens[4] = {7, 7, 7, 7};
 
-// ── Russian letter groups ───────────────────────────────────────────────
-static constexpr const char* kRuGroups[4] = {
-    "абвгдеёж-",
-    "зийклмно",
-    "прстуфхц",
-    "чшщъыьэюя",
+// ── Additional keyboard layouts (configurable middle cycle slot) ─────────
+// English and Digits are fixed; this table holds the selectable layouts for
+// the T4Language::ADDITIONAL slot. To add a language: append an entry here
+// (4 letter-group strings + their code-point lengths), ensure its uppercase
+// mapping is covered by kCaseRanges/kCaseExceptions below, add a matching
+// grouping in scripts/build_t4_dict.py, and ship <code>.trie to the SD card.
+struct AdditionalLayout {
+  const char* code;      // T4 code / dictionary filename stem, e.g. "ru"
+  const char* i18nCode;  // i18n ISO code for the localized display name, e.g. "RU"
+  const char* dictPath;  // SD path to the predictive dictionary
+  const char* groups[4];
+  uint8_t groupLens[4];
 };
 
-static constexpr uint8_t kRuGroupLens[4] = {9, 8, 8, 9};
+static constexpr AdditionalLayout kAdditionalLayouts[] = {
+    {"ru", "RU", "/.crosspoint/dicts/ru.trie", {"абвгдеёж-", "зийклмно", "прстуфхц", "чшщъыьэюя"}, {9, 8, 8, 9}},
+};
+static constexpr uint8_t kAdditionalLayoutCount = sizeof(kAdditionalLayouts) / sizeof(kAdditionalLayouts[0]);
+
+// Active additional layout index (the middle EN/ADDITIONAL/DIGIT slot).
+uint8_t g_activeAdditionalLayout = 0;
+
+inline const AdditionalLayout& activeAdditional() {
+  const uint8_t idx = g_activeAdditionalLayout < kAdditionalLayoutCount ? g_activeAdditionalLayout : 0;
+  return kAdditionalLayouts[idx];
+}
 
 // ── Digit groups ────────────────────────────────────────────────────────
 // Group 4 ends with \x01 sentinel: it represents a newline action.
@@ -44,10 +61,6 @@ static constexpr const char* kDigitGroups[4] = {
 
 static constexpr uint8_t kDigitGroupLens[4] = {11, 10, 10, 10};
 
-// ── Language metadata ───────────────────────────────────────────────────
-static constexpr const char* kLangCodes[3] = {"en", "ru", "12"};
-static constexpr const char* kLangNames[3] = {"EN", "RU", "12"};
-
 }  // namespace
 
 const char* getGroup(T4Language lang, uint8_t button) {
@@ -56,8 +69,8 @@ const char* getGroup(T4Language lang, uint8_t button) {
   switch (lang) {
     case T4Language::EN:
       return kEnGroups[idx];
-    case T4Language::RU:
-      return kRuGroups[idx];
+    case T4Language::ADDITIONAL:
+      return activeAdditional().groups[idx];
     case T4Language::DIGIT:
       return kDigitGroups[idx];
   }
@@ -70,8 +83,8 @@ uint8_t getGroupLength(T4Language lang, uint8_t button) {
   switch (lang) {
     case T4Language::EN:
       return kEnGroupLens[idx];
-    case T4Language::RU:
-      return kRuGroupLens[idx];
+    case T4Language::ADDITIONAL:
+      return activeAdditional().groupLens[idx];
     case T4Language::DIGIT:
       return kDigitGroupLens[idx];
   }
@@ -242,30 +255,85 @@ uint8_t upperLetterUtf8(const char* in, uint8_t inLen, char* out) {
 }
 
 const char* getLanguageCode(T4Language lang) {
-  auto i = static_cast<uint8_t>(lang);
-  return (i < 3) ? kLangCodes[i] : "";
+  switch (lang) {
+    case T4Language::EN:
+      return "en";
+    case T4Language::ADDITIONAL:
+      return activeAdditional().code;
+    case T4Language::DIGIT:
+      return "12";
+  }
+  return "";
 }
 
 const char* getLanguageName(T4Language lang) {
-  auto i = static_cast<uint8_t>(lang);
-  return (i < 3) ? kLangNames[i] : "";
+  switch (lang) {
+    case T4Language::EN:
+      return "EN";
+    case T4Language::ADDITIONAL:
+      return activeAdditional().i18nCode;  // short badge, e.g. "RU"
+    case T4Language::DIGIT:
+      return "12";
+  }
+  return "";
 }
 
 T4Language cycleLanguage(T4Language current) {
-  auto i = static_cast<uint8_t>(current);
-  return static_cast<T4Language>((i + 1) % 3);
+  // EN -> ADDITIONAL -> DIGIT -> EN, but skip the ADDITIONAL slot when no
+  // additional layout is selected (EN -> DIGIT -> EN).
+  const bool hasAdditional = hasActiveAdditionalLayout();
+  switch (current) {
+    case T4Language::EN:
+      return hasAdditional ? T4Language::ADDITIONAL : T4Language::DIGIT;
+    case T4Language::ADDITIONAL:
+      return T4Language::DIGIT;
+    case T4Language::DIGIT:
+      return T4Language::EN;
+  }
+  return T4Language::EN;
 }
 
 const char* getDictionaryPath(T4Language lang) {
   switch (lang) {
     case T4Language::EN:
       return "/.crosspoint/dicts/en.trie";
-    case T4Language::RU:
-      return "/.crosspoint/dicts/ru.trie";
+    case T4Language::ADDITIONAL:
+      return hasActiveAdditionalLayout() ? activeAdditional().dictPath : nullptr;
     case T4Language::DIGIT:
       return nullptr;  // digits/symbols have no dictionary
   }
   return nullptr;
+}
+
+uint8_t getAdditionalLayoutCount() { return kAdditionalLayoutCount; }
+
+const char* getAdditionalLayoutCode(uint8_t index) {
+  return index < kAdditionalLayoutCount ? kAdditionalLayouts[index].code : "";
+}
+
+const char* getAdditionalLayoutI18nCode(uint8_t index) {
+  return index < kAdditionalLayoutCount ? kAdditionalLayouts[index].i18nCode : "";
+}
+
+void setActiveAdditionalLayout(uint8_t index) {
+  if (index == kNoAdditionalLayout || index < kAdditionalLayoutCount) {
+    g_activeAdditionalLayout = index;
+  }
+}
+
+uint8_t getActiveAdditionalLayout() { return g_activeAdditionalLayout; }
+
+bool hasActiveAdditionalLayout() {
+  return g_activeAdditionalLayout != kNoAdditionalLayout && kAdditionalLayoutCount > 0;
+}
+
+uint8_t additionalLayoutIndexForCode(const char* code) {
+  if (code && code[0] != '\0') {
+    for (uint8_t i = 0; i < kAdditionalLayoutCount; i++) {
+      if (strcmp(kAdditionalLayouts[i].code, code) == 0) return i;
+    }
+  }
+  return kNoAdditionalLayout;  // null / empty / unknown → no additional layout
 }
 
 }  // namespace t4

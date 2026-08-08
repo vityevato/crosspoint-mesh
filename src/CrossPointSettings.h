@@ -1,5 +1,6 @@
 #pragma once
 #include <HalStorage.h>
+#include <T4Layout.h>
 
 #include <cstdint>
 #include <iosfwd>
@@ -266,6 +267,10 @@ class CrossPointSettings {
   uint8_t tiltPageTurn = TILT_OFF;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
+  // Additional T4 keyboard layout (registry index into T4 additional layouts),
+  // or t4::kNoAdditionalLayout (default) when no additional layout is selected.
+  // Persisted in JSON as the layout code string ("" = none).
+  uint8_t t4AdditionalLayout = t4::kNoAdditionalLayout;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
   ~CrossPointSettings() = default;

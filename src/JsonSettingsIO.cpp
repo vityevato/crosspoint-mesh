@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <ObfuscationUtils.h>
+#include <T4Layout.h>
 
 #include <cstring>
 #include <string>
@@ -157,6 +158,10 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (s.language < getLanguageCount()) ? LANGUAGE_CODES[s.language] : "EN";
 
+  // Additional T4 keyboard layout -- managed by T4LayoutSelectActivity.
+  // Stored as T4 layout code ("ru", ...) for stability across registry reorders.
+  doc["t4AdditionalLayout"] = t4::getAdditionalLayoutCode(s.t4AdditionalLayout);
+
   String json;
   serializeJson(doc, json);
   return Storage.writeFile(path, json);
@@ -262,6 +267,11 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
   // Language -- stored as code string for stability across enum reorders.
   if (doc["language"].is<const char*>()) {
     s.language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
+  }
+
+  // Additional T4 keyboard layout -- stored as T4 layout code for stability.
+  if (doc["t4AdditionalLayout"].is<const char*>()) {
+    s.t4AdditionalLayout = t4::additionalLayoutIndexForCode(doc["t4AdditionalLayout"].as<const char*>());
   }
 
   LOG_DBG("CPS", "Settings loaded from file");
