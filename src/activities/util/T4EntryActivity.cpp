@@ -754,12 +754,27 @@ std::string T4EntryActivity::applyWordCase(const char* word) const {
 
 // ── Rendering ────────────────────────────────────────────────────────────
 
-void T4EntryActivity::renderInfoLine(int aboveTextY, bool overflow) {
+void T4EntryActivity::textFieldMargins(int pageWidth, int& leftMargin, int& rightMargin) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int availableW = renderer.getScreenWidth();
-  if (gpio.deviceIsX3()) availableW -= 2 * metrics.sideButtonHintsWidth;
-  const int effMargin = (renderer.getScreenWidth() - availableW * metrics.keyboardTextFieldWidthPercent / 100) / 2;
-  const int rightX = renderer.getScreenWidth() - effMargin;
+  int leftReserve = 0;
+  int rightReserve = 0;
+  if (gpio.deviceIsX3()) {
+    // Left edge: single Up capsule.  Right edge: Down capsule plus the
+    // gray long-press capsule drawn side by side.
+    leftReserve = metrics.sideButtonHintsWidth + metrics.sideButtonHintsMargin;
+    rightReserve = 2 * metrics.sideButtonHintsWidth + metrics.sideButtonHintsGap + metrics.sideButtonHintsMargin;
+  }
+  const int available = pageWidth - leftReserve - rightReserve;
+  const int extra = (available - available * metrics.keyboardTextFieldWidthPercent / 100) / 2;
+  leftMargin = leftReserve + extra;
+  rightMargin = rightReserve + extra;
+}
+
+void T4EntryActivity::renderInfoLine(int aboveTextY, bool overflow) {
+  int leftMargin = 0;
+  int rightMargin = 0;
+  textFieldMargins(renderer.getScreenWidth(), leftMargin, rightMargin);
+  const int rightX = renderer.getScreenWidth() - rightMargin;
   const int infoY = aboveTextY - renderer.getLineHeight(UI_12_FONT_ID);
   char buf[32];
 
@@ -817,7 +832,6 @@ void T4EntryActivity::renderHeader() {
 // ── renderTextField ──────────────────────────────────────────────────────
 
 int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, bool& overflowOut) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
 
   const char* candidate = _inputEngine.getCurrentCandidate();
@@ -860,16 +874,14 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
   }
 
   const bool isPassword = (_inputType == InputType::Password);
-  int availableWidth = pageWidth;
-  if (gpio.deviceIsX3()) {
-    availableWidth -= 2 * metrics.sideButtonHintsWidth;
-  }
+  int leftMargin = 0;
+  int rightMargin = 0;
+  textFieldMargins(pageWidth, leftMargin, rightMargin);
   const int toggleReserve =
       isPassword
           ? std::max(renderer.getTextWidth(UI_12_FONT_ID, "[abc]"), renderer.getTextWidth(UI_12_FONT_ID, "[***]")) + 4
           : 0;
-  const int effectiveMargin = (pageWidth - availableWidth * metrics.keyboardTextFieldWidthPercent / 100) / 2;
-  const int maxLineWidth = pageWidth - 2 * effectiveMargin - toggleReserve;
+  const int maxLineWidth = pageWidth - leftMargin - rightMargin - toggleReserve;
 
   // ── Pass 1: collect line boundaries (no rendering) ────────────────────
   struct LineInfo {
@@ -947,13 +959,13 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
   }
 
   // ── Pass 2: render only the visible lines ─────────────────────────────
-  int cursorPixelX = effectiveMargin;
+  int cursorPixelX = leftMargin;
   int cursorLineY = startY;
 
   for (int li = firstVisible; li < lineCount; li++) {
     const auto& line = lines[li];
     const int drawY = startY + (li - firstVisible) * lineHeight;
-    const int lineStartX = effectiveMargin;
+    const int lineStartX = leftMargin;
     std::string lineText =
         displayText.substr(static_cast<size_t>(line.startIdx), static_cast<size_t>(line.endIdx - line.startIdx));
     const bool isLastLine = (li == lineCount - 1);
@@ -1031,8 +1043,8 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
                      ? 0
                      : renderer.getTextAdvanceX(UI_12_FONT_ID, lastLineText.c_str(), EpdFontFamily::REGULAR);
   }
-  GUI.drawTextField(renderer, Rect{0, startY, pageWidth, visibleHeight}, fieldWidth, false, effectiveMargin,
-                    pageWidth - 2 * effectiveMargin);
+  GUI.drawTextField(renderer, Rect{0, startY, pageWidth, visibleHeight}, fieldWidth, false, leftMargin,
+                    pageWidth - leftMargin - rightMargin);
 
   overflowOut = overflow;
 
@@ -1053,7 +1065,7 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
   if (isPassword) {
     const char* toggleLabel = _passwordVisible ? "[***]" : "[abc]";
     const int toggleWidth = renderer.getTextWidth(UI_12_FONT_ID, toggleLabel);
-    const int toggleX = pageWidth - effectiveMargin - toggleWidth;
+    const int toggleX = pageWidth - rightMargin - toggleWidth;
     const int toggleY = startY + visibleHeight - lineHeight;
     renderer.drawText(UI_12_FONT_ID, toggleX, toggleY, toggleLabel, true);
   }
@@ -1069,14 +1081,11 @@ int T4EntryActivity::renderCandidateRow(int startY) {
   uint16_t candCount = _inputEngine.getCandidateCount();
   if (candCount == 0) return startY;
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
-  int availableWidth = pageWidth;
-  if (gpio.deviceIsX3()) {
-    availableWidth -= 2 * metrics.sideButtonHintsWidth;
-  }
-  const int effectiveMargin = (pageWidth - availableWidth * metrics.keyboardTextFieldWidthPercent / 100) / 2;
-  const int textAreaWidth = pageWidth - 2 * effectiveMargin;
+  int effectiveMargin = 0;
+  int rightMargin = 0;
+  textFieldMargins(pageWidth, effectiveMargin, rightMargin);
+  const int textAreaWidth = pageWidth - effectiveMargin - rightMargin;
   const int rightEdge = effectiveMargin + textAreaWidth;
 
   uint16_t activeIdx = _inputEngine.getCandidateIndex();
@@ -1392,6 +1401,7 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
   }
 
   // ── Side button hints ──
+  // Gray long-press capsule next to Space: holding Down toggles Shift/Caps.
   const char* leftLabel = tr(STR_T4_BACKSPACE);
-  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE));
+  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE), "Aa");
 }

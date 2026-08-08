@@ -205,11 +205,14 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   renderer.setOrientation(orig_orientation);
 }
 
-void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                                    const char* bottomBtnLong) const {
   const int screenWidth = renderer.getScreenWidth();
   constexpr int buttonWidth = BaseMetrics::values.sideButtonHintsWidth;  // Width on screen (height when rotated)
   constexpr int buttonHeight = 80;                                       // Height on screen (width when rotated)
   constexpr int buttonMargin = 4;
+  constexpr int buttonGap = BaseMetrics::values.sideButtonHintsGap;
+  const bool hasLong = bottomBtnLong != nullptr && bottomBtnLong[0] != '\0';
 
   if (gpio.deviceIsX3()) {
     // X3 layout: Up on left side, Down on right side, positioned higher
@@ -219,20 +222,29 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
       const int leftX = buttonMargin;
       renderer.drawRect(leftX, x3ButtonY, buttonWidth, buttonHeight);
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtn);
-      const int textHeight = renderer.getTextHeight(SMALL_FONT_ID);
-      const int textX = leftX + (buttonWidth - textHeight) / 2;
+      const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, topBtn, leftX, buttonWidth);
       const int textY = x3ButtonY + (buttonHeight + textWidth) / 2;
       renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, topBtn);
     }
 
     if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      const int rightX = screenWidth - buttonMargin - buttonWidth;
+      // The gray long-press capsule takes the screen edge; the white
+      // short-press capsule moves inwards next to it.
+      const int edgeX = screenWidth - buttonMargin - buttonWidth;
+      const int rightX = hasLong ? edgeX - buttonGap - buttonWidth : edgeX;
       renderer.drawRect(rightX, x3ButtonY, buttonWidth, buttonHeight);
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtn);
-      const int textHeight = renderer.getTextHeight(SMALL_FONT_ID);
-      const int textX = rightX + (buttonWidth - textHeight) / 2;
+      const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtn, rightX, buttonWidth);
       const int textY = x3ButtonY + (buttonHeight + textWidth) / 2;
       renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, bottomBtn);
+      if (hasLong) {
+        renderer.fillRectDither(edgeX, x3ButtonY, buttonWidth, buttonHeight, Color::LightGray);
+        renderer.drawRect(edgeX, x3ButtonY, buttonWidth, buttonHeight);
+        const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtnLong);
+        const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtnLong, edgeX, buttonWidth);
+        const int longTextY = x3ButtonY + (buttonHeight + longTextWidth) / 2;
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, longTextY, bottomBtnLong);
+      }
     }
   } else {
     // X4 layout: Both buttons stacked on right side
@@ -257,12 +269,23 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
       renderer.drawLine(x, topButtonY + 2 * buttonHeight - 1, x + buttonWidth - 1, topButtonY + 2 * buttonHeight - 1);
     }
 
+    // Gray long-press capsule to the left of the white Down capsule.
+    if (hasLong && bottomBtn != nullptr && bottomBtn[0] != '\0') {
+      const int gx = x - buttonGap - buttonWidth;
+      const int gy = topButtonY + buttonHeight;
+      renderer.fillRectDither(gx, gy, buttonWidth, buttonHeight, Color::LightGray);
+      renderer.drawRect(gx, gy, buttonWidth, buttonHeight);
+      const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtnLong);
+      const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtnLong, gx, buttonWidth);
+      const int longTextY = gy + (buttonHeight + longTextWidth) / 2;
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, longTextY, bottomBtnLong);
+    }
+
     for (int i = 0; i < 2; i++) {
       if (labels[i] != nullptr && labels[i][0] != '\0') {
         const int y = topButtonY + i * buttonHeight;
         const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, labels[i]);
-        const int textHeight = renderer.getTextHeight(SMALL_FONT_ID);
-        const int textX = x + (buttonWidth - textHeight) / 2;
+        const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, labels[i], x, buttonWidth);
         const int textY = y + (buttonHeight + textWidth) / 2;
         renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, labels[i]);
       }

@@ -71,6 +71,11 @@ class T4EntryActivity : public Activity {
   // Draw info line above text field: ^^^^^^ 45/140
   void renderInfoLine(int aboveTextY, bool overflow);
 
+  // Compute the left/right margins of the text-field area.  On X3 the
+  // left edge reserves one side capsule and the right edge two
+  // side-by-side capsules (short- + long-press hints).
+  void textFieldMargins(int pageWidth, int& leftMargin, int& rightMargin) const;
+
   // Draw candidate scroll row (Predict mode only). Returns the Y
   // coordinate after the row (same as startY when there are no candidates).
   int renderCandidateRow(int startY);

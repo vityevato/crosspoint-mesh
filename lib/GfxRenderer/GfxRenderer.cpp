@@ -1767,6 +1767,60 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
   }
 }
 
+int GfxRenderer::getRotated90CWCenterX(const int fontId, const char* text, const int boxX, const int boxWidth,
+                                       const EpdFontFamily::Style style) const {
+  const int fallbackX = boxX + boxWidth / 2;
+  if (text == nullptr || *text == '\0') {
+    return fallbackX;
+  }
+
+  const auto fontIt = fontMap.find(fontId);
+  if (fontIt == fontMap.end()) {
+    LOG_ERR("GFX", "Font %d not found", fontId);
+    return fallbackX;
+  }
+
+  const auto& font = fontIt->second;
+  const int ascender = font.getData(style)->ascender;
+
+  // Cross-axis ink extent relative to the x argument. A glyph's pixels span
+  // screenX = x + ascender - top + glyphY, glyphY in [0, height - 1].
+  int inkMin = 0;  // smallest (ascender - top)
+  int inkMax = 0;  // largest  (ascender - top + height - 1)
+  bool anyGlyph = false;
+
+  uint32_t cp;
+  while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
+    // Mirrors drawTextRotated90CW(): Niqqud is skipped, combining marks are
+    // drawn over their base glyph and don't widen the cross-axis ink span.
+    if ((cp >= 0x0591 && cp <= 0x05C7) || utf8IsCombiningMark(cp)) {
+      continue;
+    }
+
+    cp = font.applyLigatures(cp, text, style);
+    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    if (!glyph) continue;
+
+    const int start = ascender - glyph->top;
+    const int end = start + glyph->height - 1;
+    if (!anyGlyph) {
+      inkMin = start;
+      inkMax = end;
+      anyGlyph = true;
+    } else {
+      if (start < inkMin) inkMin = start;
+      if (end > inkMax) inkMax = end;
+    }
+  }
+
+  if (!anyGlyph) {
+    return fallbackX;
+  }
+
+  const int inkWidth = inkMax - inkMin + 1;
+  return boxX + (boxWidth - inkWidth) / 2 - inkMin;
+}
+
 uint8_t* GfxRenderer::getFrameBuffer() const { return frameBuffer; }
 
 size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }

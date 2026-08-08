@@ -59,6 +59,9 @@ struct ThemeMetrics {
   int buttonHintsHeight;
   int sideButtonHintsWidth;
   int sideButtonHintsMargin;
+  /// Horizontal gap between the short-press and long-press side-button
+  /// hint capsules when both are drawn side by side.
+  int sideButtonHintsGap;
   int buttonHintCornerRadius;
 
   int progressBarHeight;
@@ -141,6 +144,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
                                  .sideButtonHintsMargin = 4,
+                                 .sideButtonHintsGap = 4,
                                  .buttonHintCornerRadius = 0,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
@@ -197,7 +201,11 @@ class BaseTheme {
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const;
   virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                const char* btn4, bool inactive = false) const;
-  virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
+  /// @p bottomBtnLong, when non-empty, draws an extra gray (dithered)
+  /// capsule for the Down button's long-press action, next to the white
+  /// short-press capsule (same convention as inactive bottom hints).
+  virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                                   const char* bottomBtnLong = nullptr) const;
   /// Width of a single button hint rectangle. Used to align overlaid elements with physical buttons.
   virtual int getButtonHintWidth() const { return 106; }
   /// Bottom Y of the Down side-button hint (right on X3, bottom-right on X4).

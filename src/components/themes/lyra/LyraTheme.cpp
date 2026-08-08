@@ -370,11 +370,14 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   renderer.setOrientation(orig_orientation);
 }
 
-void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                                    const char* bottomBtnLong) const {
   const int screenWidth = renderer.getScreenWidth();
   constexpr int buttonWidth = LyraMetrics::values.sideButtonHintsWidth;  // Width on screen (height when rotated)
   constexpr int buttonHeight = 78;                                       // Height on screen (width when rotated)
   constexpr int buttonMargin = 0;
+  constexpr int buttonGap = LyraMetrics::values.sideButtonHintsGap;
+  const bool hasLong = bottomBtnLong != nullptr && bottomBtnLong[0] != '\0';
 
   if (gpio.deviceIsX3()) {
     // X3 layout: Up on left side, Down on right side, positioned higher
@@ -384,15 +387,34 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
       renderer.drawRoundedRect(buttonMargin, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, false, true, false,
                                true, true);
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtn);
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, buttonMargin, x3ButtonY + (buttonHeight + textWidth) / 2, topBtn);
+      const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, topBtn, buttonMargin, buttonWidth);
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, x3ButtonY + (buttonHeight + textWidth) / 2, topBtn);
     }
 
     if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      const int rightX = screenWidth - buttonWidth;
-      renderer.drawRoundedRect(rightX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true, false,
-                               true);
+      // The gray long-press capsule takes the screen edge; the white
+      // short-press capsule moves inwards next to it.
+      const int edgeX = screenWidth - buttonWidth;
+      const int rightX = hasLong ? edgeX - buttonGap - buttonWidth : edgeX;
+      if (hasLong) {
+        // Inset capsule: round all corners.
+        renderer.drawRoundedRect(rightX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true);
+      } else {
+        renderer.drawRoundedRect(rightX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true,
+                                 false, true);
+      }
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtn);
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, rightX, x3ButtonY + (buttonHeight + textWidth) / 2, bottomBtn);
+      const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtn, rightX, buttonWidth);
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, x3ButtonY + (buttonHeight + textWidth) / 2, bottomBtn);
+      if (hasLong) {
+        renderer.fillRoundedRect(edgeX, x3ButtonY, buttonWidth, buttonHeight, cornerRadius, Color::LightGray);
+        renderer.drawRoundedRect(edgeX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true, false,
+                                 true);
+        const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtnLong);
+        const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtnLong, edgeX, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, x3ButtonY + (buttonHeight + longTextWidth) / 2,
+                                     bottomBtnLong);
+      }
     }
   } else {
     // X4 layout: Both buttons stacked on right side
@@ -409,11 +431,23 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
                                false, true, false, true);
     }
 
+    // Gray long-press capsule to the left of the white Down capsule.
+    if (hasLong && bottomBtn != nullptr && bottomBtn[0] != '\0') {
+      const int gx = x - buttonGap - buttonWidth;
+      const int gy = topHintButtonY + buttonHeight + 5;
+      renderer.fillRoundedRect(gx, gy, buttonWidth, buttonHeight, cornerRadius, Color::LightGray);
+      renderer.drawRoundedRect(gx, gy, buttonWidth, buttonHeight, 1, cornerRadius, true);
+      const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtnLong);
+      const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtnLong, gx, buttonWidth);
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, gy + (buttonHeight + longTextWidth) / 2, bottomBtnLong);
+    }
+
     for (int i = 0; i < 2; i++) {
       if (labels[i] != nullptr && labels[i][0] != '\0') {
         const int y = topHintButtonY + (i * buttonHeight) + 5;
         const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, labels[i]);
-        renderer.drawTextRotated90CW(SMALL_FONT_ID, x, y + (buttonHeight + textWidth) / 2, labels[i]);
+        const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, labels[i], x, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, y + (buttonHeight + textWidth) / 2, labels[i]);
       }
     }
   }

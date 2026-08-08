@@ -219,6 +219,14 @@ class GfxRenderer {
   // Helper for drawing rotated text (90 degrees clockwise, for side buttons)
   void drawTextRotated90CW(int fontId, int x, int y, const char* text, bool black = true,
                            EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  /// Returns the x argument for drawTextRotated90CW() that centers the
+  /// rendered ink of \p text across the box [boxX, boxX + boxWidth).
+  /// Centering by ascender alone is wrong: ink starts at x + ascender - top,
+  /// so any string whose tallest glyph sits below the ascender line (or that
+  /// contains descenders) drifts off-center. This measures the exact
+  /// cross-axis ink span of the string instead.
+  int getRotated90CWCenterX(int fontId, const char* text, int boxX, int boxWidth,
+                            EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   int getTextHeight(int fontId) const;
 
   // Grayscale functions
