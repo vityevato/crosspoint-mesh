@@ -41,6 +41,11 @@ class T4EntryActivity : public Activity {
   // Mode transition helpers
   bool togglePredictMultiTap();
 
+  // Returns true if predictive input is available for @p lang, i.e. its
+  // dictionary file exists on the SD card. DIGIT (and any language whose
+  // .trie is missing) returns false, meaning that language is Multi-tap only.
+  bool languageSupportsPredict(t4::T4Language lang) const;
+
   // Shift/uppercase helpers
   void cycleShift();
   // Apply the active Shift/Caps state to a candidate word for display and

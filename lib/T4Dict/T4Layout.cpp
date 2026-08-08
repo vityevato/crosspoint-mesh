@@ -256,4 +256,16 @@ T4Language cycleLanguage(T4Language current) {
   return static_cast<T4Language>((i + 1) % 3);
 }
 
+const char* getDictionaryPath(T4Language lang) {
+  switch (lang) {
+    case T4Language::EN:
+      return "/.crosspoint/dicts/en.trie";
+    case T4Language::RU:
+      return "/.crosspoint/dicts/ru.trie";
+    case T4Language::DIGIT:
+      return nullptr;  // digits/symbols have no dictionary
+  }
+  return nullptr;
+}
+
 }  // namespace t4

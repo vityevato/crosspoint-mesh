@@ -1,6 +1,7 @@
 #include "T4EntryActivity.h"
 
 #include <HalGPIO.h>
+#include <HalStorage.h>
 #include <I18n.h>
 
 #include <cctype>
@@ -61,15 +62,15 @@ void T4EntryActivity::onEnter() {
   }
 
   _inputEngine.setLanguage(_lang);
-  const char* err = _inputEngine.getLastError();
-  if (err && err[0] != '\0') {
-    LOG_ERR("T4", "Dict load failed: %s", err);
-    // Fallback: push KeyboardEntryActivity and exit this activity
-    startActivityForResult(
-        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, _title, _initialText, _maxLength, _inputType),
-        resultHandler);
-    finish();
-    return;
+
+  // If the current language has no dictionary on SD (missing .trie file, or
+  // DIGIT), predictive input is impossible — force Multi-tap. When no
+  // language has a dictionary at all, this keeps the keyboard in Multi-tap
+  // and the Predict toggle disabled (see handleLongPresses / renderButtonHints).
+  if (!languageSupportsPredict(_lang) && _mode == t4::T4Mode::PREDICT) {
+    LOG_INF("T4", "No dictionary for lang=%d — forcing Multi-tap", static_cast<int>(_lang));
+    _inputEngine.setMode(t4::T4Mode::MULTI_TAP);
+    _mode = _inputEngine.getMode();
   }
 
   // Priming the engine with initial text (e.g., file rename)
@@ -215,10 +216,14 @@ bool T4EntryActivity::handleLongPresses() {
       _inputEngine.setConfirmedText(savedText.c_str());
     }
 
-    // DIGIT has no dictionary — force MULTI_TAP; restore PREDICT when leaving
-    if (_lang == t4::T4Language::DIGIT && _mode == t4::T4Mode::PREDICT) {
+    // A language with no dictionary (DIGIT, or a missing .trie) is Multi-tap
+    // only — force Multi-tap on entry, and restore Predict when cycling back
+    // to a language that does have a dictionary.
+    const bool newSupportsPredict = languageSupportsPredict(_lang);
+    const bool prevSupportedPredict = languageSupportsPredict(prevLang);
+    if (!newSupportsPredict && _mode == t4::T4Mode::PREDICT) {
       togglePredictMultiTap();
-    } else if (prevLang == t4::T4Language::DIGIT && _mode == t4::T4Mode::MULTI_TAP) {
+    } else if (newSupportsPredict && !prevSupportedPredict && _mode == t4::T4Mode::MULTI_TAP) {
       togglePredictMultiTap();
     }
     _punctIndex = 0;
@@ -231,9 +236,16 @@ bool T4EntryActivity::handleLongPresses() {
   if (_rightHeld && !_rightLongHandled && mappedInput.isPressed(MappedInputManager::Button::Right) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS && !(_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates)) {
     _rightLongHandled = true;
-    LOG_DBG("T4", "loop: Right long-press → toggle Predict/Multi-tap (mode=%d)", static_cast<int>(_mode));
-    togglePredictMultiTap();
-    requestUpdate();
+    // Only allow entering Predict when the current language has a dictionary.
+    // With no dictionary (missing .trie or DIGIT) the keyboard stays locked
+    // in Multi-tap.
+    if (languageSupportsPredict(_lang)) {
+      LOG_DBG("T4", "loop: Right long-press → toggle Predict/Multi-tap (mode=%d)", static_cast<int>(_mode));
+      togglePredictMultiTap();
+      requestUpdate();
+    } else {
+      LOG_DBG("T4", "loop: Right long-press ignored — no dictionary for lang=%d", static_cast<int>(_lang));
+    }
   }
 
   // Down long-press → toggle Shift/Caps
@@ -646,6 +658,12 @@ bool T4EntryActivity::togglePredictMultiTap() {
   return true;
 }
 
+bool T4EntryActivity::languageSupportsPredict(t4::T4Language lang) const {
+  const char* path = t4::getDictionaryPath(lang);
+  if (!path) return false;  // DIGIT — no dictionary
+  return Storage.exists(path);
+}
+
 // ── Shift / Uppercase ────────────────────────────────────────────────────
 
 void T4EntryActivity::cycleShift() {
@@ -1030,7 +1048,10 @@ int T4EntryActivity::renderCandidateRow(int startY) {
   int activeX = effectiveMargin + (textAreaWidth - activeW) / 2;
 
   // ── Right side: collect from activeIdx+1 outward ────────────────────
-  struct Item { int idx; int w; };
+  struct Item {
+    int idx;
+    int w;
+  };
   Item rightItems[30];
   int rightCount = 0;
   bool hasRightEllipsis = false;
@@ -1309,9 +1330,10 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, "", "", /*inactive=*/true);
     GUI.drawButtonHints(renderer, "", "", labels.btn3, labels.btn4, /*inactive=*/false);
   } else {
-    // Long-press hints (inactive style)
-    const auto labels =
-        mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG), tr(STR_T4_MODE_BTN));
+    // Long-press hints (inactive style). Hide the "Mode" hint when the
+    // current language has no dictionary — Predict cannot be enabled there.
+    const char* modeHint = languageSupportsPredict(_lang) ? tr(STR_T4_MODE_BTN) : "";
+    const auto labels = mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG), modeHint);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, /*inactive=*/true);
   }
 

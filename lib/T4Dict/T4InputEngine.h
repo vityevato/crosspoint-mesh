@@ -367,15 +367,7 @@ void T4InputEngine<Dict>::clearSequence() {
 
 template <typename Dict>
 const char* T4InputEngine<Dict>::dictPathForLanguage(T4Language lang) {
-  switch (lang) {
-    case T4Language::EN:
-      return "/.crosspoint/dicts/en.trie";
-    case T4Language::RU:
-      return "/.crosspoint/dicts/ru.trie";
-    case T4Language::DIGIT:
-      return nullptr;  // no dictionary for digits
-  }
-  return nullptr;
+  return getDictionaryPath(lang);
 }
 
 template <typename Dict>

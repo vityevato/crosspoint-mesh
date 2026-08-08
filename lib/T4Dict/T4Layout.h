@@ -55,6 +55,12 @@ const char* getLanguageName(T4Language lang);
 /// Cycle to the next language: EN → RU → DIGIT → EN.
 T4Language cycleLanguage(T4Language current);
 
+/// Return the SD-card path to the predictive dictionary for @p lang, or
+/// nullptr if the language has no dictionary (e.g. DIGIT). The presence of
+/// this file on the SD card determines whether predictive input is available
+/// for the language.
+const char* getDictionaryPath(T4Language lang);
+
 /// Return the number of supported languages.
 constexpr uint8_t kLanguageCount = 3;
 
