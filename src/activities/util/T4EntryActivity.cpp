@@ -27,6 +27,7 @@ T4EntryActivity::T4EntryActivity(GfxRenderer& renderer, MappedInputManager& mapp
       _inputType(inputType),
       _lang(t4::T4Language::EN),
       _mode(t4::T4Mode::PREDICT),
+      _userMode(t4::T4Mode::PREDICT),
       _punctIndex(0),
       _wordJustConfirmed(false),
       _autoCap(false),
@@ -67,17 +68,26 @@ void T4EntryActivity::onEnter() {
   // before loading its dictionary.
   t4::setActiveAdditionalLayout(SETTINGS.t4AdditionalLayout);
 
+  // Restore the user's globally-persisted input mode preference.
+  _userMode = static_cast<t4::T4Mode>(SETTINGS.t4UserMode);
+
+  // Restore the last-used language for Text input.  Password and URL
+  // always start with EN — there's no point restoring e.g. Russian for a
+  // password field.
+  if (_inputType == InputType::Text) {
+    _lang = static_cast<t4::T4Language>(SETTINGS.t4LastLanguage);
+    if (_lang == t4::T4Language::ADDITIONAL && !t4::hasActiveAdditionalLayout()) {
+      _lang = t4::T4Language::EN;
+    }
+  }
+
   _inputEngine.setLanguage(_lang);
 
-  // If the current language has no dictionary on SD (missing .trie file, or
-  // DIGIT), predictive input is impossible — force Multi-tap. When no
-  // language has a dictionary at all, this keeps the keyboard in Multi-tap
-  // and the Predict toggle disabled (see handleLongPresses / renderButtonHints).
-  if (!languageSupportsPredict(_lang) && _mode == t4::T4Mode::PREDICT) {
-    LOG_INF("T4", "No dictionary for lang=%d — forcing Multi-tap", static_cast<int>(_lang));
-    _inputEngine.setMode(t4::T4Mode::MULTI_TAP);
-    _mode = _inputEngine.getMode();
-  }
+  // Apply the user's preferred mode for this language.  When the language
+  // has no dictionary (DIGIT, or a missing .trie), the effective mode is
+  // forced to Multi-tap; _userMode is left unchanged so the user's
+  // preference is restored when switching back to a language with a dict.
+  applyEffectiveMode();
 
   // Priming the engine with initial text (e.g., file rename)
   if (!_initialText.empty()) {
@@ -202,9 +212,15 @@ bool T4EntryActivity::handleLongPresses() {
   if (_leftHeld && !_leftLongHandled && mappedInput.isPressed(MappedInputManager::Button::Left) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS && !(_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates)) {
     _leftLongHandled = true;
-    auto prevLang = _lang;
     _lang = t4::cycleLanguage(_lang);
     LOG_DBG("T4", "loop: long-press Left → cycle language to %s", t4::getLanguageName(_lang));
+
+    // Persist language changes only for Text input — Password and URL
+    // language choices are transient and shouldn't affect the next session.
+    if (_inputType == InputType::Text) {
+      SETTINGS.t4LastLanguage = static_cast<uint8_t>(_lang);
+      SETTINGS.saveToFile();
+    }
 
     // Save text before reset destroys it
     std::string savedText(_inputEngine.getConfirmedText());
@@ -222,19 +238,15 @@ bool T4EntryActivity::handleLongPresses() {
       _inputEngine.setConfirmedText(savedText.c_str());
     }
 
-    // A language with no dictionary (DIGIT, or a missing .trie) is Multi-tap
-    // only — force Multi-tap on entry, and restore Predict when cycling back
-    // to a language that does have a dictionary.
-    const bool newSupportsPredict = languageSupportsPredict(_lang);
-    const bool prevSupportedPredict = languageSupportsPredict(prevLang);
-    if (!newSupportsPredict && _mode == t4::T4Mode::PREDICT) {
-      togglePredictMultiTap();
-    } else if (newSupportsPredict && !prevSupportedPredict && _mode == t4::T4Mode::MULTI_TAP) {
-      togglePredictMultiTap();
-    }
+    // Apply the user's preferred mode.  When the language has no
+    // dictionary the effective mode is forced to Multi-tap; _userMode
+    // stays unchanged so the user's preference is preserved when
+    // switching back to a language with a dict.
+    applyEffectiveMode();
     _punctIndex = 0;
     _wordJustConfirmed = false;
     _candidateScrollX = 0;
+    _upSideCyclesCandidates = false;
     requestUpdate();
   }
 
@@ -242,15 +254,18 @@ bool T4EntryActivity::handleLongPresses() {
   if (_rightHeld && !_rightLongHandled && mappedInput.isPressed(MappedInputManager::Button::Right) &&
       mappedInput.getHeldTime() > LONG_PRESS_MS && !(_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates)) {
     _rightLongHandled = true;
-    // Only allow entering Predict when the current language has a dictionary.
-    // With no dictionary (missing .trie or DIGIT) the keyboard stays locked
-    // in Multi-tap.
-    if (languageSupportsPredict(_lang)) {
+    // Only allow Predict/Multi-tap toggle for Text input on languages
+    // that have a dictionary.  Password and URL are always Multi-tap.
+    if (_inputType == InputType::Text && languageSupportsPredict(_lang)) {
       LOG_DBG("T4", "loop: Right long-press → toggle Predict/Multi-tap (mode=%d)", static_cast<int>(_mode));
       togglePredictMultiTap();
+      _userMode = _mode;  // Remember user's explicit choice
+      SETTINGS.t4UserMode = static_cast<uint8_t>(_userMode);
+      SETTINGS.saveToFile();
       requestUpdate();
     } else {
-      LOG_DBG("T4", "loop: Right long-press ignored — no dictionary for lang=%d", static_cast<int>(_lang));
+      LOG_DBG("T4", "loop: Right long-press ignored — inputType=%d lang=%d", static_cast<int>(_inputType),
+              static_cast<int>(_lang));
     }
   }
 
@@ -634,6 +649,27 @@ void T4EntryActivity::handlePunctuation() {
 }
 
 // ── Mode Transitions ─────────────────────────────────────────────────────
+
+void T4EntryActivity::applyEffectiveMode() {
+  // Password and URL input types are always Multi-tap, regardless of
+  // language or dictionary availability.
+  if (_inputType != InputType::Text || !languageSupportsPredict(_lang)) {
+    if (_mode != t4::T4Mode::MULTI_TAP) {
+      LOG_INF("T4", "applyEffectiveMode: forcing Multi-tap (inputType=%d lang=%d)", static_cast<int>(_inputType),
+              static_cast<int>(_lang));
+      _inputEngine.setMode(t4::T4Mode::MULTI_TAP);
+      _mode = _inputEngine.getMode();
+    }
+  } else {
+    // Text input with dictionary — use the user's preferred mode
+    if (_mode != _userMode) {
+      LOG_DBG("T4", "applyEffectiveMode: restoring user mode=%d for lang=%d", static_cast<int>(_userMode),
+              static_cast<int>(_lang));
+      _inputEngine.setMode(_userMode);
+      _mode = _inputEngine.getMode();
+    }
+  }
+}
 
 bool T4EntryActivity::togglePredictMultiTap() {
   t4::T4Mode newMode = (_mode == t4::T4Mode::MULTI_TAP) ? t4::T4Mode::PREDICT : t4::T4Mode::MULTI_TAP;
@@ -1344,12 +1380,13 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
     // support mixed inactive flags per button.
     const auto labels =
         mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LEFT), tr(STR_T4_RIGHT));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, "", "", /*inactive=*/true);
     GUI.drawButtonHints(renderer, "", "", labels.btn3, labels.btn4, /*inactive=*/false);
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, "", "", /*inactive=*/true);
   } else {
     // Long-press hints (inactive style). Hide the "Mode" hint when the
-    // current language has no dictionary — Predict cannot be enabled there.
-    const char* modeHint = languageSupportsPredict(_lang) ? tr(STR_T4_MODE_BTN) : "";
+    // input type is not Text or the language has no dictionary — Predict
+    // cannot be enabled there.
+    const char* modeHint = (_inputType == InputType::Text && languageSupportsPredict(_lang)) ? tr(STR_T4_MODE_BTN) : "";
     const auto labels = mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG), modeHint);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, /*inactive=*/true);
   }

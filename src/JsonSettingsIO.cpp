@@ -162,6 +162,13 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   // Stored as T4 layout code ("ru", ...) for stability across registry reorders.
   doc["t4AdditionalLayout"] = t4::getAdditionalLayoutCode(s.t4AdditionalLayout);
 
+  // T4 input mode preference -- changed by Right long-press in T4 keyboard.
+  doc["t4UserMode"] = s.t4UserMode;
+
+  // T4 last-used language -- persisted so the keyboard reopens with the
+  // same language the user was on when they last closed it.
+  doc["t4LastLanguage"] = s.t4LastLanguage;
+
   String json;
   serializeJson(doc, json);
   return Storage.writeFile(path, json);
@@ -273,6 +280,14 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
   if (doc["t4AdditionalLayout"].is<const char*>()) {
     s.t4AdditionalLayout = t4::additionalLayoutIndexForCode(doc["t4AdditionalLayout"].as<const char*>());
   }
+
+  // T4 input mode preference -- clamp to valid range (0 = Predict, 1 = Multi-tap).
+  s.t4UserMode = doc["t4UserMode"] | 0;
+  if (s.t4UserMode > 1) s.t4UserMode = 0;
+
+  // T4 last-used language -- clamp to valid range (0 = EN, 1 = Additional, 2 = Digit).
+  s.t4LastLanguage = doc["t4LastLanguage"] | 0;
+  if (s.t4LastLanguage > 2) s.t4LastLanguage = 0;
 
   LOG_DBG("CPS", "Settings loaded from file");
 

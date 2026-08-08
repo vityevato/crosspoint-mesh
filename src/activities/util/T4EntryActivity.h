@@ -41,6 +41,10 @@ class T4EntryActivity : public Activity {
   // Mode transition helpers
   bool togglePredictMultiTap();
 
+  // Apply _userMode to the input engine, falling back to MULTI_TAP when
+  // the current language has no dictionary.  Call after _lang changes.
+  void applyEffectiveMode();
+
   // Returns true if predictive input is available for @p lang, i.e. its
   // dictionary file exists on the SD card. DIGIT (and any language whose
   // .trie is missing) returns false, meaning that language is Multi-tap only.
@@ -107,6 +111,7 @@ class T4EntryActivity : public Activity {
   t4::T4InputEngine<> _inputEngine;
   t4::T4Language _lang;
   t4::T4Mode _mode;         // Tracks _inputEngine.getMode() for rendering
+  t4::T4Mode _userMode;     // User's preferred mode (changed only on manual toggle)
   int _punctIndex;          // 0 = space (just-confirmed), 1-7 = punct
   bool _wordJustConfirmed;  // true after confirmWord, false after next input
   bool _autoCap;            // next confirmWord should capitalize

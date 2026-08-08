@@ -271,6 +271,12 @@ class CrossPointSettings {
   // or t4::kNoAdditionalLayout (default) when no additional layout is selected.
   // Persisted in JSON as the layout code string ("" = none).
   uint8_t t4AdditionalLayout = t4::kNoAdditionalLayout;
+  // T4 input mode: 0 = Predict, 1 = Multi-tap.  Changed by Right long-press
+  // in the T4 keyboard and persisted globally across reboots.
+  uint8_t t4UserMode = 0;
+  // T4 last-used language: 0 = EN, 1 = Additional, 2 = Digit.
+  // Persisted so the keyboard reopens on the same language.
+  uint8_t t4LastLanguage = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
   ~CrossPointSettings() = default;
