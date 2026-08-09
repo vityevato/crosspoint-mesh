@@ -206,38 +206,49 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
 }
 
 void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
-                                    const char* bottomBtnLong) const {
+                                    const char* topBtnLong, const char* bottomBtnLong) const {
   const int screenWidth = renderer.getScreenWidth();
   constexpr int buttonWidth = BaseMetrics::values.sideButtonHintsWidth;  // Width on screen (height when rotated)
   constexpr int buttonHeight = 80;                                       // Height on screen (width when rotated)
   constexpr int buttonMargin = 4;
   constexpr int buttonGap = BaseMetrics::values.sideButtonHintsGap;
-  const bool hasLong = bottomBtnLong != nullptr && bottomBtnLong[0] != '\0';
+  const bool hasTopLong = topBtnLong != nullptr && topBtnLong[0] != '\0';
+  const bool hasBottomLong = bottomBtnLong != nullptr && bottomBtnLong[0] != '\0';
 
   if (gpio.deviceIsX3()) {
-    // X3 layout: Up on left side, Down on right side, positioned higher
+    // X3 layout: Up on left side, Down on right side, positioned higher.
+    // For both buttons the gray long-press capsule takes the screen edge and
+    // the white short-press capsule moves inwards next to it.
     constexpr int x3ButtonY = 155;
 
     if (topBtn != nullptr && topBtn[0] != '\0') {
-      const int leftX = buttonMargin;
+      // Up long-press at the left screen edge; short-press moves inwards.
+      const int edgeX = buttonMargin;
+      const int leftX = hasTopLong ? edgeX + buttonWidth + buttonGap : edgeX;
       renderer.drawRect(leftX, x3ButtonY, buttonWidth, buttonHeight);
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtn);
       const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, topBtn, leftX, buttonWidth);
-      const int textY = x3ButtonY + (buttonHeight + textWidth) / 2;
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, topBtn);
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, x3ButtonY + (buttonHeight + textWidth) / 2, topBtn);
+      if (hasTopLong) {
+        renderer.fillRectDither(edgeX, x3ButtonY, buttonWidth, buttonHeight, Color::LightGray);
+        renderer.drawRect(edgeX, x3ButtonY, buttonWidth, buttonHeight);
+        const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtnLong);
+        const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, topBtnLong, edgeX, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, x3ButtonY + (buttonHeight + longTextWidth) / 2,
+                                     topBtnLong);
+      }
     }
 
     if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      // The gray long-press capsule takes the screen edge; the white
-      // short-press capsule moves inwards next to it.
+      // Down long-press at the right screen edge; short-press moves inwards.
       const int edgeX = screenWidth - buttonMargin - buttonWidth;
-      const int rightX = hasLong ? edgeX - buttonGap - buttonWidth : edgeX;
+      const int rightX = hasBottomLong ? edgeX - buttonGap - buttonWidth : edgeX;
       renderer.drawRect(rightX, x3ButtonY, buttonWidth, buttonHeight);
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtn);
       const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtn, rightX, buttonWidth);
       const int textY = x3ButtonY + (buttonHeight + textWidth) / 2;
       renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, bottomBtn);
-      if (hasLong) {
+      if (hasBottomLong) {
         renderer.fillRectDither(edgeX, x3ButtonY, buttonWidth, buttonHeight, Color::LightGray);
         renderer.drawRect(edgeX, x3ButtonY, buttonWidth, buttonHeight);
         const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtnLong);
@@ -247,47 +258,44 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
       }
     }
   } else {
-    // X4 layout: Both buttons stacked on right side
+    // X4 layout: both buttons stacked on the right side. As on X3, the gray
+    // long-press capsule hugs the screen edge and the white short-press
+    // capsule moves inwards next to it.
     constexpr int topButtonY = 345;
-    const char* labels[] = {topBtn, bottomBtn};
-    const int x = screenWidth - buttonMargin - buttonWidth;
+    const int edgeX = screenWidth - buttonMargin - buttonWidth;  // Gray long-press at the screen edge.
+    const int inX = edgeX - buttonGap - buttonWidth;             // White short-press moved inwards.
+    const char* shortLabels[] = {topBtn, bottomBtn};
+    const char* longLabels[] = {topBtnLong, bottomBtnLong};
+    const bool hasBtnLong[] = {hasTopLong, hasBottomLong};
+    constexpr int buttonY[] = {topButtonY, topButtonY + buttonHeight};
 
-    if (topBtn != nullptr && topBtn[0] != '\0') {
-      renderer.drawLine(x, topButtonY, x + buttonWidth - 1, topButtonY);
-      renderer.drawLine(x, topButtonY, x, topButtonY + buttonHeight - 1);
-      renderer.drawLine(x + buttonWidth - 1, topButtonY, x + buttonWidth - 1, topButtonY + buttonHeight - 1);
-    }
-
-    if ((topBtn != nullptr && topBtn[0] != '\0') || (bottomBtn != nullptr && bottomBtn[0] != '\0')) {
-      renderer.drawLine(x, topButtonY + buttonHeight, x + buttonWidth - 1, topButtonY + buttonHeight);
-    }
-
-    if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      renderer.drawLine(x, topButtonY + buttonHeight, x, topButtonY + 2 * buttonHeight - 1);
-      renderer.drawLine(x + buttonWidth - 1, topButtonY + buttonHeight, x + buttonWidth - 1,
-                        topButtonY + 2 * buttonHeight - 1);
-      renderer.drawLine(x, topButtonY + 2 * buttonHeight - 1, x + buttonWidth - 1, topButtonY + 2 * buttonHeight - 1);
-    }
-
-    // Gray long-press capsule to the left of the white Down capsule.
-    if (hasLong && bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      const int gx = x - buttonGap - buttonWidth;
-      const int gy = topButtonY + buttonHeight;
-      renderer.fillRectDither(gx, gy, buttonWidth, buttonHeight, Color::LightGray);
-      renderer.drawRect(gx, gy, buttonWidth, buttonHeight);
-      const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtnLong);
-      const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtnLong, gx, buttonWidth);
-      const int longTextY = gy + (buttonHeight + longTextWidth) / 2;
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, longTextY, bottomBtnLong);
+    for (int i = 0; i < 2; i++) {
+      if (shortLabels[i] == nullptr || shortLabels[i][0] == '\0') {
+        continue;
+      }
+      const int y = buttonY[i];
+      const int shortX = hasBtnLong[i] ? inX : edgeX;
+      // White short-press capsule.
+      renderer.drawRect(shortX, y, buttonWidth, buttonHeight);
+      if (hasBtnLong[i]) {
+        // Gray long-press capsule at the screen edge.
+        renderer.fillRectDither(edgeX, y, buttonWidth, buttonHeight, Color::LightGray);
+        renderer.drawRect(edgeX, y, buttonWidth, buttonHeight);
+      }
     }
 
     for (int i = 0; i < 2; i++) {
-      if (labels[i] != nullptr && labels[i][0] != '\0') {
-        const int y = topButtonY + i * buttonHeight;
-        const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, labels[i]);
-        const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, labels[i], x, buttonWidth);
-        const int textY = y + (buttonHeight + textWidth) / 2;
-        renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, labels[i]);
+      const int y = buttonY[i];
+      if (shortLabels[i] != nullptr && shortLabels[i][0] != '\0') {
+        const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, shortLabels[i]);
+        const int shortX = hasBtnLong[i] ? inX : edgeX;
+        const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, shortLabels[i], shortX, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, y + (buttonHeight + textWidth) / 2, shortLabels[i]);
+      }
+      if (hasBtnLong[i]) {
+        const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, longLabels[i]);
+        const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, longLabels[i], edgeX, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, y + (buttonHeight + longTextWidth) / 2, longLabels[i]);
       }
     }
   }

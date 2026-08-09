@@ -1403,5 +1403,5 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
   // ── Side button hints ──
   // Gray long-press capsule next to Space: holding Down toggles Shift/Caps.
   const char* leftLabel = tr(STR_T4_BACKSPACE);
-  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE), "Aa");
+  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE), "Test", "Aa");
 }

@@ -201,11 +201,11 @@ class BaseTheme {
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const;
   virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                const char* btn4, bool inactive = false) const;
-  /// @p bottomBtnLong, when non-empty, draws an extra gray (dithered)
-  /// capsule for the Down button's long-press action, next to the white
-  /// short-press capsule (same convention as inactive bottom hints).
+  /// @p topBtnLong / @p bottomBtnLong, when non-empty, draw an extra gray
+  /// (dithered) capsule for the corresponding side button's long-press action
+  /// (same convention as inactive hints).
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
-                                   const char* bottomBtnLong = nullptr) const;
+                                   const char* topBtnLong = nullptr, const char* bottomBtnLong = nullptr) const;
   /// Width of a single button hint rectangle. Used to align overlaid elements with physical buttons.
   virtual int getButtonHintWidth() const { return 106; }
   /// Bottom Y of the Down side-button hint (right on X3, bottom-right on X4).
