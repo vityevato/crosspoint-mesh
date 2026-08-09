@@ -84,6 +84,18 @@ class T4EntryActivity : public Activity {
   // and side-button hints.
   void renderButtonHints(int lineHeight);
 
+  // Max letter-block height across all cycle languages (EN, ADDITIONAL if
+  // active, DIGIT) so the block area and the text field above it stay put
+  // when the language cycles. Called once in onEnter(), result cached in
+  // _maxBlockH.
+  int maxLetterBlockHeight(int lineHeight) const;
+
+  // Draw the mode hint text (Up+Right combo sentence in Predict mode,
+  // then the short/long-press legend) centered horizontally and anchored
+  // just above the letter blocks' top edge (@p blocksBaseY). Returns the
+  // vertical pixel height the hint block occupies.
+  int renderModeHint(int blocksBaseY);
+
   // ── Button dispatch (called from loop()) ──────────────────────────────
 
   // Phase 1: long-press detection. Returns true if loop must exit early
@@ -123,6 +135,11 @@ class T4EntryActivity : public Activity {
 
   // Render buffer (heap-allocated, reused across render calls)
   std::unique_ptr<char[]> _displayBuf;
+
+  // Max letter-block height across all cycle languages (EN, ADDITIONAL if
+  // active, DIGIT). Computed once in onEnter() after the additional
+  // layout is applied; constant for the activity's lifetime.
+  int _maxBlockH = 0;
 
   // Long-press tracking (6 buttons)
   bool _backHeld, _backLongHandled;

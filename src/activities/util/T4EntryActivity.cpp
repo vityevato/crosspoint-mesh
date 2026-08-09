@@ -68,6 +68,11 @@ void T4EntryActivity::onEnter() {
   // before loading its dictionary.
   t4::setActiveAdditionalLayout(SETTINGS.t4AdditionalLayout);
 
+  // Cache the max letter-block height once — it depends only on the fixed
+  // language set and the active additional layout, so it cannot change
+  // while this activity is alive.
+  _maxBlockH = maxLetterBlockHeight(renderer.getLineHeight(UI_12_FONT_ID));
+
   // Restore the user's globally-persisted input mode preference.
   _userMode = static_cast<t4::T4Mode>(SETTINGS.t4UserMode);
 
@@ -153,24 +158,19 @@ void T4EntryActivity::render(RenderLock&& lock) {
   // Compute the vertical limit for the text field so it cannot overflow
   // into the letter-block area at the bottom of the screen.  The
   // calculation mirrors renderButtonHints' blocksBaseY derivation.
-  static constexpr int kBlockPadY = 6;
-  static constexpr int kBlockRowGap = 6;
   static constexpr int kBlockGapAbove = 12;
-  static constexpr int kCharsPerRow = 3;
 
-  int maxBlockH = 0;
-  for (int i = 0; i < 4; i++) {
-    int len = t4::getGroupLength(_lang, i + 1);
-    int rows = (len + kCharsPerRow - 1) / kCharsPerRow;
-    int h = rows * lineHeight + (rows - 1) * kBlockRowGap + 2 * kBlockPadY;
-    if (h > maxBlockH) maxBlockH = h;
-  }
+  const int maxBlockH = _maxBlockH;
   const int hintTopY = renderer.getScreenHeight() - 40;
   const int blocksBaseY = hintTopY - kBlockGapAbove - maxBlockH - lineHeight;
+
+  const int modeHintH = renderModeHint(blocksBaseY);
+
   // Reserve lineHeight for the candidate row + counter row + gap.
-  static constexpr int kCounterRowH = 12;
-  const int maxTextFieldBottom = blocksBaseY - lineHeight - kCounterRowH - metrics.verticalSpacing;
+  const int kCounterRowH = lineHeight * 2;
+  const int maxTextFieldBottom = blocksBaseY - modeHintH - lineHeight - kCounterRowH - metrics.verticalSpacing;
   const int maxTextFieldHeight = maxTextFieldBottom - inputStartY;
+
 
   bool textOverflow = false;
   int y = renderTextField(inputStartY, lineHeight, maxTextFieldHeight, textOverflow);
@@ -756,18 +756,11 @@ std::string T4EntryActivity::applyWordCase(const char* word) const {
 
 void T4EntryActivity::textFieldMargins(int pageWidth, int& leftMargin, int& rightMargin) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int leftReserve = 0;
-  int rightReserve = 0;
-  if (gpio.deviceIsX3()) {
-    // Left edge: single Up capsule.  Right edge: Down capsule plus the
-    // gray long-press capsule drawn side by side.
-    leftReserve = metrics.sideButtonHintsWidth + metrics.sideButtonHintsMargin;
-    rightReserve = 2 * metrics.sideButtonHintsWidth + metrics.sideButtonHintsGap + metrics.sideButtonHintsMargin;
-  }
-  const int available = pageWidth - leftReserve - rightReserve;
+  int reserve = 2 * metrics.sideButtonHintsWidth + metrics.sideButtonHintsGap + metrics.sideButtonHintsMargin;
+  const int available = pageWidth - 2 * reserve;
   const int extra = (available - available * metrics.keyboardTextFieldWidthPercent / 100) / 2;
-  leftMargin = leftReserve + extra;
-  rightMargin = rightReserve + extra;
+  leftMargin = reserve + extra;
+  rightMargin = reserve + extra;
 }
 
 void T4EntryActivity::renderInfoLine(int aboveTextY, bool overflow) {
@@ -1193,6 +1186,66 @@ int T4EntryActivity::renderCandidateRow(int startY) {
   return startY;
 }
 
+// ── maxLetterBlockHeight ─────────────────────────────────────────────────
+
+int T4EntryActivity::maxLetterBlockHeight(int lineHeight) const {
+  static constexpr int kBlockPadY = 6;
+  static constexpr int kBlockRowGap = 6;
+  static constexpr int kCharsPerRow = 3;
+
+  int maxBlockH = 0;
+  const t4::T4Language langs[] = {t4::T4Language::EN, t4::T4Language::ADDITIONAL, t4::T4Language::DIGIT};
+  for (t4::T4Language lang : langs) {
+    // Skip the ADDITIONAL slot when no additional layout is configured —
+    // it is unreachable in the language cycle in that case.
+    if (lang == t4::T4Language::ADDITIONAL && !t4::hasActiveAdditionalLayout()) continue;
+    for (int i = 0; i < 4; i++) {
+      int len = t4::getGroupLength(lang, i + 1);
+      if (len == 0) continue;
+      int rows = (len + kCharsPerRow - 1) / kCharsPerRow;
+      int h = rows * lineHeight + (rows - 1) * kBlockRowGap + 2 * kBlockPadY;
+      if (h > maxBlockH) maxBlockH = h;
+    }
+  }
+  return maxBlockH;
+}
+
+// ── renderModeHint ────────────────────────────────────────────────────────
+
+int T4EntryActivity::renderModeHint(int blocksBaseY) {
+  // Compose the hint text. Predict mode prepends the Up+Right candidate
+  // combo sentence; Multi-tap shows only the short/long-press legend.
+  const char* hints = tr(STR_T4_HINTS_LONG_PRESS);
+  char text[192];
+  if (_mode == t4::T4Mode::PREDICT) {
+    snprintf(text, sizeof(text), "%s %s", tr(STR_T4_HINTS_COMBO), hints);
+  } else {
+    snprintf(text, sizeof(text), "%s", hints);
+  }
+
+  // Constrain to the text-field area (between side-button hint capsules)
+  // and anchor the block's bottom edge just above the letter panels.
+  const int pageWidth = renderer.getScreenWidth();
+  int leftMargin = 0;
+  int rightMargin = 0;
+  textFieldMargins(pageWidth, leftMargin, rightMargin);
+  const int maxWidth = pageWidth - leftMargin - rightMargin;
+
+  // Standard hint typography (SMALL_FONT_ID), same as drawHelpText.
+  const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  static constexpr int kHintGapAboveBlocks = 100;
+  auto lines = renderer.wrappedText(SMALL_FONT_ID, text, maxWidth, /*maxLines=*/6);
+  const int bottomY = blocksBaseY - kHintGapAboveBlocks;
+  const int topY = bottomY - static_cast<int>(lines.size()) * lineHeight;
+  for (size_t i = 0; i < lines.size(); i++) {
+    const int w = renderer.getTextAdvanceX(SMALL_FONT_ID, lines[i].c_str(), EpdFontFamily::REGULAR);
+    const int x = leftMargin + (maxWidth - w) / 2;
+    renderer.drawText(SMALL_FONT_ID, x, topY + static_cast<int>(i) * lineHeight, lines[i].c_str(), true);
+  }
+
+  return static_cast<int>(lines.size()) * lineHeight + kHintGapAboveBlocks;
+}
+
 // ── renderButtonHints ────────────────────────────────────────────────────
 
 void T4EntryActivity::renderButtonHints(int lineHeight) {
@@ -1210,17 +1263,9 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
   static constexpr int blockGapAbove = 12;
   static constexpr int charsPerRow = 3;
 
-  // Compute max block height for visual uniformity
-  int maxBlockH = 0;
-  for (int i = 0; i < 4; i++) {
-    int len = t4::getGroupLength(_lang, i + 1);
-    int rows = (len + charsPerRow - 1) / charsPerRow;
-    int h = rows * lineHeight + (rows - 1) * blockRowGap + 2 * blockPadY;
-    if (h > maxBlockH) maxBlockH = h;
-  }
-
   // Position blocks above the button hints strip
   const int hintTopY = pageHeight - 40;
+  const int maxBlockH = _maxBlockH;
   const int blocksBaseY = hintTopY - blockGapAbove - maxBlockH - lineHeight;
 
   // ── Punctuation popup ──
