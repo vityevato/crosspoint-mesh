@@ -81,8 +81,8 @@ void T4LayoutSelectActivity::loop() {
 
 void T4LayoutSelectActivity::handleSelection() {
   // Row 0 = "None"; rows 1..count map to additional layout (row - 1).
-  SETTINGS.t4AdditionalLayout = (selectedIndex == kNoneItemIndex) ? t4::kNoAdditionalLayout
-                                                                  : static_cast<uint8_t>(selectedIndex - 1);
+  SETTINGS.t4AdditionalLayout =
+      (selectedIndex == kNoneItemIndex) ? t4::kNoAdditionalLayout : static_cast<uint8_t>(selectedIndex - 1);
   t4::setActiveAdditionalLayout(SETTINGS.t4AdditionalLayout);
   SETTINGS.saveToFile();
 

@@ -313,7 +313,13 @@ void T4EntryActivity::handleUpRightCombo() {
     _upLongHandled = true;
     _rightLongHandled = true;
     if (_mode == t4::T4Mode::PREDICT) {
+      bool wasCycle = _upSideCyclesCandidates;
       _upSideCyclesCandidates = !_upSideCyclesCandidates;
+      if (_upSideCyclesCandidates && !wasCycle) {
+        // Entering cycle mode: advance to next candidate
+        _inputEngine.cycleCandidate();
+        _candidateScrollX = 0;
+      }
       LOG_DBG("T4", "loop: Up+Right combo → toggle upSideAction=%d", _upSideCyclesCandidates);
       requestUpdate();
     }
@@ -1156,10 +1162,18 @@ int T4EntryActivity::renderCandidateRow(int startY) {
     drawX += leftItems[i].w + sepW;
   }
 
-  // Active candidate (underlined)
-  renderer.drawText(UI_12_FONT_ID, drawX, startY, activeName, true);
-  int ulY = startY + renderer.getTextHeight(UI_12_FONT_ID) + 2;
-  renderer.fillRect(drawX, ulY, activeW, 2, true);
+  // Active candidate
+  if (_upSideCyclesCandidates) {
+    // Inverted box: white text on black background
+    const int boxH = renderer.getLineHeight(UI_12_FONT_ID);
+    renderer.fillRect(drawX, startY, activeW, boxH, true);
+    renderer.drawText(UI_12_FONT_ID, drawX, startY, activeName, false);
+  } else {
+    // Underlined
+    renderer.drawText(UI_12_FONT_ID, drawX, startY, activeName, true);
+    int ulY = startY + renderer.getTextHeight(UI_12_FONT_ID) + 2;
+    renderer.fillRect(drawX, ulY, activeW, 2, true);
+  }
   drawX += activeW + sepW;
 
   // Right candidates
@@ -1249,7 +1263,7 @@ int T4EntryActivity::renderModeHint(int blocksBaseY) {
 
 void T4EntryActivity::renderCandidateComboHint(int blocksBaseY) {
   if (_mode != t4::T4Mode::PREDICT || _upSideCyclesCandidates) return;
-  if (_inputEngine.getCandidateCount() == 0) return;
+  if (_inputEngine.getCandidateCount() < 2) return;
 
   const Rect upKey = GUI.getSideButtonUpRect(renderer);
 
@@ -1356,7 +1370,13 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
     const int popupW = metrics.sideButtonHintsWidth;
     const int popupH = PUNCT_COUNT * lineHeight + 2 * popupPadY;
     int popupX = pageWidth - popupW - metrics.sideButtonHintsMargin;
-    int popupY = GUI.getSideButtonDownBottomY() + 8;
+    int popupY;
+    if (gpio.deviceIsX3()) {
+      popupY = GUI.getSideButtonDownBottomY() + 8;  // below Down button
+    } else {
+      Rect upRect = GUI.getSideButtonUpRect(renderer);
+      popupY = upRect.y - popupH - 4;  // above Up button (X4)
+    }
 
     const int popupCr = metrics.popupCornerRadius;
     renderer.fillRoundedRect(popupX, popupY, popupW, popupH, popupCr, Color::White);

@@ -311,8 +311,7 @@ Rect BaseTheme::getSideButtonUpRect(const GfxRenderer& renderer) const {
   constexpr int buttonHeight = 80;  // mirrors drawSideButtonHints
   if (gpio.deviceIsX3()) {
     // X3: short-press capsule inset next to the edge long-press capsule.
-    const int leftX =
-        BaseMetrics::values.sideButtonHintsMargin + buttonWidth + BaseMetrics::values.sideButtonHintsGap;
+    const int leftX = BaseMetrics::values.sideButtonHintsMargin + buttonWidth + BaseMetrics::values.sideButtonHintsGap;
     return Rect(leftX, 155, buttonWidth, buttonHeight);  // x3ButtonY
   }
   // X4: stacked on the right, short-press capsule inset from the edge.
