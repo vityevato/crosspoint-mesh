@@ -193,15 +193,20 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 # Build firmware (default development environment)
 pio run
 
-# Build specific environment (gh_release, gh_release_rc, slim, simulator)
+# Build specific environment (gh_release, gh_release_rc, slim, simulator,
+# simulator_4)
 pio run -e gh_release
 
-# Build and run desktop simulator (no device required)
+# Build and run desktop simulator (no device required). There are two
+# simulator envs: `simulator` (X3 panel, 792x528, tilt/RTC active) and
+# `simulator_4` (X4 target panel, 800x480, no tilt/RTC).
 pio run -e simulator
 .pio/build/simulator/program
 
 # Build + launch simulator in one command
 pio run -e simulator -t run_simulator
+# X4 target panel (same controls, X4 framebuffer)
+pio run -e simulator_4 -t run_simulator
 
 # Convert newest simulator screenshot BMP to PNG (see below)
 ./src/simulator/convert_screenshot.sh

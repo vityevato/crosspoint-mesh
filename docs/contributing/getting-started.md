@@ -83,9 +83,15 @@ SD card `/books/` path.
 
 ### Build and run
 
+Two simulator environments are provided: `simulator` (X3 panel, 792x528,
+tilt/RTC active) and `simulator_4` (X4 target panel, 800x480, no tilt/RTC).
+
 ```sh
 # One command: build + launch
 pio run -e simulator -t run_simulator
+
+# X4 target panel (same controls, X4 framebuffer)
+pio run -e simulator_4 -t run_simulator
 
 # Or two steps: build, then run
 pio run -e simulator

@@ -143,11 +143,16 @@ the firmware natively (macOS/Linux) and renders the e-ink display in an SDL2 win
 **Build and run**:
 ```bash
 # Build + launch in one command
+#   - `simulator`  : X3 panel (792x528, tilt/RTC active)
+#   - `simulator_4`: X4 target panel (800x480, no tilt/RTC)
 pio run -e simulator -t run_simulator
 
 # Or build only, then run
 pio run -e simulator
 .pio/build/simulator/program
+# X4 variant:
+pio run -e simulator_4
+.pio/build/simulator_4/program
 ```
 
 **Setup**: Place EPUB books in `./fs_/books/` (maps to SD card `/books/`).
