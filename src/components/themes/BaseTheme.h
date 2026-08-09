@@ -211,6 +211,9 @@ class BaseTheme {
   /// Bottom Y of the Down side-button hint (right on X3, bottom-right on X4).
   /// Used by T4 punctuation popup to anchor below the key that triggers it.
   virtual int getSideButtonDownBottomY() const;
+  /// Rect of the Up side-button short-press hint capsule (left on X3,
+  /// top-right on X4). Used by the T4 Up+Right combo hint connector.
+  virtual Rect getSideButtonUpRect(const GfxRenderer& renderer) const;
   /// X-positions of the 4 front-button hint rectangles. Returns pointer to static array of 4 ints.
   /// Used internally by drawButtonHints() and externally to align overlaid elements (e.g. T4 letter blocks).
   virtual const int* getButtonXPositions(bool isX3) const;

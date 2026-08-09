@@ -1246,6 +1246,57 @@ int T4EntryActivity::renderModeHint(int blocksBaseY) {
   return static_cast<int>(lines.size()) * lineHeight + kHintGapAboveBlocks;
 }
 
+// ── renderCandidateComboHint ─────────────────────────────────────────────
+
+void T4EntryActivity::renderCandidateComboHint(int blocksBaseY) {
+  // X3-only stage 1; X4 gets its own connector layout in a follow-up.
+  if (!gpio.deviceIsX3()) return;
+  if (_mode != t4::T4Mode::PREDICT || _upSideCyclesCandidates) return;
+  if (_inputEngine.getCandidateCount() == 0) return;
+
+  const int* btnX = GUI.getButtonXPositions(gpio.deviceIsX3());
+  const int btnW = GUI.getButtonHintWidth();
+  const Rect upKey = GUI.getSideButtonUpRect(renderer);
+
+  static constexpr int kTipGap = 4;       // space between arrow tip and target
+  static constexpr int kHeadLen = 3;      // arrowhead leg length
+  static constexpr int kLabelGap = 4;     // gap between label and line ends
+  static constexpr int kAboveBlocks = 24; // horizontal segment height above blocks
+  static constexpr int kLineW = 1;        // connector stroke width
+
+  const int leftTipX = upKey.x + upKey.width + kTipGap;
+  const int leftY = upKey.y + upKey.height / 2;
+  const int cornerX = leftTipX + 2 * kHeadLen;
+  const int horizY = blocksBaseY - kAboveBlocks;
+  const int rightX = btnX[3] + btnW / 2;
+  const int downTipY = blocksBaseY - kTipGap;
+
+  // Left arrowhead pointing at the Up (Bksp) capsule, stub to the corner
+  renderer.drawLine(leftTipX, leftY, leftTipX + kHeadLen, leftY - kHeadLen, kLineW, true);
+  renderer.drawLine(leftTipX, leftY, leftTipX + kHeadLen, leftY + kHeadLen, kLineW, true);
+  renderer.drawLine(leftTipX, leftY, cornerX, leftY, kLineW, true);
+  // Vertical drop to the horizontal segment (thickened along X)
+  for (int i = 0; i < kLineW; i++) {
+    renderer.drawLine(cornerX + i, leftY, cornerX + i, horizY + kLineW - 1, true);
+  }
+  // Right arrowhead pointing down at the 4th letter block (Right button)
+  renderer.drawLine(rightX, downTipY, rightX - kHeadLen, downTipY - kHeadLen, kLineW, true);
+  renderer.drawLine(rightX, downTipY, rightX + kHeadLen, downTipY - kHeadLen, kLineW, true);
+  // Vertical stub down to the block (thickened along X)
+  for (int i = 0; i < kLineW; i++) {
+    renderer.drawLine(rightX + i, horizY, rightX + i, downTipY, true);
+  }
+
+  // Horizontal segment split around the centered label
+  const char* label = tr(STR_T4_CANDIDATES);
+  const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label);
+  const int labelX = cornerX + (rightX - cornerX - labelW) / 2;
+  const int labelY = horizY - renderer.getLineHeight(SMALL_FONT_ID) / 2;
+  renderer.drawLine(cornerX, horizY, labelX - kLabelGap, horizY, kLineW, true);
+  renderer.drawLine(labelX + labelW + kLabelGap, horizY, rightX, horizY, kLineW, true);
+  renderer.drawText(SMALL_FONT_ID, labelX, labelY, label, true);
+}
+
 // ── renderButtonHints ────────────────────────────────────────────────────
 
 void T4EntryActivity::renderButtonHints(int lineHeight) {
@@ -1426,6 +1477,9 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
     }
 
   }  // end if (!isCycle) — letter blocks hidden in cycle mode
+
+  // Visual connector hint for the Up+Right candidate combo (X3 only)
+  renderCandidateComboHint(blocksBaseY);
 
   // ── Button hints ──
   if (isCycle) {

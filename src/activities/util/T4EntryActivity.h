@@ -96,6 +96,13 @@ class T4EntryActivity : public Activity {
   // vertical pixel height the hint block occupies.
   int renderModeHint(int blocksBaseY);
 
+  // Draw the visual Up+Right combo connector: an arrowed line linking the
+  // Up side-button hint (Bksp) to the 4th letter block (Right), labeled
+  // with STR_T4_CANDIDATES. Predict mode only, when the candidate list is
+  // non-empty and cycle mode is off. X3 layout only for now; X4 gets its
+  // own treatment in a follow-up.
+  void renderCandidateComboHint(int blocksBaseY);
+
   // ── Button dispatch (called from loop()) ──────────────────────────────
 
   // Phase 1: long-press detection. Returns true if loop must exit early

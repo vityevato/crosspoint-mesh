@@ -491,6 +491,21 @@ int LyraTheme::getSideButtonDownBottomY() const {
   return 345 + 78 + 5 + 78;                // topHintButtonY + btnH + gap + btnH (X4)
 }
 
+Rect LyraTheme::getSideButtonUpRect(const GfxRenderer& renderer) const {
+  constexpr int buttonWidth = LyraMetrics::values.sideButtonHintsWidth;
+  constexpr int buttonHeight = 78;  // mirrors drawSideButtonHints
+  if (gpio.deviceIsX3()) {
+    // X3: short-press capsule inset next to the edge long-press capsule.
+    const int leftX =
+        LyraMetrics::values.sideButtonHintsMargin + buttonWidth + LyraMetrics::values.sideButtonHintsGap;
+    return Rect(leftX, 155, buttonWidth, buttonHeight);  // x3ButtonY
+  }
+  // X4: stacked on the right, short-press capsule inset from the edge.
+  const int edgeX = renderer.getScreenWidth() - buttonWidth;
+  const int inX = edgeX - LyraMetrics::values.sideButtonHintsGap - buttonWidth;
+  return Rect(inX, topHintButtonY, buttonWidth, buttonHeight);
+}
+
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                     const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                     bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {

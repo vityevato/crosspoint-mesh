@@ -306,6 +306,21 @@ int BaseTheme::getSideButtonDownBottomY() const {
   return 345 + 80 + 80;                    // topButtonY + 2 * buttonHeight (X4, bottom of second btn)
 }
 
+Rect BaseTheme::getSideButtonUpRect(const GfxRenderer& renderer) const {
+  constexpr int buttonWidth = BaseMetrics::values.sideButtonHintsWidth;
+  constexpr int buttonHeight = 80;  // mirrors drawSideButtonHints
+  if (gpio.deviceIsX3()) {
+    // X3: short-press capsule inset next to the edge long-press capsule.
+    const int leftX =
+        BaseMetrics::values.sideButtonHintsMargin + buttonWidth + BaseMetrics::values.sideButtonHintsGap;
+    return Rect(leftX, 155, buttonWidth, buttonHeight);  // x3ButtonY
+  }
+  // X4: stacked on the right, short-press capsule inset from the edge.
+  const int edgeX = renderer.getScreenWidth() - BaseMetrics::values.sideButtonHintsMargin - buttonWidth;
+  const int inX = edgeX - BaseMetrics::values.sideButtonHintsGap - buttonWidth;
+  return Rect(inX, 345, buttonWidth, buttonHeight);  // topButtonY
+}
+
 int BaseTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
   int rowHeight = (hasSubtitle) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
   return contentHeight / rowHeight;
