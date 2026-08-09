@@ -171,7 +171,6 @@ void T4EntryActivity::render(RenderLock&& lock) {
   const int maxTextFieldBottom = blocksBaseY - modeHintH - lineHeight - kCounterRowH - metrics.verticalSpacing;
   const int maxTextFieldHeight = maxTextFieldBottom - inputStartY;
 
-
   bool textOverflow = false;
   int y = renderTextField(inputStartY, lineHeight, maxTextFieldHeight, textOverflow);
 
@@ -1249,52 +1248,84 @@ int T4EntryActivity::renderModeHint(int blocksBaseY) {
 // ── renderCandidateComboHint ─────────────────────────────────────────────
 
 void T4EntryActivity::renderCandidateComboHint(int blocksBaseY) {
-  // X3-only stage 1; X4 gets its own connector layout in a follow-up.
-  if (!gpio.deviceIsX3()) return;
   if (_mode != t4::T4Mode::PREDICT || _upSideCyclesCandidates) return;
   if (_inputEngine.getCandidateCount() == 0) return;
 
-  const int* btnX = GUI.getButtonXPositions(gpio.deviceIsX3());
-  const int btnW = GUI.getButtonHintWidth();
   const Rect upKey = GUI.getSideButtonUpRect(renderer);
 
-  static constexpr int kTipGap = 4;       // space between arrow tip and target
-  static constexpr int kHeadLen = 3;      // arrowhead leg length
-  static constexpr int kLabelGap = 4;     // gap between label and line ends
-  static constexpr int kAboveBlocks = 24; // horizontal segment height above blocks
-  static constexpr int kLineW = 1;        // connector stroke width
+  static constexpr int kTipGap = 4;    // space between arrow tip and target
+  static constexpr int kHeadLen = 3;   // arrowhead leg length
+  static constexpr int kLabelGap = 4;  // gap between label and line ends
+  static constexpr int kLineW = 1;     // connector stroke width
 
-  const int leftTipX = upKey.x + upKey.width + kTipGap;
-  const int leftY = upKey.y + upKey.height / 2;
-  const int cornerX = leftTipX + 2 * kHeadLen;
-  const int horizY = blocksBaseY - kAboveBlocks;
-  const int rightX = btnX[3] + btnW / 2;
-  const int downTipY = blocksBaseY - kTipGap;
-
-  // Left arrowhead pointing at the Up (Bksp) capsule, stub to the corner
-  renderer.drawLine(leftTipX, leftY, leftTipX + kHeadLen, leftY - kHeadLen, kLineW, true);
-  renderer.drawLine(leftTipX, leftY, leftTipX + kHeadLen, leftY + kHeadLen, kLineW, true);
-  renderer.drawLine(leftTipX, leftY, cornerX, leftY, kLineW, true);
-  // Vertical drop to the horizontal segment (thickened along X)
-  for (int i = 0; i < kLineW; i++) {
-    renderer.drawLine(cornerX + i, leftY, cornerX + i, horizY + kLineW - 1, true);
-  }
-  // Right arrowhead pointing down at the 4th letter block (Right button)
-  renderer.drawLine(rightX, downTipY, rightX - kHeadLen, downTipY - kHeadLen, kLineW, true);
-  renderer.drawLine(rightX, downTipY, rightX + kHeadLen, downTipY - kHeadLen, kLineW, true);
-  // Vertical stub down to the block (thickened along X)
-  for (int i = 0; i < kLineW; i++) {
-    renderer.drawLine(rightX + i, horizY, rightX + i, downTipY, true);
-  }
-
-  // Horizontal segment split around the centered label
   const char* label = tr(STR_T4_CANDIDATES);
   const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label);
-  const int labelX = cornerX + (rightX - cornerX - labelW) / 2;
-  const int labelY = horizY - renderer.getLineHeight(SMALL_FONT_ID) / 2;
-  renderer.drawLine(cornerX, horizY, labelX - kLabelGap, horizY, kLineW, true);
-  renderer.drawLine(labelX + labelW + kLabelGap, horizY, rightX, horizY, kLineW, true);
-  renderer.drawText(SMALL_FONT_ID, labelX, labelY, label, true);
+
+  if (gpio.deviceIsX3()) {
+    // X3: L-shaped connector — arrow at the Up capsule, drop down, horizontal
+    // run above the blocks split around the label, arrow down at block 4.
+    static constexpr int kAboveBlocks = 24;  // horizontal segment height above blocks
+    const int* btnX = GUI.getButtonXPositions(true);
+    const int btnW = GUI.getButtonHintWidth();
+
+    const int leftTipX = upKey.x + upKey.width + kTipGap;
+    const int leftY = upKey.y + upKey.height / 2;
+    const int cornerX = leftTipX + 2 * kHeadLen;
+    const int horizY = blocksBaseY - kAboveBlocks;
+    const int rightX = btnX[3] + btnW / 2;
+    const int downTipY = blocksBaseY - kTipGap;
+
+    // Left arrowhead pointing at the Up (Bksp) capsule, stub to the corner
+    renderer.drawLine(leftTipX, leftY, leftTipX + kHeadLen, leftY - kHeadLen, kLineW, true);
+    renderer.drawLine(leftTipX, leftY, leftTipX + kHeadLen, leftY + kHeadLen, kLineW, true);
+    renderer.fillRect(leftTipX, leftY, cornerX - leftTipX + 1, kLineW, true);
+    // Vertical drop to the horizontal segment
+    renderer.fillRect(cornerX, leftY, kLineW, horizY + kLineW - leftY, true);
+    // Right arrowhead pointing down at the 4th letter block (Right button)
+    renderer.drawLine(rightX, downTipY, rightX - kHeadLen, downTipY - kHeadLen, kLineW, true);
+    renderer.drawLine(rightX, downTipY, rightX + kHeadLen, downTipY - kHeadLen, kLineW, true);
+    // Vertical stub down to the block
+    renderer.fillRect(rightX, horizY, kLineW, downTipY - horizY + 1, true);
+
+    // Horizontal segment split around the centered label
+    const int labelX = cornerX + (rightX - cornerX - labelW) / 2;
+    const int labelY = horizY - renderer.getLineHeight(SMALL_FONT_ID) / 2;
+    renderer.fillRect(cornerX, horizY, labelX - kLabelGap - cornerX + 1, kLineW, true);
+    renderer.fillRect(labelX + labelW + kLabelGap, horizY, rightX - labelX - labelW - kLabelGap + 1, kLineW, true);
+    renderer.drawText(SMALL_FONT_ID, labelX, labelY, label, true);
+    return;
+  }
+
+  // X4: vertical connector in the corridor between the text area and the
+  // right-side capsules. Top arrow points right at the Up (Bksp) capsule,
+  // the label breaks the vertical, bottom arrow points down at the 4th
+  // letter block (Right button).
+  const int pageWidth = renderer.getScreenWidth();
+  int leftMargin = 0;
+  int rightMargin = 0;
+  textFieldMargins(pageWidth, leftMargin, rightMargin);
+  const int textRight = pageWidth - rightMargin;
+  const int lineX = textRight + (upKey.x - textRight) / 2;
+  const int topY = upKey.y + upKey.height / 2;
+  const int tipX = upKey.x - kTipGap;
+  const int downTipY = blocksBaseY - kTipGap;
+  const int labelH = renderer.getTextHeight(SMALL_FONT_ID);
+  static constexpr int kLabelRaise = 10;  // extra lift of the label above the bottom arrow
+  const int labelY = downTipY - kHeadLen - kLabelGap - labelH - kLabelRaise;
+
+  // Top arrowhead pointing right at the Up capsule + horizontal stub
+  renderer.drawLine(tipX, topY, tipX - kHeadLen, topY - kHeadLen, kLineW, true);
+  renderer.drawLine(tipX, topY, tipX - kHeadLen, topY + kHeadLen, kLineW, true);
+  renderer.fillRect(lineX, topY, tipX - lineX + 1, kLineW, true);
+  // Vertical run from the stub down to the label
+  renderer.fillRect(lineX, topY, kLineW, labelY - kLabelGap - topY + 1, true);
+  // Bottom arrowhead pointing down at the 4th letter block
+  renderer.drawLine(lineX, downTipY, lineX - kHeadLen, downTipY - kHeadLen, kLineW, true);
+  renderer.drawLine(lineX, downTipY, lineX + kHeadLen, downTipY - kHeadLen, kLineW, true);
+  renderer.fillRect(lineX, labelY + labelH + kLabelGap, kLineW, downTipY - labelY - labelH - kLabelGap + 1, true);
+
+  // Label centered on the vertical, breaking it
+  renderer.drawText(SMALL_FONT_ID, lineX - labelW / 2, labelY, label, true);
 }
 
 // ── renderButtonHints ────────────────────────────────────────────────────

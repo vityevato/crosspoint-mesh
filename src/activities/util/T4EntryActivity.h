@@ -99,8 +99,9 @@ class T4EntryActivity : public Activity {
   // Draw the visual Up+Right combo connector: an arrowed line linking the
   // Up side-button hint (Bksp) to the 4th letter block (Right), labeled
   // with STR_T4_CANDIDATES. Predict mode only, when the candidate list is
-  // non-empty and cycle mode is off. X3 layout only for now; X4 gets its
-  // own treatment in a follow-up.
+  // non-empty and cycle mode is off. X3 uses an L-shaped connector with a
+  // horizontal label run; X4 uses a vertical connector in the corridor
+  // right of the text area, with the label breaking the vertical.
   void renderCandidateComboHint(int blocksBaseY);
 
   // ── Button dispatch (called from loop()) ──────────────────────────────
