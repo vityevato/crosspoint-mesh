@@ -65,6 +65,104 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# ── Contraction expansion (English) ─────────────────────────────────────────
+
+# Non-apostrophe forms that appear in OpenSubtitles-derived word lists
+# (the upstream tokenizer splits contractions at apostrophes, so "don't"
+# never appears as a token). Map known non-apostrophe forms to their
+# proper contractions. Only English — Russian doesn't use apostrophes.
+EN_CONTRACTIONS = {
+    # n't
+    "dont": "don't",
+    "cant": "can't",
+    "wont": "won't",
+    "isnt": "isn't",
+    "arent": "aren't",
+    "wasnt": "wasn't",
+    "werent": "weren't",
+    "hasnt": "hasn't",
+    "havent": "haven't",
+    "hadnt": "hadn't",
+    "doesnt": "doesn't",
+    "didnt": "didn't",
+    "couldnt": "couldn't",
+    "wouldnt": "wouldn't",
+    "shouldnt": "shouldn't",
+    "mustnt": "mustn't",
+    "neednt": "needn't",
+    "mightnt": "mightn't",
+    # 's
+    "its": "it's",
+    "thats": "that's",
+    "hes": "he's",
+    "shes": "she's",
+    "whos": "who's",
+    "whats": "what's",
+    "wheres": "where's",
+    "whens": "when's",
+    "whys": "why's",
+    "hows": "how's",
+    "theres": "there's",
+    "heres": "here's",
+    "lets": "let's",
+    # 're
+    "youre": "you're",
+    "were": "we're",
+    "theyre": "they're",
+    # 've
+    "ive": "i've",
+    "youve": "you've",
+    "weve": "we've",
+    "theyve": "they've",
+    # 'll
+    "ill": "i'll",
+    "youll": "you'll",
+    "hell": "he'll",
+    "shell": "she'll",
+    "well": "we'll",
+    "theyll": "they'll",
+    "itll": "it'll",
+    "thatll": "that'll",
+    # 'd
+    "id": "i'd",
+    "youd": "you'd",
+    "hed": "he'd",
+    "shed": "she'd",
+    "wed": "we'd",
+    "theyd": "they'd",
+    # 'm
+    "im": "i'm",
+}
+
+
+def expand_contractions(
+    entries: List[Tuple[str, int]], lang: str
+) -> List[Tuple[str, int]]:
+    """For English word lists derived from OpenSubtitles, inject proper
+    apostrophe contractions when the non-apostrophe form is present.
+    Only adds a contraction when the source form appears in the list —
+    avoids polluting the dictionary with words not attested in the corpus.
+
+    Russian lists are returned unchanged (no apostrophe contractions)."""
+    if lang != "en":
+        return entries
+
+    seen = {w for w, _ in entries}
+    added = 0
+    for i, (word, freq) in enumerate(entries):
+        if word in EN_CONTRACTIONS:
+            contracted = EN_CONTRACTIONS[word]
+            if contracted not in seen:
+                entries.append((contracted, freq))
+                seen.add(contracted)
+                added += 1
+
+    if added:
+        entries.sort(key=lambda x: (-x[1], x[0]))
+        print(f"Added {added} contraction(s) to word list", file=sys.stderr)
+    return entries
+
+
 # ── Input parsing ───────────────────────────────────────────────────────────
 
 
@@ -263,6 +361,8 @@ def main() -> None:
 
     entries = parse_input(args.input)
     print(f"Read {len(entries)} unique words from input")
+
+    entries = expand_contractions(entries, args.lang)
 
     root, actual_word_count = build_trie(entries, letter_map)
     print(f"Built trie with {actual_word_count} words")
