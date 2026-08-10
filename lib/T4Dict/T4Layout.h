@@ -115,4 +115,52 @@ uint8_t additionalLayoutIndexForCode(const char* code);
 /// Return the number of supported languages.
 constexpr uint8_t kLanguageCount = 3;
 
+// ── Sentence-level metadata ───────────────────────────────────────────
+//
+// Per-language sentence-handling rules.  Used by the T4 keyboard to
+// auto-capitalise the next word after a sentence-ending punctuation
+// character (for languages that have letter case), and to skip
+// auto-capitalisation for case-less scripts (Hebrew, Arabic) and
+// non-linguistic input (DIGIT).
+
+/// Per-language sentence-handling configuration.
+struct SentenceConfig {
+  /// True when sentences conventionally start with an uppercase letter.
+  /// False for case-less scripts (Hebrew, Arabic) and non-linguistic
+  /// layouts (DIGIT).
+  bool autoCapitalize = true;
+
+  /// Null-terminated **UTF-8** string of sentence-ending characters
+  /// (e.g. ".!?").  Each character may be 1–4 bytes.  The keyboard
+  /// checks this set when punctuation is committed; if the committed
+  /// character is in this set the next word is auto-capitalised
+  /// (provided autoCapitalize is true).  The trailing space that the
+  /// keyboard appends after punctuation is handled by the caller.
+  const char* endChars = ".!?";
+};
+
+/// Check whether a single UTF-8 character (at @p ch, @p byteLen bytes)
+/// is one of the sentence-ending characters in @p endChars.
+/// endChars is walked by complete UTF-8 code points, not bytes.
+inline bool isSentenceEndChar(const char* endChars, const char* ch, uint8_t byteLen) {
+  if (!endChars || !ch || byteLen == 0) return false;
+  const char* p = endChars;
+  while (*p) {
+    unsigned char c0 = static_cast<unsigned char>(*p);
+    uint8_t len = 1;
+    if ((c0 & 0xE0) == 0xC0)
+      len = 2;
+    else if ((c0 & 0xF0) == 0xE0)
+      len = 3;
+    else if ((c0 & 0xF8) == 0xF0)
+      len = 4;
+    if (len == byteLen && __builtin_memcmp(p, ch, byteLen) == 0) return true;
+    p += len;
+  }
+  return false;
+}
+
+/// Return the sentence configuration for @p lang. Never null.
+const SentenceConfig* getSentenceConfig(T4Language lang);
+
 }  // namespace t4

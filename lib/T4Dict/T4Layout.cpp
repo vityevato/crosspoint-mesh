@@ -25,17 +25,24 @@ static constexpr uint8_t kEnGroupLens[4] = {7, 7, 7, 7};
 // the T4Language::ADDITIONAL slot. To add a language: append an entry here
 // (4 letter-group strings + their code-point lengths), ensure its uppercase
 // mapping is covered by kCaseRanges/kCaseExceptions below, add a matching
-// grouping in scripts/build_t4_dict.py, and ship <code>.trie to the SD card.
+// grouping in scripts/build_t4_dict.py, provide a SentenceConfig (endChars
+// for auto-cap + autoCapitalize flag), and ship <code>.trie to the SD card.
 struct AdditionalLayout {
   const char* code;      // T4 code / dictionary filename stem, e.g. "ru"
   const char* i18nCode;  // i18n ISO code for the localized display name, e.g. "RU"
   const char* dictPath;  // SD path to the predictive dictionary
   const char* groups[4];
   uint8_t groupLens[4];
+  SentenceConfig sentenceConfig;
 };
 
 static constexpr AdditionalLayout kAdditionalLayouts[] = {
-    {"ru", "RU", "/.crosspoint/dicts/ru.trie", {"абвгдеёж-", "зийклмно", "прстуфхц", "чшщъыьэюя"}, {9, 8, 8, 9}},
+    {"ru",
+     "RU",
+     "/.crosspoint/dicts/ru.trie",
+     {"абвгдеёж-", "зийклмно", "прстуфхц", "чшщъыьэюя"},
+     {9, 8, 8, 9},
+     {true, ".!?"}},
 };
 static constexpr uint8_t kAdditionalLayoutCount = sizeof(kAdditionalLayouts) / sizeof(kAdditionalLayouts[0]);
 
@@ -358,6 +365,34 @@ uint8_t additionalLayoutIndexForCode(const char* code) {
     }
   }
   return kNoAdditionalLayout;  // null / empty / unknown → no additional layout
+}
+
+// ── Sentence-level configuration ──────────────────────────────────────────
+
+namespace {
+// English uses standard Latin sentence-ending marks and is case-sensitive.
+static constexpr SentenceConfig kEnSentenceConfig = {
+    .autoCapitalize = true,
+    .endChars = ".!?",
+};
+
+// DIGIT — no concept of "sentence", no case.
+static constexpr SentenceConfig kDigitSentenceConfig = {
+    .autoCapitalize = false,
+    .endChars = "",
+};
+}  // namespace
+
+const SentenceConfig* getSentenceConfig(T4Language lang) {
+  switch (lang) {
+    case T4Language::EN:
+      return &kEnSentenceConfig;
+    case T4Language::ADDITIONAL:
+      return &activeAdditional().sentenceConfig;
+    case T4Language::DIGIT:
+      return &kDigitSentenceConfig;
+  }
+  return &kEnSentenceConfig;  // unreachable
 }
 
 }  // namespace t4

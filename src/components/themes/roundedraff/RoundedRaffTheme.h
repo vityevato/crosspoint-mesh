@@ -102,7 +102,9 @@ class RoundedRaffTheme : public BaseTheme {
   void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
                      uint32_t scrollOffsetPx) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
-                       bool inactive = false) const override;
+                       bool inactive1, bool inactive2, bool inactive3, bool inactive4) const override;
+  void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                       const char* btn4) const override;
   void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
                            const char* topBtnLong = nullptr, const char* bottomBtnLong = nullptr) const override;
   int getButtonHintWidth() const override { return 106; }

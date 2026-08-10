@@ -162,7 +162,53 @@ const int* BaseTheme::getButtonXPositions(bool isX3) const {
 }
 
 void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                                const char* btn4, bool inactive) const {
+                                const char* btn4, bool inactive1, bool inactive2, bool inactive3,
+                                bool inactive4) const {
+  const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+
+  const int pageHeight = renderer.getScreenHeight();
+  constexpr int buttonWidth = 106;
+  constexpr int buttonHeight = BaseMetrics::values.buttonHintsHeight;
+  constexpr int buttonY = BaseMetrics::values.buttonHintsHeight;  // Distance from bottom
+  constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
+  const int* buttonPositions = getButtonXPositions(gpio.deviceIsX3());
+  const char* labels[] = {btn1, btn2, btn3, btn4};
+  const bool inactive[] = {inactive1, inactive2, inactive3, inactive4};
+  const int cr = UITheme::getInstance().getMetrics().buttonHintCornerRadius;
+
+  for (int i = 0; i < 4; i++) {
+    // Only draw if the label is non-empty
+    if (labels[i] != nullptr && labels[i][0] != '\0') {
+      const int x = buttonPositions[i];
+      if (cr > 0) {
+        if (inactive[i]) {
+          renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cr, Color::LightGray);
+        } else {
+          renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cr, Color::White);
+        }
+        renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cr, true);
+      } else {
+        if (inactive[i]) {
+          renderer.fillRectDither(x, pageHeight - buttonY, buttonWidth, buttonHeight, Color::LightGray);
+        } else {
+          renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
+        }
+        renderer.drawRect(x, pageHeight - buttonY, buttonWidth, buttonHeight);
+      }
+      constexpr int maxLabelWidth = buttonWidth - 4;
+      auto label = renderer.truncatedText(UI_10_FONT_ID, labels[i], maxLabelWidth);
+      const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, label.c_str());
+      const int textX = x + (buttonWidth - 1 - textWidth) / 2;
+      renderer.drawText(UI_10_FONT_ID, textX, pageHeight - buttonY + textYOffset, label.c_str());
+    }
+  }
+
+  renderer.setOrientation(orig_orientation);
+}
+
+void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                                const char* btn4) const {
   const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
@@ -180,18 +226,10 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
     if (labels[i] != nullptr && labels[i][0] != '\0') {
       const int x = buttonPositions[i];
       if (cr > 0) {
-        if (inactive) {
-          renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cr, Color::LightGray);
-        } else {
-          renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cr, Color::White);
-        }
+        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cr, Color::White);
         renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cr, true);
       } else {
-        if (inactive) {
-          renderer.fillRectDither(x, pageHeight - buttonY, buttonWidth, buttonHeight, Color::LightGray);
-        } else {
-          renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
-        }
+        renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
         renderer.drawRect(x, pageHeight - buttonY, buttonWidth, buttonHeight);
       }
       constexpr int maxLabelWidth = buttonWidth - 4;

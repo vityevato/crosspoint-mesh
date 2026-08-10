@@ -92,7 +92,9 @@ class LyraTheme : public BaseTheme {
                 const std::function<UIIcon(int index)>& rowIcon, const std::function<std::string(int index)>& rowValue,
                 bool highlightValue, const std::function<bool(int index)>& rowDimmed = nullptr) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
-                       bool inactive = false) const override;
+                       bool inactive1, bool inactive2, bool inactive3, bool inactive4) const override;
+  void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                       const char* btn4) const override;
   void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
                            const char* topBtnLong = nullptr, const char* bottomBtnLong = nullptr) const override;
   int getSideButtonDownBottomY() const override;

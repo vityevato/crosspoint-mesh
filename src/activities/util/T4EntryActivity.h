@@ -40,7 +40,7 @@ class T4EntryActivity : public Activity {
   void onComplete();
   void onCancel();
   void handlePunctuation();
-  static bool isAutoCapPunct(const char* punct);
+  static bool isAutoCapPunct(const char* punct, const t4::SentenceConfig& cfg);
   bool isTextInputFull() const;
 
   // Mode transition helpers
@@ -159,7 +159,18 @@ class T4EntryActivity : public Activity {
   t4::T4Mode _userMode;     // User's preferred mode (changed only on manual toggle)
   int _punctIndex;          // 0 = space (just-confirmed), 1-7 = punct
   bool _wordJustConfirmed;  // true after confirmWord, false after next input
-  bool _autoCap;            // next confirmWord should capitalize
+  /// When true, one-shot Shift level 1 was auto-generated (sentence-start)
+  /// and should NOT be consumed on the first letter press.  Manual shift
+  /// sets this in pressLetterGroup after consuming the engine level.
+  bool _autoCap;
+  bool _autoCapFromSentence = false;
+  /// True when the current _autoCap + shift level 1 was triggered by
+  /// sentence-ending punctuation detection (not manual Shift).  Used to
+  /// selectively cancel auto-cap on backspace.
+
+  // Cached sentence config for the current language.  Updated when _lang
+  // changes (cycleLanguage, setLanguage); never null.
+  const t4::SentenceConfig* _sentenceCfg;
 
   // Render buffer (heap-allocated, reused across render calls)
   std::unique_ptr<char[]> _displayBuf;

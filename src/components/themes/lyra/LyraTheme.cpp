@@ -327,7 +327,53 @@ const int* LyraTheme::getButtonXPositions(bool isX3) const {
 }
 
 void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                                const char* btn4, bool inactive) const {
+                                const char* btn4, bool inactive1, bool inactive2, bool inactive3,
+                                bool inactive4) const {
+  const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+
+  const int pageHeight = renderer.getScreenHeight();
+  constexpr int buttonWidth = 80;
+  constexpr int smallButtonHeight = 15;
+  constexpr int buttonHeight = LyraMetrics::values.buttonHintsHeight;
+  constexpr int buttonY = LyraMetrics::values.buttonHintsHeight;  // Distance from bottom
+  constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
+  const int* buttonPositions = getButtonXPositions(gpio.deviceIsX3());
+  const char* labels[] = {btn1, btn2, btn3, btn4};
+  const bool inactive[] = {inactive1, inactive2, inactive3, inactive4};
+
+  for (int i = 0; i < 4; i++) {
+    const int x = buttonPositions[i];
+    if (labels[i] != nullptr && labels[i][0] != '\0') {
+      // Draw the filled background (dithered when inactive) and border for a FULL-sized button
+      if (inactive[i]) {
+        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                                 false, Color::LightGray);
+      } else {
+        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                                 false, Color::White);
+      }
+      renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cornerRadius, true, true, false,
+                               false, true);
+      constexpr int maxLabelWidth = buttonWidth - 4;
+      auto label = renderer.truncatedText(SMALL_FONT_ID, labels[i], maxLabelWidth);
+      const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, label.c_str());
+      const int textX = x + (buttonWidth - 1 - textWidth) / 2;
+      renderer.drawText(SMALL_FONT_ID, textX, pageHeight - buttonY + textYOffset, label.c_str());
+    } else {
+      // Draw the filled background and border for a SMALL-sized button
+      renderer.fillRoundedRect(x, pageHeight - smallButtonHeight, buttonWidth, smallButtonHeight, cornerRadius,
+                               Color::White);
+      renderer.drawRoundedRect(x, pageHeight - smallButtonHeight, buttonWidth, smallButtonHeight, 1, cornerRadius, true,
+                               true, false, false, true);
+    }
+  }
+
+  renderer.setOrientation(orig_orientation);
+}
+
+void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                                const char* btn4) const {
   const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
@@ -343,14 +389,8 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   for (int i = 0; i < 4; i++) {
     const int x = buttonPositions[i];
     if (labels[i] != nullptr && labels[i][0] != '\0') {
-      // Draw the filled background (dithered when inactive) and border for a FULL-sized button
-      if (inactive) {
-        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
-                                 false, Color::LightGray);
-      } else {
-        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
-                                 false, Color::White);
-      }
+      renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                               false, Color::White);
       renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cornerRadius, true, true, false,
                                false, true);
       constexpr int maxLabelWidth = buttonWidth - 4;

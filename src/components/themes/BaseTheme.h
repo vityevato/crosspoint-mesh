@@ -200,7 +200,11 @@ class BaseTheme {
                         bool showPercentage = true) const;  // Right aligned (UI headers)
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const;
   virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                               const char* btn4, bool inactive = false) const;
+                               const char* btn4) const;
+  /// Per-button inactive variant.  Each bool controls one button independently,
+  /// so callers can mix active and inactive hints in a single call.
+  virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                               const char* btn4, bool inactive1, bool inactive2, bool inactive3, bool inactive4) const;
   /// @p topBtnLong / @p bottomBtnLong, when non-empty, draw an extra gray
   /// (dithered) capsule for the corresponding side button's long-press action
   /// (same convention as inactive hints).

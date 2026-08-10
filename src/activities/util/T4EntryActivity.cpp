@@ -88,6 +88,7 @@ void T4EntryActivity::onEnter() {
   }
 
   _inputEngine.setLanguage(_lang);
+  _sentenceCfg = t4::getSentenceConfig(_lang);
 
   // Apply the user's preferred mode for this language.  When the language
   // has no dictionary (DIGIT, or a missing .trie), the effective mode is
@@ -100,9 +101,51 @@ void T4EntryActivity::onEnter() {
     _inputEngine.setConfirmedText(_initialText.c_str());
   }
 
+  // ── Auto-cap on entry ─────────────────────────────────────────────
+  // When the field opens empty, the first word is the start of a sentence.
+  // When initial text ends with sentence-ending punctuation (.!? followed
+  // by optional spaces), the next typed word is also the start of a sentence.
+  // Password and URL fields are excluded — capitalization is meaningless there.
+  if (_inputType == InputType::Text && _sentenceCfg->autoCapitalize) {
+    if (_initialText.empty()) {
+      if (_inputEngine.getShiftLevel() == 0) {
+        _inputEngine.setShiftLevel(1);
+        _autoCap = true;
+        _autoCapFromSentence = true;
+      }
+    } else {
+      // Scan backwards past trailing spaces, then find the last non-space
+      // UTF-8 character and check it against the sentence-ending set.
+      const char* t = _initialText.c_str();
+      int pos = static_cast<int>(_initialText.size()) - 1;
+      while (pos >= 0 && t[pos] == ' ') pos--;
+      if (pos >= 0) {
+        // Walk back past UTF-8 continuation bytes (0x80–0xBF).
+        int charStart = pos;
+        while (charStart > 0 && (static_cast<unsigned char>(t[charStart]) & 0xC0) == 0x80) {
+          charStart--;
+        }
+        unsigned char c0 = static_cast<unsigned char>(t[charStart]);
+        uint8_t blen = 1;
+        if ((c0 & 0xE0) == 0xC0)
+          blen = 2;
+        else if ((c0 & 0xF0) == 0xE0)
+          blen = 3;
+        else if ((c0 & 0xF8) == 0xF0)
+          blen = 4;
+        if (t4::isSentenceEndChar(_sentenceCfg->endChars, t + charStart, blen)) {
+          if (_inputEngine.getShiftLevel() == 0) {
+            _inputEngine.setShiftLevel(1);
+            _autoCap = true;
+            _autoCapFromSentence = true;
+          }
+        }
+      }
+    }
+  }
+
   _punctIndex = 0;
   _wordJustConfirmed = false;
-  _autoCap = false;
   _candidateScrollX = 0;
   requestUpdate();
 }
@@ -235,6 +278,7 @@ bool T4EntryActivity::handleLongPresses() {
 
     _inputEngine.reset();
     _inputEngine.setLanguage(_lang);
+    _sentenceCfg = t4::getSentenceConfig(_lang);
 
     // Restore text
     if (!savedText.empty()) {
@@ -336,12 +380,13 @@ void T4EntryActivity::pressLetterGroup(uint8_t groupNum) {
   _punctIndex = 0;
   _wordJustConfirmed = false;
   _candidateScrollX = 0;
-  // One-shot Shift: consume after first letter so the key caps
-  // revert to lowercase; _autoCap preserves the intent for the
-  // candidate display (applyWordCase checks _autoCap).
+  // One-shot Shift: consume engine level after first letter so the
+  // key caps revert to lowercase.  _autoCap preserves the intent for
+  // applyWordCase — both manual Shift and auto-cap (sentence-start)
+  // use the same path.
   if (_mode == t4::T4Mode::PREDICT && _inputEngine.getShiftLevel() == 1) {
-    _autoCap = true;
     _inputEngine.setShiftLevel(0);
+    _autoCap = true;
   }
   requestUpdate();
 }
@@ -429,9 +474,37 @@ void T4EntryActivity::handleShortPressReleases() {
                 _inputEngine.getConfirmedTextLength());
         _inputEngine.backspace();
         _lang = _inputEngine.getLanguage();
+        _sentenceCfg = t4::getSentenceConfig(_lang);
         _punctIndex = 0;
         _wordJustConfirmed = false;
         _candidateScrollX = 0;
+        // When the sentence-ending punctuation that triggered auto-cap
+        // is backspaced away, cancel the auto-cap.
+        if (_autoCapFromSentence) {
+          const char* t = _inputEngine.getConfirmedText();
+          int len = static_cast<int>(strlen(t));
+          int pos = len - 1;
+          while (pos >= 0 && t[pos] == ' ') pos--;
+          bool stillEnds = false;
+          if (pos >= 0) {
+            int cs = pos;
+            while (cs > 0 && (static_cast<unsigned char>(t[cs]) & 0xC0) == 0x80) cs--;
+            unsigned char c0 = static_cast<unsigned char>(t[cs]);
+            uint8_t blen = 1;
+            if ((c0 & 0xE0) == 0xC0)
+              blen = 2;
+            else if ((c0 & 0xF0) == 0xE0)
+              blen = 3;
+            else if ((c0 & 0xF8) == 0xF0)
+              blen = 4;
+            stillEnds = t4::isSentenceEndChar(_sentenceCfg->endChars, t + cs, blen);
+          }
+          if (!stillEnds) {
+            _autoCap = false;
+            _autoCapFromSentence = false;
+            if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
+          }
+        }
         requestUpdate();
       }
     } else {
@@ -462,18 +535,42 @@ void T4EntryActivity::handleBackspaceHoldRepeat() {
   unsigned long held = mappedInput.getHeldTime();
   if (held < BACKSPACE_INITIAL_DELAY_MS) return;
 
-  if (_backspaceLastActionMs == 0) {
-    // First deletion after initial delay
-    LOG_DBG("T4", "loop: CMD backspace hold start (held=%lums)", held);
+  if (_backspaceLastActionMs == 0 || millis() - _backspaceLastActionMs >= BACKSPACE_REPEAT_MS) {
+    if (_backspaceLastActionMs == 0) {
+      LOG_DBG("T4", "loop: CMD backspace hold start (held=%lums)", held);
+    }
     _inputEngine.backspace();
     _lang = _inputEngine.getLanguage();
+    _sentenceCfg = t4::getSentenceConfig(_lang);
     _backspaceLastActionMs = millis();
-    requestUpdate();
-  } else if (millis() - _backspaceLastActionMs >= BACKSPACE_REPEAT_MS) {
-    // Repeat deletion (word-level)
-    _inputEngine.backspace();
-    _lang = _inputEngine.getLanguage();
-    _backspaceLastActionMs = millis();
+
+    // When the sentence-ending punctuation that triggered auto-cap
+    // is backspaced away, cancel the auto-cap.
+    if (_autoCapFromSentence) {
+      const char* t = _inputEngine.getConfirmedText();
+      int len = static_cast<int>(strlen(t));
+      int pos = len - 1;
+      while (pos >= 0 && t[pos] == ' ') pos--;
+      bool stillEnds = false;
+      if (pos >= 0) {
+        int cs = pos;
+        while (cs > 0 && (static_cast<unsigned char>(t[cs]) & 0xC0) == 0x80) cs--;
+        unsigned char c0 = static_cast<unsigned char>(t[cs]);
+        uint8_t blen = 1;
+        if ((c0 & 0xE0) == 0xC0)
+          blen = 2;
+        else if ((c0 & 0xF0) == 0xE0)
+          blen = 3;
+        else if ((c0 & 0xF8) == 0xF0)
+          blen = 4;
+        stillEnds = t4::isSentenceEndChar(_sentenceCfg->endChars, t + cs, blen);
+      }
+      if (!stillEnds) {
+        _autoCap = false;
+        _autoCapFromSentence = false;
+        if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
+      }
+    }
     requestUpdate();
   }
 }
@@ -496,11 +593,27 @@ void T4EntryActivity::pollTimeBasedState() {
 // ── Button Dispatch ──────────────────────────────────────────────────────
 
 void T4EntryActivity::onComplete() {
+  // MULTI_TAP: commit any still-cycling letter into confirmed text so it
+  // isn't silently dropped when the user long-presses Confirm before the
+  // 800 ms multi-tap timeout expires.  In PREDICT mode _activeButton is
+  // always 0, so this is a harmless no-op.
+  _inputEngine.fixMultiTapLetter();
+
   std::string result(_inputEngine.getConfirmedText());
   // In PREDICT: append the still-unconfirmed candidate to the engine text
   if (_mode == t4::T4Mode::PREDICT) {
     const char* candidate = _inputEngine.getCurrentCandidate();
     if (candidate && candidate[0] != '\0') result += candidate;
+  }
+  // When the last action was a word confirmation (space/punctuation via
+  // handlePunctuation), a trailing space was appended as a word separator
+  // for continued typing.  Strip it on exit — it is never semantically
+  // meaningful at the end of a Text result.  Password and URL fields are
+  // excluded: a trailing space there could be intentional.
+  // _wordJustConfirmed is set by handlePunctuation() in both MULTI_TAP
+  // and PREDICT modes, so this covers both.
+  if (_inputType == InputType::Text && _wordJustConfirmed && !result.empty() && result.back() == ' ') {
+    result.pop_back();
   }
   LOG_DBG("T4", "onComplete: mode=%d, result='%s'", static_cast<int>(_mode), result.c_str());
   learnIntoLexicon(result);
@@ -529,10 +642,22 @@ bool T4EntryActivity::isTextInputFull() const {
 constexpr const char* T4EntryActivity::PUNCT_CYCLE[];
 // Note: constexpr static arrays need out-of-class definition in C++17
 
-bool T4EntryActivity::isAutoCapPunct(const char* punct) {
-  if (!punct) return false;
-  // After ". ", "! ", "? " → auto-capitalize next word
-  return (punct[0] == '.' || punct[0] == '!' || punct[0] == '?') && punct[1] == ' ';
+bool T4EntryActivity::isAutoCapPunct(const char* punct, const t4::SentenceConfig& cfg) {
+  if (!punct || punct[0] == '\0') return false;
+  if (!cfg.autoCapitalize) return false;
+  // Check that the punctuation is followed by a space (the keyboard
+  // always appends " " after punctuation).
+  if (punct[1] != ' ') return false;
+  // Determine the UTF-8 byte length of the first character in punct.
+  unsigned char c0 = static_cast<unsigned char>(punct[0]);
+  uint8_t blen = 1;
+  if ((c0 & 0xE0) == 0xC0)
+    blen = 2;
+  else if ((c0 & 0xF0) == 0xE0)
+    blen = 3;
+  else if ((c0 & 0xF8) == 0xF0)
+    blen = 4;
+  return t4::isSentenceEndChar(cfg.endChars, punct, blen);
 }
 
 void T4EntryActivity::handlePunctuation() {
@@ -560,6 +685,14 @@ void T4EntryActivity::handlePunctuation() {
       _punctIndex = (_punctIndex + 1) % PUNCT_COUNT;
       text += PUNCT_CYCLE[_punctIndex];
       _lastConfirmMs = millis();
+      // Sentence-ending punctuation → auto-cap next word (Text only).
+      if (_inputType == InputType::Text && isAutoCapPunct(PUNCT_CYCLE[_punctIndex], *_sentenceCfg)) {
+        if (_inputEngine.getShiftLevel() == 0) {
+          _inputEngine.setShiftLevel(1);
+          _autoCap = true;
+          _autoCapFromSentence = true;
+        }
+      }
       LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, PUNCT_CYCLE[_punctIndex],
               text.c_str());
     } else {
@@ -597,6 +730,14 @@ void T4EntryActivity::handlePunctuation() {
       if (text.length() + nextLen <= decltype(_inputEngine)::kMaxTextLen) {
         _punctIndex = nextIdx;
         text += nextPunct;
+        // Sentence-ending punctuation → auto-cap next word (Text only).
+        if (_inputType == InputType::Text && isAutoCapPunct(nextPunct, *_sentenceCfg)) {
+          if (_inputEngine.getShiftLevel() == 0) {
+            _inputEngine.setShiftLevel(1);
+            _autoCap = true;
+            _autoCapFromSentence = true;
+          }
+        }
       }
       _lastConfirmMs = millis();
       LOG_DBG("T4", "handlePunct: PREDICT cycle punct[%d]='%s' → text='%s'", _punctIndex, PUNCT_CYCLE[_punctIndex],
@@ -621,16 +762,13 @@ void T4EntryActivity::handlePunctuation() {
     // Consume the one-shot state: auto-cap and one-shot Shift last for a
     // single word; Caps Lock stays on until toggled off.
     _autoCap = false;
+    _autoCapFromSentence = false;
     if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
 
     if (!text.empty() && text.back() != ' ') {
       text += ' ';
     }
     text += word;
-
-    if (isAutoCapPunct(PUNCT_CYCLE[_punctIndex])) {
-      _autoCap = true;
-    }
 
     // Reset predictor sequence for next word
     _inputEngine.confirmWord();
@@ -791,12 +929,14 @@ void T4EntryActivity::learnIntoLexicon(const std::string& text) {
 // ── Shift / Uppercase ────────────────────────────────────────────────────
 
 void T4EntryActivity::cycleShift() {
-  // All modes cycle Off → Shift → Caps → Off. In Predict, Shift capitalizes
-  // the first letter of the confirmed word and Caps uppercases the whole
-  // word; the level carries over unchanged between modes.
+  // All modes cycle Off → Shift → Caps → Off.  When _autoCap is set
+  // it means level 1 was auto-generated — clear it so the user's manual
+  // action takes over, then cycle from the engine's current level.
+  _autoCap = false;
+  _autoCapFromSentence = false;
   uint8_t level = (_inputEngine.getShiftLevel() + 1) % 3;
   _inputEngine.setShiftLevel(level);
-  LOG_DBG("T4", "cycleShift: mode=%d level=%u", static_cast<int>(_mode), level);
+  LOG_DBG("T4", "cycleShift: mode=%d → level=%u", static_cast<int>(_mode), level);
 }
 
 std::string T4EntryActivity::applyWordCase(const char* word) const {
@@ -804,7 +944,10 @@ std::string T4EntryActivity::applyWordCase(const char* word) const {
 
   const uint8_t level = _inputEngine.getShiftLevel();
   const bool capsLock = (level == 2);
-  const bool firstOnly = (level == 1) || _autoCap;
+  // One-shot Shift and auto-cap are only meaningful for languages
+  // that have letter case (English, Russian, etc.).  For DIGIT and
+  // case-less scripts (Hebrew) they produce no change.
+  const bool firstOnly = ((level == 1) || _autoCap) && _sentenceCfg->autoCapitalize;
   if (!capsLock && !firstOnly) return std::string(word);
 
   // Caps: uppercase every letter. Shift/auto-cap: only the first letter.
@@ -1612,23 +1755,24 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
   // ── Button hints ──
   if (isCycle) {
     // Cycle mode: Back/Confirm inactive (long-press labels, short press blocked),
-    // Left/Right active (candidate navigation). Draw in two passes to
-    // support mixed inactive flags per button.
+    // Left/Right active (candidate navigation). Use per-button inactive flags
+    // so each button gets the correct active/inactive style in a single pass.
     const auto labels =
         mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LEFT), tr(STR_T4_RIGHT));
-    GUI.drawButtonHints(renderer, "", "", labels.btn3, labels.btn4, /*inactive=*/false);
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, "", "", /*inactive=*/true);
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4,
+                        /*inactive1=*/true, /*inactive2=*/true, /*inactive3=*/false, /*inactive4=*/false);
   } else {
     // Long-press hints (inactive style). Hide the "Mode" hint when the
     // input type is not Text or the language has no dictionary — Predict
     // cannot be enabled there.
     const char* modeHint = (_inputType == InputType::Text && languageSupportsPredict(_lang)) ? tr(STR_T4_MODE_BTN) : "";
     const auto labels = mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG), modeHint);
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, /*inactive=*/true);
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4,
+                        /*inactive1=*/true, /*inactive2=*/true, /*inactive3=*/true, /*inactive4=*/true);
   }
 
   // ── Side button hints ──
   // Gray long-press capsule next to Space: holding Down toggles Shift/Caps.
   const char* leftLabel = tr(STR_T4_BACKSPACE);
-  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE), "Test", "Aa");
+  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE), "", "Aa");
 }

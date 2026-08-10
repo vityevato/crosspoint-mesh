@@ -386,7 +386,8 @@ const int* RoundedRaffTheme::getButtonXPositions(bool isX3) const {
 }
 
 void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                                       const char* btn4, bool inactive) const {
+                                       const char* btn4, bool inactive1, bool inactive2, bool inactive3,
+                                       bool inactive4) const {
   const GfxRenderer::Orientation origOrientation = renderer.getOrientation();
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
@@ -412,14 +413,73 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
   const std::string downText =
       (btn4 && btn4[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn4, maxLabelWidth) : "";
 
-  // Ensure button hints always "win" visually even if other elements accidentally render into this area.
-  if (inactive) {
-    renderer.fillRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::LightGray);
-    renderer.fillRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::LightGray);
-  } else {
+  // Per-button inactive: a group renders as active (white) when at least
+  // one non-empty label in it is marked active; otherwise light-gray.
+  const bool leftActive = (!backDisabled && !inactive1) || (!selectText.empty() && !inactive2);
+  const bool rightActive = (!upText.empty() && !inactive3) || (!downText.empty() && !inactive4);
+
+  if (leftActive) {
     renderer.fillRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::White);
-    renderer.fillRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::White);
+  } else {
+    renderer.fillRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::LightGray);
   }
+  if (rightActive) {
+    renderer.fillRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::White);
+  } else {
+    renderer.fillRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::LightGray);
+  }
+
+  renderer.drawRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, 2, kBottomRadius, true);
+  const int selectWidth = renderer.getTextWidth(kGuideFontId, selectText.c_str(), EpdFontFamily::REGULAR);
+  const int downWidth = renderer.getTextWidth(kGuideFontId, downText.c_str(), EpdFontFamily::REGULAR);
+
+  const int backX = leftGroupX + innerEdgePadding;
+  const int selectX = leftGroupX + groupWidth - innerEdgePadding - selectWidth;
+  const int upX = rightGroupX + innerEdgePadding;
+  const int downX = rightGroupX + groupWidth - innerEdgePadding - downWidth;
+
+  if (!backDisabled) {
+    renderer.drawText(kGuideFontId, backX, textY, backLabel.c_str(), true, EpdFontFamily::REGULAR);
+  }
+  renderer.drawText(kGuideFontId, selectX, textY, selectText.c_str(), true, EpdFontFamily::REGULAR);
+
+  renderer.drawRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, 2, kBottomRadius, true);
+
+  renderer.drawText(kGuideFontId, upX, textY, upText.c_str(), true, EpdFontFamily::REGULAR);
+  renderer.drawText(kGuideFontId, downX, textY, downText.c_str(), true, EpdFontFamily::REGULAR);
+
+  renderer.setOrientation(origOrientation);
+}
+
+void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                                       const char* btn4) const {
+  const GfxRenderer::Orientation origOrientation = renderer.getOrientation();
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int sidePadding = 20;
+  const int groupGap = 10;
+  const int bottomMargin = 10;
+  const int hintHeight = RoundedRaffMetrics::values.buttonHintsHeight - 10;  // 30px total guide height
+  const int groupWidth = (pageWidth - sidePadding * 2 - groupGap) / 2;
+  const int hintY = pageHeight - hintHeight - bottomMargin;
+  const int textY = hintY + (hintHeight - renderer.getLineHeight(kGuideFontId)) / 2;
+
+  const bool backDisabled = (btn1 == nullptr || btn1[0] == '\0');
+  const int leftGroupX = sidePadding;
+  const int rightGroupX = leftGroupX + groupWidth + groupGap;
+  constexpr int innerEdgePadding = 16;
+  const int maxLabelWidth = groupWidth - innerEdgePadding * 2;
+  const std::string backLabel = backDisabled ? "" : renderer.truncatedText(kGuideFontId, btn1, maxLabelWidth);
+  const std::string selectText =
+      (btn2 && btn2[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn2, maxLabelWidth) : "";
+  const std::string upText = (btn3 && btn3[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn3, maxLabelWidth) : "";
+  const std::string downText =
+      (btn4 && btn4[0] != '\0') ? renderer.truncatedText(kGuideFontId, btn4, maxLabelWidth) : "";
+
+  renderer.fillRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::White);
+  renderer.fillRoundedRect(rightGroupX, hintY, groupWidth, hintHeight, kBottomRadius, Color::White);
 
   renderer.drawRoundedRect(leftGroupX, hintY, groupWidth, hintHeight, 2, kBottomRadius, true);
   const int selectWidth = renderer.getTextWidth(kGuideFontId, selectText.c_str(), EpdFontFamily::REGULAR);
