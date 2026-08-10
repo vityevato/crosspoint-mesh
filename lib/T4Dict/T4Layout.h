@@ -50,6 +50,12 @@ uint8_t buttonForLetter(T4Language lang, const char* letter, uint8_t byteLen);
 /// .cpp — no change to this API is needed.
 uint8_t upperLetterUtf8(const char* in, uint8_t inLen, char* out);
 
+/// Lowercase a single UTF-8 letter (1–4 bytes) — the inverse of
+/// upperLetterUtf8(), driven by the same tables. Any code point without a
+/// mapping is copied unchanged. Used to store user-lexicon words in a
+/// canonical form so "Hello" and "hello" share one entry.
+uint8_t lowerLetterUtf8(const char* in, uint8_t inLen, char* out);
+
 /// Return a 2-character ISO language code for the given language.
 const char* getLanguageCode(T4Language lang);
 

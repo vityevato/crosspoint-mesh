@@ -9,6 +9,7 @@
 #include "T4Dictionary.h"
 #include "T4InputEngine.h"
 #include "T4Layout.h"
+#include "T4UserLexicon.h"
 #include "activities/Activity.h"
 
 class MappedInputManager;
@@ -27,6 +28,10 @@ class T4EntryActivity : public Activity {
   static constexpr unsigned long LONG_PRESS_MS = 500;
   static constexpr unsigned long BACKSPACE_INITIAL_DELAY_MS = 500;
   static constexpr unsigned long BACKSPACE_REPEAT_MS = 150;
+
+  // Learned-word store, shared by every Text field (see docs/file-formats.md).
+  static constexpr const char* USER_LEXICON_DIR = "/.crosspoint/dicts";
+  static constexpr const char* USER_LEXICON_PATH = "/.crosspoint/dicts/user_words.bin";
 
   // Punctuation cycle
   static constexpr const char* PUNCT_CYCLE[] = {" ", ". ", ", ", "! ", "? ", ": ", "; ", "... "};
@@ -49,6 +54,21 @@ class T4EntryActivity : public Activity {
   // dictionary file exists on the SD card. DIGIT (and any language whose
   // .trie is missing) returns false, meaning that language is Multi-tap only.
   bool languageSupportsPredict(t4::T4Language lang) const;
+
+  // ── User lexicon ──────────────────────────────────────────────────────
+
+  // Allocate the lexicon and read it from SD, then attach it to the input
+  // engine. Called from onEnter() for Text input only — password and URL
+  // fields must never contribute to (or be predicted from) the lexicon.
+  void loadUserLexicon();
+
+  // Write the lexicon back to SD when it changed. Called from onExit(),
+  // so the whole session costs a single SD write.
+  void saveUserLexicon();
+
+  // Learn the words of the confirmed text. Words the field started with
+  // are skipped — they were not typed by the user.
+  void learnIntoLexicon(const std::string& text);
 
   // Shift/uppercase helpers
   void cycleShift();
@@ -143,6 +163,10 @@ class T4EntryActivity : public Activity {
 
   // Render buffer (heap-allocated, reused across render calls)
   std::unique_ptr<char[]> _displayBuf;
+
+  // Learned words, merged into the predictions. Null for password and URL
+  // input, which neither read from nor write to the lexicon.
+  std::unique_ptr<t4::T4UserLexicon> _lexicon;
 
   // Max letter-block height across all cycle languages (EN, ADDITIONAL if
   // active, DIGIT). Computed once in onEnter() after the additional

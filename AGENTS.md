@@ -79,9 +79,12 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
     - `lib/Memory/` — `makeUniqueNoThrow` allocation helper
     - `lib/MiniBidi/` — bidirectional text layout (Arabic, Hebrew)
     - `lib/T4Dict/` — T9‑style predictive text input engine (dictionary
-      lookup, trie layout, input engine). Pre‑built dictionaries are in
+      lookup, trie layout, input engine, learned-word lexicon).
+      Pre‑built dictionaries are in
       `t4dicts/` (`en.trie`, `ru.trie`); source word lists can be obtained
-      from <https://github.com/hermitdave/FrequencyWords>.
+      from <https://github.com/hermitdave/FrequencyWords>. Words the user
+      types are learned into `/.crosspoint/dicts/user_words.bin` (see
+      [docs/file-formats.md](docs/file-formats.md)).
 - **Storage**: SD card (SdFat via `HalStorage`). No database.
   Settings persist as `/settings.json`. EPUB caches persist as
   binary files under `.crosspoint/` on the SD card.

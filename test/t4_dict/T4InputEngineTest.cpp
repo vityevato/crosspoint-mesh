@@ -9,6 +9,7 @@
 // We supply our own MockDictionary.
 #include "T4Dict/T4InputEngine.h"
 #include "T4Dict/T4Layout.h"
+#include "T4Dict/T4UserLexicon.h"
 
 using namespace t4;
 
@@ -499,4 +500,68 @@ TEST_F(T4InputEngineTest, PollNoOpInPredict) {
   // Should not affect Predict mode
   EXPECT_EQ(predictor.getMode(), T4Mode::PREDICT);
   EXPECT_GT(predictor.getSequenceLength(), 0u);
+}
+
+// ── User lexicon merge ──────────────────────────────────────────────────
+
+TEST_F(T4InputEngineTest, UserWordIsPredictedWhereDictionaryDeadEnds) {
+  // "lit" = l(2) i(2) t(4) — the mock trie has no child for the second
+  // press, so without the lexicon this sequence has no candidates.
+  T4UserLexicon lexicon;
+  ASSERT_TRUE(lexicon.learnWord(T4Language::EN, "lit", 3));
+  predictor.setUserLexicon(&lexicon);
+
+  ASSERT_TRUE(predictor.pressButton(2));
+  EXPECT_FALSE(predictor.pressButton(2));  // dictionary dead end
+  EXPECT_FALSE(predictor.pressButton(4));
+
+  EXPECT_EQ(predictor.getCandidateCount(), 1u);
+  EXPECT_STREQ(predictor.getCurrentCandidate(), "lit");
+}
+
+TEST_F(T4InputEngineTest, OftenUsedWordOutranksDictionaryOrder) {
+  // "home" precedes "hope" in the mock's static frequency order.
+  T4UserLexicon lexicon;
+  ASSERT_TRUE(lexicon.learnWord(T4Language::EN, "hope", 4));
+  ASSERT_TRUE(lexicon.learnWord(T4Language::EN, "hope", 4));  // score 2 = strong
+  predictor.setUserLexicon(&lexicon);
+
+  ASSERT_TRUE(predictor.pressButton(2));  // h
+  ASSERT_TRUE(predictor.pressButton(3));  // o
+  ASSERT_TRUE(predictor.pressButton(3));  // m/p
+  ASSERT_TRUE(predictor.pressButton(1));  // e
+
+  // The dictionary copy of "hope" is hidden, so the count is unchanged.
+  ASSERT_EQ(predictor.getCandidateCount(), 2u);
+  EXPECT_STREQ(predictor.getCandidate(0), "hope");
+  EXPECT_STREQ(predictor.getCandidate(1), "home");
+}
+
+TEST_F(T4InputEngineTest, FirstUseDoesNotDisplaceBestDictionaryWord) {
+  T4UserLexicon lexicon;
+  ASSERT_TRUE(lexicon.learnWord(T4Language::EN, "hope", 4));  // score 1 = weak
+  predictor.setUserLexicon(&lexicon);
+
+  ASSERT_TRUE(predictor.pressButton(2));
+  ASSERT_TRUE(predictor.pressButton(3));
+  ASSERT_TRUE(predictor.pressButton(3));
+  ASSERT_TRUE(predictor.pressButton(1));
+
+  ASSERT_EQ(predictor.getCandidateCount(), 2u);
+  EXPECT_STREQ(predictor.getCandidate(0), "home");
+  EXPECT_STREQ(predictor.getCandidate(1), "hope");
+}
+
+TEST_F(T4InputEngineTest, DetachingLexiconRestoresDictionaryOnlyView) {
+  T4UserLexicon lexicon;
+  ASSERT_TRUE(lexicon.learnWord(T4Language::EN, "lit", 3));
+  predictor.setUserLexicon(&lexicon);
+
+  ASSERT_TRUE(predictor.pressButton(2));
+  predictor.pressButton(2);
+  predictor.pressButton(4);
+  ASSERT_EQ(predictor.getCandidateCount(), 1u);
+
+  predictor.setUserLexicon(nullptr);
+  EXPECT_EQ(predictor.getCandidateCount(), 0u);
 }

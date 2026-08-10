@@ -614,7 +614,7 @@ void MeshCoreThreadActivity::sendMessage() {
   snprintf(title, sizeof(title), tr(STR_MESHCORE_SEND_TO), threadName);
   startActivityForResult(
       std::make_unique<T4EntryActivity>(renderer, mappedInput, title,
-                                        "1\n2\n3\n4\n5\n6\nNext1\n2\n3\n4\n5\n6\nNext1\n2\n3\n4\n5\n6\nNext",
+                                        "",
                                         MESHCORE_SEND_CHAR_LIMIT, InputType::Text),
       [this, messenger](const ActivityResult& result) mutable { messenger.onSendComplete(*this, result); });
 }

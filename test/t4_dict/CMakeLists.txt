@@ -34,6 +34,7 @@ gtest_discover_tests(T4LayoutTest)
 add_executable(T4InputEngineTest
   T4InputEngineTest.cpp
   ${REPO_ROOT}/lib/T4Dict/T4Layout.cpp
+  ${REPO_ROOT}/lib/T4Dict/T4UserLexicon.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../stubs/HardwareSerial.cpp
 )
 target_include_directories(T4InputEngineTest PRIVATE
@@ -46,3 +47,19 @@ target_link_libraries(T4InputEngineTest PRIVATE
   GTest::gtest_main
 )
 gtest_discover_tests(T4InputEngineTest)
+
+# ── T4UserLexicon tests (pure — no HalStorage, no dictionary) ────────────
+add_executable(T4UserLexiconTest
+  T4UserLexiconTest.cpp
+  ${REPO_ROOT}/lib/T4Dict/T4Layout.cpp
+  ${REPO_ROOT}/lib/T4Dict/T4UserLexicon.cpp
+)
+target_include_directories(T4UserLexiconTest PRIVATE
+  ${REPO_ROOT}/lib/T4Dict
+  ${REPO_ROOT}/lib
+)
+target_link_libraries(T4UserLexiconTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+gtest_discover_tests(T4UserLexiconTest)

@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "T4Layout.h"
+#include "T4UserLexicon.h"
 
 // Forward declaration — T4Dictionary.h pulls in HalStorage which may not
 // be available in all test environments. Concrete instantiation happens in
@@ -83,6 +84,17 @@ class T4InputEngine {
   /// Retrieve a specific candidate by index.
   /// @return candidate word, or nullptr if index is out of range.
   const char* getCandidate(uint16_t index);
+
+  // ── User lexicon ──────────────────────────────────────────────────
+
+  /// Attach a user lexicon (may be nullptr to detach). The engine does not
+  /// own it; the caller must keep it alive for the engine's lifetime.
+  /// Words it holds are merged into the candidate list, letting words
+  /// absent from the .trie be predicted and often-used words rank first.
+  void setUserLexicon(T4UserLexicon* lexicon) {
+    _lexicon = lexicon;
+    refreshUserMatches();
+  }
 
   // ── Sequence (for UI display) ─────────────────────────────────────
 
@@ -179,8 +191,20 @@ class T4InputEngine {
   uint8_t _sequence[kMaxSeqLen + 1] = {};
   uint8_t _seqLen = 0;
   uint16_t _candidateIndex = 0;
-  uint16_t _candidateCount = 0;
+  uint16_t _candidateCount = 0;  // merged: user matches + visible dictionary
   bool _candidatesLoaded = false;
+
+  // Merged candidate view. User matches are ranked ahead of the dictionary
+  // (strong ones ahead of its first entry, weak ones right after it), and
+  // dictionary entries duplicating a user word are hidden.
+  T4UserLexicon* _lexicon = nullptr;
+  uint16_t _dictCount = 0;    // raw dictionary candidates
+  uint16_t _dictVisible = 0;  // dictionary candidates after dedup
+  uint16_t _userEntry[T4UserLexicon::kMaxMatches] = {};
+  uint8_t _userCount = 0;   // matching lexicon entries
+  uint8_t _userStrong = 0;  // leading entries with score >= kStrongScore
+  uint16_t _dictSkip[T4UserLexicon::kMaxMatches] = {};
+  uint8_t _dictSkipCount = 0;
 
   // Multi-tap state
   uint8_t _activeButton = 0;
@@ -216,6 +240,20 @@ class T4InputEngine {
   void clearSequence();
   void loadDictionaryForLanguage(T4Language lang);
   const char* dictPathForLanguage(T4Language lang);
+
+  /// Load the current node's dictionary candidates and rebuild the merged
+  /// candidate view. Safe to call without a dictionary.
+  void reloadCandidates();
+
+  /// Rebuild the user-lexicon part of the merged view for the current
+  /// sequence and recompute _candidateCount.
+  void refreshUserMatches();
+
+  /// Dictionary candidate at @p visibleIndex, skipping entries hidden
+  /// because a user-lexicon word already covers them.
+  const char* dictCandidateAt(uint16_t visibleIndex);
+
+  bool isSkippedDictIndex(uint16_t index) const;
 
   /// Detect the dominant language of a UTF-8 word by inspecting lead bytes.
   /// Cyrillic (0xD0–0xD1) → RU; otherwise EN. Returns EN for empty input.
@@ -258,8 +296,90 @@ uint16_t T4InputEngine<Dict>::getCandidateCount() const {
 
 template <typename Dict>
 const char* T4InputEngine<Dict>::getCandidate(uint16_t index) {
-  if (!_dict || !_candidatesLoaded || index >= _candidateCount) return nullptr;
-  return _dict->getCandidate(index);
+  if (index >= _candidateCount) return nullptr;
+
+  // Merged order: strong user words, best dictionary word, weak user
+  // words, remaining dictionary words.
+  if (index < _userStrong) return _lexicon->getWord(_userEntry[index]);
+
+  uint16_t rest = static_cast<uint16_t>(index - _userStrong);
+  const bool hasDictHead = (_dictVisible > 0);
+  if (hasDictHead) {
+    if (rest == 0) return dictCandidateAt(0);
+    rest--;
+  }
+
+  const uint8_t weak = static_cast<uint8_t>(_userCount - _userStrong);
+  if (rest < weak) return _lexicon->getWord(_userEntry[_userStrong + rest]);
+  rest = static_cast<uint16_t>(rest - weak);
+  return dictCandidateAt(static_cast<uint16_t>(rest + (hasDictHead ? 1 : 0)));
+}
+
+template <typename Dict>
+bool T4InputEngine<Dict>::isSkippedDictIndex(uint16_t index) const {
+  for (uint8_t i = 0; i < _dictSkipCount; i++) {
+    if (_dictSkip[i] == index) return true;
+  }
+  return false;
+}
+
+template <typename Dict>
+const char* T4InputEngine<Dict>::dictCandidateAt(uint16_t visibleIndex) {
+  if (!_dict || !_candidatesLoaded) return nullptr;
+  uint16_t seen = 0;
+  for (uint16_t i = 0; i < _dictCount; i++) {
+    if (isSkippedDictIndex(i)) continue;
+    if (seen == visibleIndex) return _dict->getCandidate(i);
+    seen++;
+  }
+  return nullptr;
+}
+
+template <typename Dict>
+void T4InputEngine<Dict>::reloadCandidates() {
+  _candidatesLoaded = false;
+  _dictCount = 0;
+  if (_dict) {
+    _candidatesLoaded = _dict->loadCandidates();
+    if (_candidatesLoaded) _dictCount = _dict->getCandidateCount();
+  }
+  refreshUserMatches();
+}
+
+template <typename Dict>
+void T4InputEngine<Dict>::refreshUserMatches() {
+  _userCount = 0;
+  _userStrong = 0;
+  _dictSkipCount = 0;
+  _dictVisible = _dictCount;
+
+  if (_lexicon && _mode == T4Mode::PREDICT && _seqLen > 0 && _lang != T4Language::DIGIT) {
+    _userCount = _lexicon->findMatches(_lang, _sequence, _seqLen, _userEntry, T4UserLexicon::kMaxMatches);
+    while (_userStrong < _userCount && _lexicon->getScore(_userEntry[_userStrong]) >= T4UserLexicon::kStrongScore) {
+      _userStrong++;
+    }
+
+    // Hide dictionary candidates a user word already covers, so a word the
+    // user typed often is promoted rather than duplicated.
+    if (_candidatesLoaded && _dict) {
+      for (uint8_t u = 0; u < _userCount && _dictSkipCount < T4UserLexicon::kMaxMatches; u++) {
+        const char* word = _lexicon->getWord(_userEntry[u]);
+        if (!word) continue;
+        for (uint16_t i = 0; i < _dictCount; i++) {
+          if (isSkippedDictIndex(i)) continue;
+          const char* cand = _dict->getCandidate(i);
+          if (cand && strcmp(cand, word) == 0) {
+            _dictSkip[_dictSkipCount++] = i;
+            break;
+          }
+        }
+      }
+      _dictVisible = static_cast<uint16_t>(_dictCount - _dictSkipCount);
+    }
+  }
+
+  _candidateCount = static_cast<uint16_t>(_userCount + _dictVisible);
+  if (_candidateIndex >= _candidateCount) _candidateIndex = 0;
 }
 
 template <typename Dict>
@@ -369,6 +489,11 @@ void T4InputEngine<Dict>::clearSequence() {
   _candidateIndex = 0;
   _candidateCount = 0;
   _candidatesLoaded = false;
+  _dictCount = 0;
+  _dictVisible = 0;
+  _dictSkipCount = 0;
+  _userCount = 0;
+  _userStrong = 0;
   _candidateBuf[0] = '\0';
   _savedCandidate[0] = '\0';
   _savedSeqLen = 0;
@@ -469,9 +594,8 @@ bool T4InputEngine<Dict>::pressButton(uint8_t btn) {
     if (_seqLen >= kMaxSeqLen) return false;
 
     // Save current candidate before navigating further (dead-end fallback).
-    // _dict is non-null here (checked at the top of the PREDICT block).
-    if (_candidateCount > 0 && _candidatesLoaded) {
-      const char* cur = _dict->getCandidate(_candidateIndex);
+    if (_candidateCount > 0) {
+      const char* cur = getCandidate(_candidateIndex);
       if (cur && cur[0]) {
         auto clen = strlen(cur);
         if (clen < sizeof(_savedCandidate)) {
@@ -487,18 +611,19 @@ bool T4InputEngine<Dict>::pressButton(uint8_t btn) {
     bool ok = _dict->pressButton(btn);
     if (!ok) {
       LOG_DBG("T4", "pressButton: predict dead end at seqLen=%u", _seqLen);
-      // Dead end — keep sequence but no candidates
-      _candidateCount = 0;
+      // Dead end in the shipped dictionary — keep the sequence and fall
+      // back to the user lexicon, which may hold a word for it.
       _candidatesLoaded = false;
+      _dictCount = 0;
       _candidateIndex = 0;
       _candidateBuf[0] = '\0';
+      refreshUserMatches();
       return false;
     }
 
     // Load candidates FIRST — T4Dictionary::pressButton() frees previous
     // candidates, so getCandidateCount() returns 0 until loadCandidates().
-    _candidatesLoaded = _dict->loadCandidates();
-    _candidateCount = _dict->getCandidateCount();
+    reloadCandidates();
     _candidateIndex = 0;
 
     return true;
@@ -591,9 +716,7 @@ const char* T4InputEngine<Dict>::getCurrentCandidate() {
     return _candidateBuf;
   }
 
-  if (!_candidatesLoaded || !_dict) return nullptr;
-
-  const char* word = _dict->getCandidate(_candidateIndex);
+  const char* word = getCandidate(_candidateIndex);
   if (!word) return nullptr;
 
   // Copy to scratch buffer
@@ -659,9 +782,8 @@ void T4InputEngine<Dict>::backspace() {
         for (uint8_t i = 0; i < _seqLen; i++) {
           _dict->pressButton(_sequence[i]);
         }
-        _candidatesLoaded = _dict->loadCandidates();
-        _candidateCount = _dict->getCandidateCount();
       }
+      reloadCandidates();
       _candidateIndex = 0;
       _candidateBuf[0] = '\0';
       _savedCandidate[0] = '\0';
@@ -796,16 +918,15 @@ void T4InputEngine<Dict>::backspace() {
       for (uint8_t i = 0; i < _seqLen; i++) {
         _dict->pressButton(_sequence[i]);
       }
-      _candidatesLoaded = _dict->loadCandidates();
-      _candidateCount = _dict->getCandidateCount();
     }
+    reloadCandidates();
 
     // Restore the previously selected candidate index by matching the
     // saved word against the reloaded candidate list.
     _candidateIndex = 0;
     if (savedWord[0] != '\0') {
       for (uint16_t i = 0; i < _candidateCount; i++) {
-        const char* cand = _dict->getCandidate(i);
+        const char* cand = getCandidate(i);
         if (cand && strcmp(cand, savedWord) == 0) {
           _candidateIndex = i;
           break;

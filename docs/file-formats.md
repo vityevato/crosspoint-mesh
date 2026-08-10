@@ -424,3 +424,49 @@ Each file contains exactly one `MeshCoreMessage` struct (268 bytes):
 Version mismatch on any binary file causes a silent read failure (treated as
 empty). The caller is responsible for handling the resulting empty state.
 There is no automatic deletion of stale companion directories.
+
+## `user_words.bin`
+
+Learned-word store for T4 predictive input, at
+`/.crosspoint/dicts/user_words.bin`. Written by `T4EntryActivity` on exit
+when it changed, and only for `InputType::Text` fields — password and URL
+entry never reads or writes it.
+
+The store serves both purposes of personalization: words missing from the
+shipped `.trie` (names, jargon typed in Multi-tap) become predictable, and
+words the user types often are ranked ahead of the static frequency order
+baked into the `.trie`.
+
+### Version 1
+
+**Header** (12 bytes):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | Magic `0x54345557` (`T4UW`) |
+| 4 | 2 | Version (`T4UserLexicon::kVersion = 1`) |
+| 6 | 2 | Entry count (`uint16_t`) |
+| 8 | 4 | Reserved (0) |
+
+**Entry** (3 + `wordLen` bytes, repeated `entryCount` times):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | `lang` — `T4Language` value (never `DIGIT`) |
+| 1 | 1 | `score` — usage count, 1…200 |
+| 2 | 1 | `wordLen` — word length in bytes, 1…27 |
+| 3 | `wordLen` | `word` — lowercase UTF-8, no terminator |
+
+Maximum file size is 12 + 128 × 30 = 3852 bytes (`kMaxEntries` entries).
+
+Notes:
+
+- Button sequences are not stored. They are recomputed at load time from
+  the letter groups of the entry's language, so the file survives layout
+  changes; entries whose letters no longer map are dropped.
+- Scores are aged by halving every entry when any score reaches 200, which
+  keeps long-lived favourites from freezing the ranking.
+- When the store is full, the entry with the lowest score is evicted.
+- A truncated or corrupt file is treated as empty — no version migration
+  and no automatic deletion.
+

@@ -84,6 +84,7 @@ void T4EntryActivity::onEnter() {
     if (_lang == t4::T4Language::ADDITIONAL && !t4::hasActiveAdditionalLayout()) {
       _lang = t4::T4Language::EN;
     }
+    loadUserLexicon();
   }
 
   _inputEngine.setLanguage(_lang);
@@ -108,6 +109,9 @@ void T4EntryActivity::onEnter() {
 
 void T4EntryActivity::onExit() {
   LOG_DBG("T4", "onExit");
+  saveUserLexicon();
+  _inputEngine.setUserLexicon(nullptr);
+  _lexicon.reset();
   _inputEngine.reset();
   _displayBuf.reset();
   Activity::onExit();
@@ -492,21 +496,15 @@ void T4EntryActivity::pollTimeBasedState() {
 // ── Button Dispatch ──────────────────────────────────────────────────────
 
 void T4EntryActivity::onComplete() {
-  const char* text = _inputEngine.getConfirmedText();
-  // In PREDICT: append unconfirmed candidate to engine text
+  std::string result(_inputEngine.getConfirmedText());
+  // In PREDICT: append the still-unconfirmed candidate to the engine text
   if (_mode == t4::T4Mode::PREDICT) {
     const char* candidate = _inputEngine.getCurrentCandidate();
-    if (candidate && candidate[0] != '\0') {
-      std::string result(text);
-      result += candidate;
-      LOG_DBG("T4", "onComplete: PREDICT with cand='%s', result='%s'", candidate, result.c_str());
-      setResult(KeyboardResult{std::move(result)});
-      finish();
-      return;
-    }
+    if (candidate && candidate[0] != '\0') result += candidate;
   }
-  LOG_DBG("T4", "onComplete: mode=%d, result='%s'", static_cast<int>(_mode), text);
-  setResult(KeyboardResult{std::string(text)});
+  LOG_DBG("T4", "onComplete: mode=%d, result='%s'", static_cast<int>(_mode), result.c_str());
+  learnIntoLexicon(result);
+  setResult(KeyboardResult{std::move(result)});
   finish();
 }
 
@@ -709,6 +707,85 @@ bool T4EntryActivity::languageSupportsPredict(t4::T4Language lang) const {
   const char* path = t4::getDictionaryPath(lang);
   if (!path) return false;  // DIGIT — no dictionary
   return Storage.exists(path);
+}
+
+// ── User lexicon ─────────────────────────────────────────────────────────
+
+void T4EntryActivity::loadUserLexicon() {
+  _lexicon = makeUniqueNoThrow<t4::T4UserLexicon>();
+  if (!_lexicon) {
+    LOG_ERR("T4", "OOM: user lexicon");
+    return;
+  }
+  _inputEngine.setUserLexicon(_lexicon.get());
+
+  if (!Storage.exists(USER_LEXICON_PATH)) {
+    LOG_DBG("T4", "No user lexicon yet: %s", USER_LEXICON_PATH);
+    return;
+  }
+
+  HalFile file;
+  if (!Storage.openFileForRead("T4", USER_LEXICON_PATH, file)) {
+    LOG_ERR("T4", "Failed to open user lexicon: %s", USER_LEXICON_PATH);
+    return;
+  }
+
+  const size_t size = file.size();
+  if (size < t4::T4UserLexicon::kHeaderSize || size > t4::T4UserLexicon::kMaxSerializedSize) {
+    LOG_ERR("T4", "User lexicon size out of range: %u", static_cast<unsigned>(size));
+    return;
+  }
+
+  auto buffer = makeUniqueNoThrow<uint8_t[]>(size);
+  if (!buffer) {
+    LOG_ERR("T4", "OOM: user lexicon buffer %u bytes", static_cast<unsigned>(size));
+    return;
+  }
+  if (file.read(buffer.get(), size) != static_cast<int>(size)) {
+    LOG_ERR("T4", "Short read on user lexicon");
+    return;
+  }
+  if (!_lexicon->loadFromBuffer(buffer.get(), size)) {
+    LOG_ERR("T4", "Invalid user lexicon, starting empty");
+    _lexicon->clear();
+    return;
+  }
+  LOG_INF("T4", "Loaded user lexicon: %u words", _lexicon->getEntryCount());
+}
+
+void T4EntryActivity::saveUserLexicon() {
+  if (!_lexicon || !_lexicon->isDirty()) return;
+
+  auto buffer = makeUniqueNoThrow<uint8_t[]>(t4::T4UserLexicon::kMaxSerializedSize);
+  if (!buffer) {
+    LOG_ERR("T4", "OOM: user lexicon save buffer");
+    return;
+  }
+  const size_t written = _lexicon->serialize(buffer.get(), t4::T4UserLexicon::kMaxSerializedSize);
+  if (written == 0) {
+    LOG_ERR("T4", "Failed to serialize user lexicon");
+    return;
+  }
+
+  Storage.mkdir(USER_LEXICON_DIR);
+  HalFile file;
+  if (!Storage.openFileForWrite("T4", USER_LEXICON_PATH, file)) {
+    LOG_ERR("T4", "Failed to open user lexicon for writing");
+    return;
+  }
+  if (file.write(buffer.get(), written) != written) {
+    LOG_ERR("T4", "Short write on user lexicon");
+    return;
+  }
+  LOG_INF("T4", "Saved user lexicon: %u words, %u bytes", _lexicon->getEntryCount(), static_cast<unsigned>(written));
+}
+
+void T4EntryActivity::learnIntoLexicon(const std::string& text) {
+  // Password and URL fields never allocate a lexicon, so this is also the
+  // guard that keeps secrets out of the store.
+  if (!_lexicon) return;
+  const uint16_t learned = _lexicon->learnText(_lang, text.c_str(), _initialText.c_str());
+  LOG_DBG("T4", "learnIntoLexicon: learned %u words", learned);
 }
 
 // ── Shift / Uppercase ────────────────────────────────────────────────────

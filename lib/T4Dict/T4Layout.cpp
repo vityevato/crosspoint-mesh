@@ -197,6 +197,17 @@ uint32_t toUpperCodePoint(uint32_t cp) {
   return cp;
 }
 
+// Map one Unicode code point to lowercase, or return it unchanged.
+uint32_t toLowerCodePoint(uint32_t cp) {
+  for (const CasePair& e : kCaseExceptions) {
+    if (cp == e.upper) return e.lower;
+  }
+  for (const CaseRange& r : kCaseRanges) {
+    if (cp >= r.lo - r.offset && cp <= r.hi - r.offset) return cp + r.offset;
+  }
+  return cp;
+}
+
 // Decode one UTF-8 character of known byte length (1–4) into a code point.
 uint32_t decodeUtf8(const char* in, uint8_t inLen) {
   const unsigned char* u = reinterpret_cast<const unsigned char*>(in);
@@ -252,6 +263,19 @@ uint8_t upperLetterUtf8(const char* in, uint8_t inLen, char* out) {
     return inLen;
   }
   return encodeUtf8(up, out);
+}
+
+uint8_t lowerLetterUtf8(const char* in, uint8_t inLen, char* out) {
+  if (!in || inLen == 0) return 0;
+  if (inLen > 4) inLen = 4;  // UTF-8 is at most 4 bytes
+
+  uint32_t cp = decodeUtf8(in, inLen);
+  uint32_t low = toLowerCodePoint(cp);
+  if (low == cp) {
+    memcpy(out, in, inLen);  // no case mapping — copy unchanged
+    return inLen;
+  }
+  return encodeUtf8(low, out);
 }
 
 const char* getLanguageCode(T4Language lang) {
