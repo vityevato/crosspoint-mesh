@@ -1031,19 +1031,19 @@ void T4EntryActivity::renderHeader() {
     default:
       modeLabel = tr(STR_T4_MODE_PREDICT);
   }
-  // Shift indicator: "Aa" = one-shot Shift, "AB" = Caps Lock.
+  // Shift indicator: "Abc" = one-shot Shift, "ABC" = Caps Lock.
   const char* shiftLabel = "";
   switch (_inputEngine.getShiftLevel()) {
     case 1:
-      shiftLabel = " Aa";
+      shiftLabel = " | Abc";
       break;
     case 2:
-      shiftLabel = " AB";
+      shiftLabel = " | ABC";
       break;
     default:
       shiftLabel = "";
   }
-  snprintf(subtitle, sizeof(subtitle), "%s %s%s", t4::getLanguageName(_lang), modeLabel, shiftLabel);
+  snprintf(subtitle, sizeof(subtitle), "%s | %s%s", t4::getLanguageName(_lang), modeLabel, shiftLabel);
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, _title.c_str(), subtitle);
 }
 
@@ -1449,7 +1449,7 @@ int T4EntryActivity::renderModeHint(int blocksBaseY) {
   // Compose the hint text. Predict mode prepends the Up+Right candidate
   // combo sentence; Multi-tap shows only the short/long-press legend.
   const char* hints = tr(STR_T4_HINTS_LONG_PRESS);
-  char text[192];
+  char text[250];
   if (_mode == t4::T4Mode::PREDICT) {
     snprintf(text, sizeof(text), "%s %s", tr(STR_T4_HINTS_COMBO), hints);
   } else {
@@ -1701,20 +1701,20 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
         if (r == rows - 1 && len % charsPerRow != 0) rowCount = len % charsPerRow;
         int ry = by + blockPadY + r * (lineHeight + blockRowGap);
 
-        // Measure row chars for equal-gap distribution
+        // Measure row chars for equal-gap distribution. The \x01 newline
+        // action renders as a multi-character label (tr(STR_T4_ENTER)).
         int rowCharsW[charsPerRow];
         int totalCW = 0;
         char chBuf[5];
         for (int c = 0; c < rowCount; c++) {
           const ChInfo& ci = chInfo[r * charsPerRow + c];
           if (ci.byteLen == 1 && ci.start[0] == '\x01') {
-            memcpy(chBuf, "\\n", 2);
-            chBuf[2] = '\0';
+            rowCharsW[c] = renderer.getTextWidth(UI_12_FONT_ID, tr(STR_T4_ENTER));
           } else {
             memcpy(chBuf, ci.start, ci.byteLen);
             chBuf[ci.byteLen] = '\0';
+            rowCharsW[c] = renderer.getTextWidth(UI_12_FONT_ID, chBuf);
           }
-          rowCharsW[c] = renderer.getTextWidth(UI_12_FONT_ID, chBuf);
           totalCW += rowCharsW[c];
         }
         int gap = (btnW - totalCW) / (rowCount + 1);
@@ -1722,7 +1722,8 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
         int cx = bx + gap;
         for (int c = 0; c < rowCount; c++) {
           const ChInfo& ci = chInfo[r * charsPerRow + c];
-          if (ci.byteLen == 1 && ci.start[0] == '\x01') {
+          const bool isNewline = (ci.byteLen == 1 && ci.start[0] == '\x01');
+          if (isNewline) {
             chBuf[0] = '\x01';
             chBuf[1] = '\0';
           } else {
@@ -1731,13 +1732,12 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
           }
           const bool isActive = highlightTap && (activeBtn == i + 1) && activePtr && ci.byteLen == tapCmpLen &&
                                 memcmp(chBuf, tapCmpPtr, tapCmpLen) == 0;
-          const char* displayBuf = chBuf;
-          if (ci.byteLen == 1 && ci.start[0] == '\x01') {
-            displayBuf = "\\n";
-          }
+          const char* displayBuf = isNewline ? tr(STR_T4_ENTER) : chBuf;
           if (isActive) {
-            const int boxX = cx - (highlightBoxW - rowCharsW[c]) / 2;
-            renderer.fillRect(boxX, ry, highlightBoxW, lineHeight, true);
+            // Widen the highlight box to fit the multi-character label.
+            const int boxW = std::max(highlightBoxW, rowCharsW[c]);
+            const int boxX = cx - (boxW - rowCharsW[c]) / 2;
+            renderer.fillRect(boxX, ry, boxW, lineHeight, true);
             renderer.drawText(UI_12_FONT_ID, cx, ry, displayBuf, false);
           } else {
             renderer.drawText(UI_12_FONT_ID, cx, ry, displayBuf, true);
@@ -1762,17 +1762,40 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4,
                         /*inactive1=*/true, /*inactive2=*/true, /*inactive3=*/false, /*inactive4=*/false);
   } else {
-    // Long-press hints (inactive style). Hide the "Mode" hint when the
-    // input type is not Text or the language has no dictionary — Predict
-    // cannot be enabled there.
-    const char* modeHint = (_inputType == InputType::Text && languageSupportsPredict(_lang)) ? tr(STR_T4_MODE_BTN) : "";
-    const auto labels = mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), tr(STR_T4_LANG), modeHint);
+    // Long-press hints (inactive style).
+    //
+    // Left long-press → cycle language: show the NEXT language name.
+    const char* langHint = t4::getLanguageName(t4::cycleLanguage(_lang));
+    //
+    // Right long-press → toggle Predict/Multi-tap: show the NEXT mode.
+    // Hidden when Predict is unavailable (non-Text input, no dictionary).
+    const char* modeHint = "";
+    if (_inputType == InputType::Text && languageSupportsPredict(_lang)) {
+      modeHint = (_mode == t4::T4Mode::MULTI_TAP) ? tr(STR_T4_MODE_PREDICT) : tr(STR_T4_MODE_TAP);
+    }
+    const auto labels = mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), langHint, modeHint);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4,
                         /*inactive1=*/true, /*inactive2=*/true, /*inactive3=*/true, /*inactive4=*/true);
   }
 
   // ── Side button hints ──
   // Gray long-press capsule next to Space: holding Down toggles Shift/Caps.
+  // The hint shows what the NEXT press will switch to:
+  //   Off(0) → "Abc"  (one-shot Shift)
+  //   Shift(1) → "ABC" (Caps Lock)
+  //   Caps(2) → "abc"  (lowercase)
+  const char* shiftHint;
+  switch (_inputEngine.getShiftLevel()) {
+    case 0:
+      shiftHint = "Abc";
+      break;
+    case 1:
+      shiftHint = "ABC";
+      break;
+    default:  // 2
+      shiftHint = "abc";
+      break;
+  }
   const char* leftLabel = tr(STR_T4_BACKSPACE);
-  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE), "", "Aa");
+  GUI.drawSideButtonHints(renderer, leftLabel, tr(STR_T4_SPACE), "", shiftHint);
 }

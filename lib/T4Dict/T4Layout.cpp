@@ -304,7 +304,7 @@ const char* getLanguageName(T4Language lang) {
     case T4Language::ADDITIONAL:
       return activeAdditional().i18nCode;  // short badge, e.g. "RU"
     case T4Language::DIGIT:
-      return "12";
+      return "123";
   }
   return "";
 }
