@@ -217,7 +217,10 @@ class BaseTheme {
   virtual int getSideButtonDownBottomY() const;
   /// Rect of the Up side-button short-press hint capsule (left on X3,
   /// top-right on X4). Used by the T4 Up+Right combo hint connector.
-  virtual Rect getSideButtonUpRect(const GfxRenderer& renderer) const;
+  /// @p hasLongPressHint mirrors drawSideButtonHints: when true the capsule
+  /// is inset next to its gray long-press companion, otherwise it hugs the
+  /// screen edge.
+  virtual Rect getSideButtonUpRect(const GfxRenderer& renderer, bool hasLongPressHint = false) const;
   /// X-positions of the 4 front-button hint rectangles. Returns pointer to static array of 4 ints.
   /// Used internally by drawButtonHints() and externally to align overlaid elements (e.g. T4 letter blocks).
   virtual const int* getButtonXPositions(bool isX3) const;

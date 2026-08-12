@@ -531,18 +531,21 @@ int LyraTheme::getSideButtonDownBottomY() const {
   return 345 + 78 + 5 + 78;                // topHintButtonY + btnH + gap + btnH (X4)
 }
 
-Rect LyraTheme::getSideButtonUpRect(const GfxRenderer& renderer) const {
+Rect LyraTheme::getSideButtonUpRect(const GfxRenderer& renderer, bool hasLongPressHint) const {
   constexpr int buttonWidth = LyraMetrics::values.sideButtonHintsWidth;
   constexpr int buttonHeight = 78;  // mirrors drawSideButtonHints
+  constexpr int buttonGap = LyraMetrics::values.sideButtonHintsGap;
   if (gpio.deviceIsX3()) {
-    // X3: short-press capsule inset next to the edge long-press capsule.
-    const int leftX = LyraMetrics::values.sideButtonHintsMargin + buttonWidth + LyraMetrics::values.sideButtonHintsGap;
+    // X3: short-press capsule hugs the screen edge unless a long-press
+    // companion capsule pushes it inwards (mirrors drawSideButtonHints).
+    const int leftX = hasLongPressHint ? buttonWidth + buttonGap : 0;
     return Rect(leftX, 155, buttonWidth, buttonHeight);  // x3ButtonY
   }
-  // X4: stacked on the right, short-press capsule inset from the edge.
+  // X4: stacked on the right; same edge-vs-inset rule.
   const int edgeX = renderer.getScreenWidth() - buttonWidth;
-  const int inX = edgeX - LyraMetrics::values.sideButtonHintsGap - buttonWidth;
-  return Rect(inX, topHintButtonY, buttonWidth, buttonHeight);
+  const int inX = edgeX - buttonGap - buttonWidth;
+  const int x = hasLongPressHint ? inX : edgeX;
+  return Rect(x, topHintButtonY, buttonWidth, buttonHeight);
 }
 
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,

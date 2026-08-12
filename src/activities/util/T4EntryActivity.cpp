@@ -1496,9 +1496,10 @@ void T4EntryActivity::renderCandidateComboHint(int blocksBaseY) {
   if (_mode != t4::T4Mode::PREDICT || _upSideCyclesCandidates) return;
   if (_inputEngine.getCandidateCount() < 2) return;
 
-  const Rect upKey = GUI.getSideButtonUpRect(renderer);
+  // The Up hint in T4 has no long-press companion capsule — it hugs the edge.
+  const Rect upKey = GUI.getSideButtonUpRect(renderer, /*hasLongPressHint=*/false);
 
-  static constexpr int kTipGap = 4;    // space between arrow tip and target
+  static constexpr int kTipGap = 8;    // space between arrow tip and target
   static constexpr int kHeadLen = 3;   // arrowhead leg length
   static constexpr int kLabelGap = 4;  // gap between label and line ends
   static constexpr int kLineW = 1;     // connector stroke width
@@ -1550,7 +1551,12 @@ void T4EntryActivity::renderCandidateComboHint(int blocksBaseY) {
   int rightMargin = 0;
   textFieldMargins(pageWidth, leftMargin, rightMargin);
   const int textRight = pageWidth - rightMargin;
-  const int lineX = textRight + (upKey.x - textRight) / 2;
+  // The vertical run sits in the corridor left of the right-side capsule
+  // stack. Its inner edge is the Space short-press capsule, inset by width+gap
+  // because Space has a long-press companion — the same inset the Up capsule
+  // would take with a long-press hint.
+  const int innerX = GUI.getSideButtonUpRect(renderer, /*hasLongPressHint=*/true).x;
+  const int lineX = textRight + (innerX - textRight) / 2;
   const int topY = upKey.y + upKey.height / 2;
   const int tipX = upKey.x - kTipGap;
   const int downTipY = blocksBaseY - kTipGap;

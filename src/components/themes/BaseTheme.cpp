@@ -344,18 +344,22 @@ int BaseTheme::getSideButtonDownBottomY() const {
   return 345 + 80 + 80;                    // topButtonY + 2 * buttonHeight (X4, bottom of second btn)
 }
 
-Rect BaseTheme::getSideButtonUpRect(const GfxRenderer& renderer) const {
+Rect BaseTheme::getSideButtonUpRect(const GfxRenderer& renderer, bool hasLongPressHint) const {
   constexpr int buttonWidth = BaseMetrics::values.sideButtonHintsWidth;
   constexpr int buttonHeight = 80;  // mirrors drawSideButtonHints
+  constexpr int buttonGap = BaseMetrics::values.sideButtonHintsGap;
+  constexpr int buttonMargin = BaseMetrics::values.sideButtonHintsMargin;
   if (gpio.deviceIsX3()) {
-    // X3: short-press capsule inset next to the edge long-press capsule.
-    const int leftX = BaseMetrics::values.sideButtonHintsMargin + buttonWidth + BaseMetrics::values.sideButtonHintsGap;
+    // X3: short-press capsule hugs the screen edge unless a long-press
+    // companion capsule pushes it inwards (mirrors drawSideButtonHints).
+    const int leftX = hasLongPressHint ? buttonMargin + buttonWidth + buttonGap : buttonMargin;
     return Rect(leftX, 155, buttonWidth, buttonHeight);  // x3ButtonY
   }
-  // X4: stacked on the right, short-press capsule inset from the edge.
-  const int edgeX = renderer.getScreenWidth() - BaseMetrics::values.sideButtonHintsMargin - buttonWidth;
-  const int inX = edgeX - BaseMetrics::values.sideButtonHintsGap - buttonWidth;
-  return Rect(inX, 345, buttonWidth, buttonHeight);  // topButtonY
+  // X4: stacked on the right; same edge-vs-inset rule.
+  const int edgeX = renderer.getScreenWidth() - buttonMargin - buttonWidth;
+  const int inX = edgeX - buttonGap - buttonWidth;
+  const int x = hasLongPressHint ? inX : edgeX;
+  return Rect(x, 345, buttonWidth, buttonHeight);  // topButtonY
 }
 
 int BaseTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
