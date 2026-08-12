@@ -857,6 +857,34 @@ void T4InputEngine<Dict>::backspace() {
     // _lang at commit time, so the metadata is always available here.
     T4Language wordLang = (_wordCount > 0) ? _wordLang[_wordCount - 1] : _lang;
 
+    // A cross-language word needs its own dictionary to be re-edited
+    // predictively. When that dictionary is unavailable (e.g. English with no
+    // .trie on the SD card), we have effectively switched to Multi-tap: the
+    // word cannot be pulled back for predictive editing, so leave it in place
+    // and delete a single character. The engine records Multi-tap mode itself
+    // so the state is consistent — from here on backspace removes the word one
+    // character at a time rather than erasing it whole.
+    if (wordLang != _lang) {
+      _lang = wordLang;
+      clearSequence();  // clear old-language state (candidates, buf)
+      if (_dict) {
+        _dict->close();
+        _dict.reset();
+      }
+      if (wordLang != T4Language::DIGIT) {
+        loadDictionaryForLanguage(wordLang);
+        if (!_dict) {
+          // No dictionary for the word's language: predictive re-editing is
+          // impossible here, so switch to Multi-tap and delete just one
+          // character (byte length of the last UTF-8 char).
+          setMode(T4Mode::MULTI_TAP);
+          _textLen -= blen;
+          _confirmedText[_textLen] = '\0';
+          return;
+        }
+      }
+    }
+
     // Extract word and its button sequence using the word's language.
     uint8_t seqIdx = 0;
     uint16_t pos = wordStart;
@@ -890,27 +918,6 @@ void T4InputEngine<Dict>::backspace() {
     _textLen = wordStart;
     _confirmedText[_textLen] = '\0';
     if (_wordCount > 0) _wordCount--;
-
-    // Auto-switch input language to match the word being re-edited.
-    // Save the recovered sequence before clearing old-language state.
-    if (wordLang != _lang) {
-      uint8_t savedSeq[kMaxSeqLen];
-      uint8_t savedSeqLen = seqIdx;
-      memcpy(savedSeq, _sequence, seqIdx);
-
-      _lang = wordLang;
-      clearSequence();  // clear old-language state (candidates, buf)
-      if (_dict) {
-        _dict->close();
-        _dict.reset();
-      }
-      if (wordLang != T4Language::DIGIT) {
-        loadDictionaryForLanguage(wordLang);
-      }
-      // Restore the recovered button sequence (cleared by clearSequence above).
-      _seqLen = savedSeqLen;
-      memcpy(_sequence, savedSeq, savedSeqLen);
-    }
 
     // Navigate the (possibly new) dictionary with the recovered sequence.
     if (_dict) {

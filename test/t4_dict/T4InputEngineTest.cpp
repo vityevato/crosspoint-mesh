@@ -13,6 +13,11 @@
 
 using namespace t4;
 
+// When true, MockDictionary::loadFromSD() fails for the real English SD path
+// (/.crosspoint/dicts/en.trie), simulating an English dictionary absent from
+// the SD card. Unset for all other paths (including the mock "/mock/en.trie").
+static bool g_mockNoEnDict = false;
+
 // ── MockDictionary ──────────────────────────────────────────────────────
 //
 // In-memory trie for unit testing T4InputEngine without HalStorage.
@@ -28,7 +33,8 @@ class MockDictionary {
  public:
   MockDictionary() = default;
 
-  bool loadFromSD(const char* /*path*/) {
+  bool loadFromSD(const char* path) {
+    if (g_mockNoEnDict && path && strstr(path, "crosspoint/dicts/en.trie")) return false;
     // Build a minimal trie with CORRECT button mappings based on
     // T4Layout English groups:
     //   btn1 (idx 0): abcdef    btn2 (idx 1): ghijkl
@@ -421,6 +427,47 @@ TEST_F(T4InputEngineTest, BackspacePullsBackCrossLanguageWord) {
   EXPECT_EQ(seq[3], 1u);  // в → btn1 (RU: абвгдеёж-)
   EXPECT_EQ(seq[4], 1u);  // е → btn1
   EXPECT_EQ(seq[5], 3u);  // т → btn3
+}
+
+TEST_F(T4InputEngineTest, BackspaceIntoDictlessLanguageSwitchesToMultiTapAndDeletesOneChar) {
+  // While RU predictive input is active, the confirmed text holds an English
+  // word followed by a Russian word. When backspacing crosses into the English
+  // word and the English dictionary is missing, backspace must NOT pull the
+  // whole word back (that needs a dictionary). It must switch to English +
+  // Multi-tap and delete one character, so the word is removed char by char.
+  predictor.setLanguage(T4Language::ADDITIONAL);  // RU active (mock dict loads)
+  predictor.setConfirmedText("mt привет");
+  EXPECT_EQ(predictor.getLanguage(), T4Language::ADDITIONAL);
+
+  // From here on the English dictionary cannot be loaded.
+  g_mockNoEnDict = true;
+
+  constexpr int kFirstWordChars = 6;  // "привет" — п р и в е т
+  predictor.backspace();              // pulls "привет" into the sequence
+  EXPECT_STREQ(predictor.getConfirmedText(), "mt ");
+  for (int i = 0; i < kFirstWordChars; i++) {
+    predictor.backspace();  // shrink the sequence back to empty
+  }
+  EXPECT_STREQ(predictor.getConfirmedText(), "mt ");
+
+  predictor.backspace();  // remove the trailing space
+  EXPECT_STREQ(predictor.getConfirmedText(), "mt");
+  EXPECT_EQ(predictor.getLanguage(), T4Language::ADDITIONAL);
+  EXPECT_EQ(predictor.getMode(), T4Mode::PREDICT);
+
+  // Boundary: English word, no English dictionary → switch to EN + Multi-tap
+  // and delete exactly one character, leaving the rest of the word.
+  predictor.backspace();
+  EXPECT_STREQ(predictor.getConfirmedText(), "m");
+  EXPECT_EQ(predictor.getLanguage(), T4Language::EN);
+  EXPECT_EQ(predictor.getMode(), T4Mode::MULTI_TAP);
+
+  // Further backspaces now run in Multi-tap: one character at a time.
+  predictor.backspace();
+  EXPECT_EQ(predictor.getConfirmedTextLength(), 0u);
+  EXPECT_EQ(predictor.getMode(), T4Mode::MULTI_TAP);
+
+  g_mockNoEnDict = false;
 }
 
 // ── Sequence display ────────────────────────────────────────────────────

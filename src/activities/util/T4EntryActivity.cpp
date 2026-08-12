@@ -26,6 +26,7 @@ T4EntryActivity::T4EntryActivity(GfxRenderer& renderer, MappedInputManager& mapp
       _maxLength(maxLength),
       _inputType(inputType),
       _lang(t4::T4Language::EN),
+      _sentenceCfg(t4::getSentenceConfig(t4::T4Language::EN)),
       _mode(t4::T4Mode::PREDICT),
       _userMode(t4::T4Mode::PREDICT),
       _punctIndex(0),
@@ -475,6 +476,11 @@ void T4EntryActivity::handleShortPressReleases() {
         _inputEngine.backspace();
         _lang = _inputEngine.getLanguage();
         _sentenceCfg = t4::getSentenceConfig(_lang);
+        // Backspace may auto-switch the language to the word being deleted
+        // (e.g. back to English without a dictionary). Re-derive the effective
+        // mode so a dict-less language falls back to Multi-tap; otherwise a
+        // stale PREDICT mode with no dictionary would block all input.
+        applyEffectiveMode();
         _punctIndex = 0;
         _wordJustConfirmed = false;
         _candidateScrollX = 0;
@@ -542,6 +548,11 @@ void T4EntryActivity::handleBackspaceHoldRepeat() {
     _inputEngine.backspace();
     _lang = _inputEngine.getLanguage();
     _sentenceCfg = t4::getSentenceConfig(_lang);
+    // Backspace may auto-switch the language to the word being deleted
+    // (e.g. back to English without a dictionary). Re-derive the effective
+    // mode so a dict-less language falls back to Multi-tap; otherwise a
+    // stale PREDICT mode with no dictionary would block all input.
+    applyEffectiveMode();
     _backspaceLastActionMs = millis();
 
     // When the sentence-ending punctuation that triggered auto-cap
