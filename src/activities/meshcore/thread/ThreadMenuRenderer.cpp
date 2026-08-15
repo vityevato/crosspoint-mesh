@@ -38,10 +38,6 @@ bool ThreadMenuRenderer::renderConfirmPopup(MeshCoreThreadActivity& act) {
       confirmMsg = tr(STR_MESHCORE_REMOVE_CONTACT_CONFIRM);
       confirmLabel = tr(STR_MESHCORE_REMOVE_CONTACT);
       break;
-    case MeshCoreThreadActivity::ConfirmAction::DELETE_CHANNEL:
-      confirmMsg = tr(STR_MESHCORE_DELETE_CHANNEL_CONFIRM);
-      confirmLabel = tr(STR_MESHCORE_DELETE_CHANNEL);
-      break;
     default:
       break;
   }
@@ -62,7 +58,7 @@ bool ThreadMenuRenderer::renderConfirmPopup(MeshCoreThreadActivity& act) {
 void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& contentRect) {
   bool connected = (act.client.getState() == BleConnectionState::CONNECTED);
 
-  constexpr int kChannelActionCount = 3;
+  constexpr int kChannelActionCount = 2;
   constexpr int kDmActionCount = 4;
   int kActionCount = act.isChannel ? kChannelActionCount : kDmActionCount;
   bool hasSettings = act._menuSettings != nullptr;
@@ -73,7 +69,6 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
   static constexpr StrId kChannelTitles[] = {
       StrId::STR_MESHCORE_SCROLL_TO_END,
       StrId::STR_MESHCORE_CLEAR_CONVERSATION,
-      StrId::STR_MESHCORE_DELETE_CHANNEL,
   };
   static constexpr StrId kDmTitles[] = {
       StrId::STR_PATH_RESET,
@@ -95,25 +90,21 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
       },
       nullptr, nullptr, nullptr, false,
       [&](int index) -> bool {
-        if (act.isChannel) {
-          if (!connected) return (index == 2);
-          return false;
-        } else {
-          if (index == 0) {
-            if (!connected) return true;
-            constexpr uint8_t kMaxDim = 20;
-            MeshCoreContact contacts[kMaxDim] = {};
-            uint8_t count = act.store.loadContacts(contacts, kMaxDim);
-            for (uint8_t i = 0; i < count; ++i) {
-              if (memcmp(contacts[i].publicKey, act.contactPubkey, 32) == 0) {
-                return (contacts[i].pathLength == 0xFF);
-              }
+        if (act.isChannel) return false;
+        if (index == 0) {
+          if (!connected) return true;
+          constexpr uint8_t kMaxDim = 20;
+          MeshCoreContact contacts[kMaxDim] = {};
+          uint8_t count = act.store.loadContacts(contacts, kMaxDim);
+          for (uint8_t i = 0; i < count; ++i) {
+            if (memcmp(contacts[i].publicKey, act.contactPubkey, 32) == 0) {
+              return (contacts[i].pathLength == 0xFF);
             }
-            return true;
           }
-          if (!connected) return (index == 3);
-          return false;
+          return true;
         }
+        if (!connected) return (index == 3);
+        return false;
       });
 
   if (!hasSettings) return;

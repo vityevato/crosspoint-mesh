@@ -21,7 +21,6 @@
 #include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
 #include "SilentRestart.h"
-#include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "thread/MeshCoreThreadActivity.h"
 #include "utils/MeshCoreContactUrlParser.h"
@@ -306,22 +305,6 @@ void MeshCoreHubActivity::loop() {
 #endif
 
   int listCount = getListCountForCurrentTab();
-
-  // Channel management actions (side buttons on channel tab)
-  if (currentTab == Tab::CHANNELS) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
-      addChannel();
-      return;
-    }
-    if (mappedInput.wasPressed(MappedInputManager::Button::PageBack) && listCount > 0 && selectedIndex > 0) {
-      deleteChannel(static_cast<uint8_t>(selectedIndex - 1));
-      if (selectedIndex > getListCountForCurrentTab()) {
-        selectedIndex = getListCountForCurrentTab();
-        if (selectedIndex < 0) selectedIndex = 0;
-      }
-      return;
-    }
-  }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     if (selectedIndex == 0) {
@@ -814,55 +797,6 @@ void MeshCoreHubActivity::openDiscover() {
       std::make_unique<MeshCoreDiscoverActivity>(renderer, mappedInput, client, store, discoveredNodes,
                                                  discoveredNodeCount, savedContacts, savedContactCount),
       [this](const ActivityResult&) { requestUpdate(); });
-}
-
-// --- Channel management (Task 13) ---
-
-void MeshCoreHubActivity::addChannel() {
-  // Find first empty slot (skip index 0 = public)
-  int emptyIdx = -1;
-  for (int i = 1; i < channelCount; ++i) {
-    if (channels[i].isEmpty()) {
-      emptyIdx = i;
-      break;
-    }
-  }
-  if (emptyIdx < 0) return;
-
-  startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_CHANNEL_NAME),
-                                                                 "", 32, InputType::Text),
-                         [this, emptyIdx](const ActivityResult& result) {
-                           if (result.isCancelled) {
-                             requestUpdate();
-                             return;
-                           }
-                           auto name = std::get<KeyboardResult>(result.data).text;
-
-                           startActivityForResult(
-                               std::make_unique<KeyboardEntryActivity>(
-                                   renderer, mappedInput, tr(STR_MESHCORE_CHANNEL_SECRET), "", 32, InputType::Text),
-                               [this, emptyIdx, name = std::move(name)](const ActivityResult& r2) {
-                                 if (r2.isCancelled) {
-                                   requestUpdate();
-                                   return;
-                                 }
-                                 auto secretHex = std::get<KeyboardResult>(r2.data).text;
-                                 uint8_t secret[16] = {};
-                                 for (size_t i = 0; i < 16 && i * 2 + 1 < secretHex.size(); ++i) {
-                                   char byte[3] = {secretHex[i * 2], secretHex[i * 2 + 1], '\0'};
-                                   secret[i] = static_cast<uint8_t>(strtoul(byte, nullptr, 16));
-                                 }
-                                 client.setChannel(static_cast<uint8_t>(emptyIdx), name.c_str(), secret);
-                                 client.requestChannel(static_cast<uint8_t>(emptyIdx));
-                                 requestUpdate();
-                               });
-                         });
-}
-
-void MeshCoreHubActivity::deleteChannel(uint8_t idx) {
-  client.deleteChannel(idx);
-  channels[idx] = {};
-  requestUpdate();
 }
 
 void MeshCoreHubActivity::saveAdvertToFile() {

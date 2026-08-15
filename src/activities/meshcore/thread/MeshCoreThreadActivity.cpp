@@ -315,20 +315,6 @@ bool MeshCoreThreadActivity::_loopConfirmPopup() {
         selectedIndex = 0;
         break;
       }
-      case ConfirmAction::DELETE_CHANNEL: {
-        if (!client.deleteChannel(channelIdx)) {
-          LOG_ERR("MESH", "Failed to queue channel delete");
-          _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-          requestUpdate();
-          return true;
-        }
-        LOG_DBG("MESH", "Queued channel %d delete — waiting for BLE response", channelIdx);
-        _pendingOp = PendingOp::DELETING_CHANNEL;
-        _pendingStartMs = millis();
-        _toast.show(tr(STR_MESHCORE_REMOVING), 0);
-        selectedIndex = 0;
-        break;
-      }
       default:
         break;
     }
@@ -379,7 +365,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
 
   if (currentTab == Tab::MENU) {
     // Action indices: 0..(actionCount-1) = menu actions, actionCount = settings toggle
-    int actionCount = isChannel ? 3 : 4;
+    int actionCount = isChannel ? 2 : 4;
     if (itemIdx >= actionCount) {
       // Settings toggle
       if (_menuSettings) {
@@ -393,8 +379,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
     }
 
     if (isChannel) {
-      // Channel menu: 0=Scroll to End, 1=Clear, 2=Delete Channel
-      bool connected = (client.getState() == BleConnectionState::CONNECTED);
+      // Channel menu: 0=Scroll to End, 1=Clear
       switch (itemIdx) {
         case 0:  // Scroll to End
           scrollToEnd();
@@ -403,16 +388,6 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
-        case 2: {  // Delete Channel (async, waits for BLE)
-          if (!connected) {
-            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-            requestUpdate();
-            break;
-          }
-          _confirmAction = ConfirmAction::DELETE_CHANNEL;
-          requestUpdate();
-          return true;
-        }
         default:
           break;
       }
@@ -693,7 +668,7 @@ void MeshCoreThreadActivity::_renderNormal() {
   } else if (currentTab == Tab::MESSAGES) {
     btn2 = tr(STR_MESHCORE_SEND);
   } else if (currentTab == Tab::MENU) {
-    int actionCount = isChannel ? 3 : 4;
+    int actionCount = isChannel ? 2 : 4;
     btn2 = (selectedIndex > 0 && selectedIndex - 1 >= actionCount) ? tr(STR_TOGGLE) : tr(STR_SELECT);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));

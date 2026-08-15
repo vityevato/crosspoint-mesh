@@ -136,8 +136,6 @@ class MeshCoreHubActivity final : public Activity {
   void launchScanActivity();
   void switchTab(Tab tab);
 
-  void addChannel();
-  void deleteChannel(uint8_t idx);
   void saveAdvertToFile();
   void loadContactsFromFile();
   void advanceFileContactLoad(bool success);

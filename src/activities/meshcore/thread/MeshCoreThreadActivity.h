@@ -100,8 +100,8 @@ class MeshCoreThreadActivity final : public Activity {
   int _contentAreaHeight = 0;
   bool _needsRebuild = false;
 
-  // Async BLE unlist/delete operation (mirrors Discovery's pattern)
-  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT, DELETING_CHANNEL };
+  // Async BLE unlist operation (mirrors Discovery's pattern)
+  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT };
   PendingOp _pendingOp = PendingOp::IDLE;
   uint32_t _pendingStartMs = 0;
   void completeUnlistOp(bool success);
@@ -110,7 +110,7 @@ class MeshCoreThreadActivity final : public Activity {
   ThreadScroller* _scroller = nullptr;
 
   // Confirmation popup state (shown before destructive menu actions)
-  enum class ConfirmAction : uint8_t { NONE, CLEAR_CONVERSATION, REMOVE_CONTACT, DELETE_CHANNEL };
+  enum class ConfirmAction : uint8_t { NONE, CLEAR_CONVERSATION, REMOVE_CONTACT };
   ConfirmAction _confirmAction = ConfirmAction::NONE;
 
   // Tab state
