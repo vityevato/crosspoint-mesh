@@ -480,7 +480,7 @@ void MeshCoreHubActivity::render(RenderLock&&) {
     snprintf(popupMsg, sizeof(popupMsg), "%s %s?", tr(STR_MESHCORE_DISCONNECT_CONFIRM), name);
     GUI.drawPopup(renderer, popupMsg);
 
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_MESHCORE_DISCONNECT), "", "");
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
     renderer.displayBuffer();
