@@ -11,32 +11,25 @@
 
 /**
  * Renders the Channels tab content within MeshCoreHubActivity.
- * Displays a list of configured LoRa channels with unread counts.
+ * Displays only configured LoRa channels (visibleIdx maps list
+ * positions to raw channel indices) with unread counts.
  */
 class MeshCoreChannelListView {
  public:
   static void render(const GfxRenderer& renderer, const Rect& contentRect, const MeshCoreChannel* channels,
-                     uint8_t channelCount, int selectedIndex) {
-    bool hasChannels = false;
-    for (uint8_t i = 0; i < channelCount; ++i) {
-      if (channels[i].configured) {
-        hasChannels = true;
-        break;
-      }
-    }
-
-    if (!hasChannels) {
+                     const uint8_t* visibleIdx, uint8_t visibleCount, int selectedIndex) {
+    if (visibleCount == 0) {
       GUI.drawHelpText(renderer, contentRect, tr(STR_MESHCORE_NO_CHANNELS));
       return;
     }
 
     GUI.drawList(
-        renderer, contentRect, channelCount, selectedIndex - 1,
-        [ch = channels](int index) { return std::string(ch[index].name[0] ? ch[index].name : "---"); },
-        [ch = channels](int index) {
-          if (ch[index].unreadCount > 0) {
+        renderer, contentRect, visibleCount, selectedIndex - 1,
+        [ch = channels, vi = visibleIdx](int index) { return std::string(ch[vi[index]].name); },
+        [ch = channels, vi = visibleIdx](int index) {
+          if (ch[vi[index]].unreadCount > 0) {
             char buf[16];
-            snprintf(buf, sizeof(buf), "(%d)", ch[index].unreadCount);
+            snprintf(buf, sizeof(buf), "(%d)", ch[vi[index]].unreadCount);
             return std::string(buf);
           }
           return std::string();

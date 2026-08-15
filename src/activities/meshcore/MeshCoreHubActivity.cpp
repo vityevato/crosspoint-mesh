@@ -317,11 +317,14 @@ void MeshCoreHubActivity::loop() {
     if (listCount > 0) {
       int itemIdx = selectedIndex - 1;
       switch (currentTab) {
-        case Tab::CHANNELS:
-          if (itemIdx < channelCount && channels[itemIdx].configured) {
-            openChannelThread(itemIdx);
+        case Tab::CHANNELS: {
+          uint8_t visibleIdx[8];
+          uint8_t visibleCount = collectVisibleChannels(visibleIdx);
+          if (itemIdx >= 0 && itemIdx < visibleCount) {
+            openChannelThread(visibleIdx[itemIdx]);
           }
           break;
+        }
         case Tab::CONTACTS:
           if (itemIdx < savedContactCount) {
             openContactThread(savedContacts[itemIdx]);
@@ -404,6 +407,14 @@ void MeshCoreHubActivity::loop() {
   });
 }
 
+uint8_t MeshCoreHubActivity::collectVisibleChannels(uint8_t* outIdx) const {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < channelCount; ++i) {
+    if (channels[i].configured) outIdx[n++] = i;
+  }
+  return n;
+}
+
 void MeshCoreHubActivity::switchTab(Tab tab) {
   currentTab = tab;
   selectedIndex = 0;
@@ -413,11 +424,8 @@ void MeshCoreHubActivity::switchTab(Tab tab) {
 int MeshCoreHubActivity::getListCountForCurrentTab() const {
   switch (currentTab) {
     case Tab::CHANNELS: {
-      int count = 0;
-      for (uint8_t i = 0; i < channelCount; ++i) {
-        if (channels[i].configured) count++;
-      }
-      return count > 0 ? channelCount : 0;
+      uint8_t visibleIdx[8];
+      return collectVisibleChannels(visibleIdx);
     }
     case Tab::CONTACTS:
       return savedContactCount;
@@ -532,7 +540,9 @@ void MeshCoreHubActivity::render(RenderLock&&) {
 }
 
 void MeshCoreHubActivity::renderChannelList(const Rect& contentRect) {
-  MeshCoreChannelListView::render(renderer, contentRect, channels, channelCount, selectedIndex);
+  uint8_t visibleIdx[8];
+  uint8_t visibleCount = collectVisibleChannels(visibleIdx);
+  MeshCoreChannelListView::render(renderer, contentRect, channels, visibleIdx, visibleCount, selectedIndex);
 }
 
 void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
@@ -760,16 +770,7 @@ void MeshCoreHubActivity::openChannelThread(uint8_t channelIdx) {
   channels[channelIdx].unreadCount = 0;
   startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, channelIdx,
                                                                   channels[channelIdx].name, this),
-                         [this, channelIdx](const ActivityResult& result) {
-                           if (auto* unlist = std::get_if<MeshCoreUnlistResult>(&result.data)) {
-                             if (unlist->isChannel) {
-                               LOG_DBG("MESH", "Hub: channel %d deleted — clearing locally, re-requesting", channelIdx);
-                               channels[channelIdx] = {};
-                               client.requestChannel(channelIdx);
-                             }
-                           }
-                           requestUpdate();
-                         });
+                         [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
@@ -782,11 +783,9 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
   }
   startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, contact, this),
                          [this](const ActivityResult& result) {
-                           if (auto* unlist = std::get_if<MeshCoreUnlistResult>(&result.data)) {
-                             if (!unlist->isChannel) {
-                               LOG_DBG("MESH", "Hub: contact deleted — reloading from store");
-                               savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
-                             }
+                           if (std::get_if<MeshCoreUnlistResult>(&result.data)) {
+                             LOG_DBG("MESH", "Hub: contact deleted — reloading from store");
+                             savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
                            }
                            requestUpdate();
                          });

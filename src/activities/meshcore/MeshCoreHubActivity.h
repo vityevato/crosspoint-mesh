@@ -142,6 +142,9 @@ class MeshCoreHubActivity final : public Activity {
 
   int getListCountForCurrentTab() const;
 
+  /** Fills outIdx with raw indices of configured channels; returns count. */
+  uint8_t collectVisibleChannels(uint8_t* outIdx) const;
+
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);
 };

@@ -529,7 +529,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU: {
-      int count = isChannel ? 3 : 4;  // Channel: 3 actions; DM: 4 actions (+Reset Path)
+      int count = isChannel ? 2 : 4;  // Channel: 2 actions; DM: 4 actions (+Reset Path)
       if (_menuSettings) count += 1;  // +1 for the settings toggle
       return count;
     }
@@ -551,31 +551,29 @@ void MeshCoreThreadActivity::provideSubtitle(const void* ctx, char* buf, size_t 
 void MeshCoreThreadActivity::completeUnlistOp(bool success) {
   _pendingOp = PendingOp::IDLE;
   if (success) {
-    LOG_DBG("MESH", "Unlist %s succeeded", isChannel ? "channel" : "contact");
+    LOG_DBG("MESH", "Contact unlist succeeded");
 
-    if (!isChannel) {
-      // Load current contacts, remove this one, save back — same pattern
-      // as Discovery's completeContactSave(DELETING).
-      constexpr uint8_t kMaxContacts = 20;
-      MeshCoreContact contacts[kMaxContacts] = {};
-      uint8_t count = store.loadContacts(contacts, kMaxContacts);
-      for (uint8_t i = 0; i < count; ++i) {
-        if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
-          for (uint8_t j = i; j + 1 < count; ++j) {
-            contacts[j] = contacts[j + 1];
-          }
-          count--;
-          store.saveContacts(contacts, count);
-          LOG_INF("MESH", "Removed contact from saved list");
-          break;
+    // Load current contacts, remove this one, save back — same pattern
+    // as Discovery's completeContactSave(DELETING).
+    constexpr uint8_t kMaxContacts = 20;
+    MeshCoreContact contacts[kMaxContacts] = {};
+    uint8_t count = store.loadContacts(contacts, kMaxContacts);
+    for (uint8_t i = 0; i < count; ++i) {
+      if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
+        for (uint8_t j = i; j + 1 < count; ++j) {
+          contacts[j] = contacts[j + 1];
         }
+        count--;
+        store.saveContacts(contacts, count);
+        LOG_INF("MESH", "Removed contact from saved list");
+        break;
       }
     }
 
-    setResult(ActivityResult(MeshCoreUnlistResult{isChannel}));
+    setResult(ActivityResult(MeshCoreUnlistResult{}));
     finish();
   } else {
-    LOG_ERR("MESH", "Unlist %s failed", isChannel ? "channel" : "contact");
+    LOG_ERR("MESH", "Contact unlist failed");
     _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
     requestUpdate();
   }

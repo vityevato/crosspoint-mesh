@@ -59,9 +59,7 @@ struct FilePathResult {
   std::string path;
 };
 
-struct MeshCoreUnlistResult {
-  bool isChannel = false;
-};
+struct MeshCoreUnlistResult {};
 
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
                                    IntervalResult, PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult,
