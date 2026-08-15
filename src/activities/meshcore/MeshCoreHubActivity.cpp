@@ -405,6 +405,20 @@ void MeshCoreHubActivity::loop() {
     selectedIndex = ButtonNavigator::previousIndex(selectedIndex, navCount);
     requestUpdate();
   });
+
+  // Settings-style tab switching: a long hold on Right/Down or Left/Up cycles
+  // the tabs regardless of cursor position. The continuous callbacks only fire
+  // on held buttons, so they never race the short-press list navigation above.
+  buttonNavigator.onNextContinuous([this] {
+    int tab = static_cast<int>(currentTab);
+    tab = (tab < static_cast<int>(Tab::TAB_COUNT) - 1) ? tab + 1 : 0;
+    switchTab(static_cast<Tab>(tab));
+  });
+  buttonNavigator.onPreviousContinuous([this] {
+    int tab = static_cast<int>(currentTab);
+    tab = (tab > 0) ? tab - 1 : static_cast<int>(Tab::TAB_COUNT) - 1;
+    switchTab(static_cast<Tab>(tab));
+  });
 }
 
 uint8_t MeshCoreHubActivity::collectVisibleChannels(uint8_t* outIdx) const {
