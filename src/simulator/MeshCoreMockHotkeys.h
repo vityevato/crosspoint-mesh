@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <ctime>
 
+#include "MockChannelInject.h"
 #include "MockSession.h"
 #include "NimBLEDevice.h"
 
@@ -111,10 +112,18 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
   if (wasKeyPressedThisFrame(SDL_SCANCODE_3)) {
     // Inject a new channel into the mock session via TX notify.
     // Build PKT_CHANNEL_INFO (0x12, 50 bytes) with generated name.
+    // Simulates a channel appearing on the device side: lands in the
+    // first free slot after the JSON-defined channels, cycling within
+    // the 8 slots the hub can display.
     if (!bleClient || !bleClient->isConnected()) return false;
 
-    uint8_t idx = MockSession::injectChannelIdx;
-    ++MockSession::injectChannelIdx;
+    const MockCompanion* comp = bleClient->getMockCompanion();
+    uint8_t base = comp ? comp->channelCount : 0;
+
+    uint8_t idx = 0;
+    if (!nextMockChannelSlot(base, MOCK_MAX_CHANNELS, MockSession::injectChannelIdx, idx)) {
+      return false;  // No free slots
+    }
 
     // Build PKT_CHANNEL_INFO packet
     uint8_t buf[50] = {};
@@ -123,10 +132,10 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     buf[off++] = 0x12;  // PKT_CHANNEL_INFO
     buf[off++] = idx;   // channel index
 
-    // Name: "Mock Channel N" where N = idx (null-padded to 32)
+    // Name: "Mock Channel N" where N = sequence counter (null-padded to 32)
     memset(buf + off, 0, 32);
     char nameBuf[33] = {};
-    snprintf(nameBuf, sizeof(nameBuf), "Mock Channel %d", (int)idx);
+    snprintf(nameBuf, sizeof(nameBuf), "Mock Channel %d", (int)MockSession::injectChannelIdx);
     size_t nameLen = strlen(nameBuf);
     if (nameLen > 31) nameLen = 31;
     memcpy(buf + off, nameBuf, nameLen);

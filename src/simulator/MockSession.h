@@ -35,11 +35,14 @@ class MockSession {
   // Inject counters for hotkey-driven contact/channel creation.
   // Reset on loadMockConfig(). Incremented by MeshCoreMockHotkeys.
   static uint16_t injectContactCounter;
+  // Sequence counter for key-3 channel injection; the slot index is
+  // derived from the connected companion's channelCount (first free
+  // slot after the JSON-defined channels, cycling within 0..7).
   static uint8_t injectChannelIdx;
 
   static void resetInjectCounters() {
     injectContactCounter = 0;
-    injectChannelIdx = 8;  // start inject channels at idx 8 (above JSON channels)
+    injectChannelIdx = 0;
   }
 
  private:

@@ -208,7 +208,7 @@ TEST(T4Layout, LanguageCodes) {
 TEST(T4Layout, LanguageNames) {
   EXPECT_STREQ(getLanguageName(T4Language::EN), "EN");
   EXPECT_STREQ(getLanguageName(T4Language::ADDITIONAL), "RU");
-  EXPECT_STREQ(getLanguageName(T4Language::DIGIT), "12");
+  EXPECT_STREQ(getLanguageName(T4Language::DIGIT), "123");
 }
 
 TEST(T4Layout, AdditionalLayoutRegistry) {

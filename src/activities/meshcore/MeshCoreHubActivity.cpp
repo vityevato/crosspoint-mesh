@@ -487,6 +487,20 @@ void MeshCoreHubActivity::render(RenderLock&&) {
     return;
   }
 
+  // Auto-reconnect in progress — full-screen popup so the user knows the hub
+  // is busy (and can cancel with Back) instead of a stale-looking tab UI.
+  if (autoReconnecting) {
+    GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE), nullptr);
+
+    GUI.drawPopup(renderer, tr(STR_CONNECTING));
+
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+    renderer.displayBuffer();
+    return;
+  }
+
   char headerSubtitle[64];
   _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
