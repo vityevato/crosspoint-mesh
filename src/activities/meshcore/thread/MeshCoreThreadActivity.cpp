@@ -455,6 +455,20 @@ void MeshCoreThreadActivity::_loopInputNav() {
   int listCount = getListCountForCurrentTab();
   int navCount = listCount + 1;  // +1 for tab bar row
 
+  // Long-press (hold) on NavNext/NavPrevious cycles the tabs, like the
+  // MeshCore hub (Settings-style). Continuous callbacks fire only on held
+  // buttons, so they never race the short-press navigation below.
+  buttonNavigator.onNextContinuous([this] {
+    int tab = static_cast<int>(currentTab);
+    tab = (tab < static_cast<int>(Tab::TAB_COUNT) - 1) ? tab + 1 : 0;
+    switchTab(static_cast<Tab>(tab));
+  });
+  buttonNavigator.onPreviousContinuous([this] {
+    int tab = static_cast<int>(currentTab);
+    tab = (tab > 0) ? tab - 1 : static_cast<int>(Tab::TAB_COUNT) - 1;
+    switchTab(static_cast<Tab>(tab));
+  });
+
   if (currentTab == Tab::MESSAGES) {
     // Side buttons (Up/Down): message-by-message scrolling
     buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this] {
