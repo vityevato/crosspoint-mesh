@@ -174,18 +174,19 @@ void MeshCoreScanActivity::loop() {
       return;
     }
 
-    buttonNavigator.onNextRelease([this, resultCount] {
+    // List navigation is handled by the physical side Up/Down buttons.
+    buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, resultCount] {
       selectedIndex = ButtonNavigator::nextIndex(selectedIndex, resultCount);
       requestUpdate();
     });
-    buttonNavigator.onPreviousRelease([this, resultCount] {
+    buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, resultCount] {
       selectedIndex = ButtonNavigator::previousIndex(selectedIndex, resultCount);
       requestUpdate();
     });
   }
 
-  // Retry scan on Right button when no results or scan complete
-  if (!connecting && scanComplete && mappedInput.wasPressed(MappedInputManager::Button::Right)) {
+  // Retry scan on the Left front button (mirrors its hint label).
+  if (!connecting && scanComplete && mappedInput.wasPressed(MappedInputManager::Button::Left)) {
     startScan();
   }
 }
@@ -201,7 +202,7 @@ void MeshCoreScanActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE),
                  headerSubtitle);
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight;
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.topPadding -
                             metrics.bottomSubtitleHeight;
 
@@ -220,9 +221,13 @@ void MeshCoreScanActivity::render(RenderLock&&) {
     // No devices found
     GUI.drawHelpText(renderer, Rect(0, contentTop, pageWidth, contentHeight), tr(STR_MESHCORE_NO_DEVICES));
   } else {
-    // Draw scan results list
+    // Draw scan results list. Side Up/Down hints sit at the left/right screen
+    // edges on X3, so inset the list to keep the rows clear of them.
+    const int listSideInset =
+        metrics.sideButtonHintsWidth + metrics.sideButtonHintsMargin + metrics.sideButtonHintsGap + 2;
+    Rect listRect(listSideInset, contentTop, pageWidth - 2 * listSideInset, contentHeight);
     GUI.drawList(
-        renderer, Rect(0, contentTop, pageWidth, contentHeight), resultCount, selectedIndex,
+        renderer, listRect, resultCount, selectedIndex,
         [results](int index) {
           const char* n = results[index].name;
           if (n[0] == '\0') n = tr(STR_MESHCORE_UNKNOWN);
@@ -233,18 +238,19 @@ void MeshCoreScanActivity::render(RenderLock&&) {
           snprintf(subtitle, sizeof(subtitle), "RSSI: %d dBm", results[index].rssi);
           return std::string(subtitle);
         });
+    GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   }
 
   // Button hints
   const char* btn2 = "";
-  const char* btn4 = "";
   if (!connecting && scanComplete && resultCount > 0) {
     btn2 = tr(STR_CONNECT);
-    btn4 = tr(STR_DIR_DOWN);
   }
   const char* btn3 = (!connecting && scanComplete) ? tr(STR_MESHCORE_RETRY) : "";
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, btn3, btn4);
+  // The far-right front button is deliberately unused here (Down is on the
+  // physical side buttons), so its slot gets no label and no action.
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, btn3, "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
