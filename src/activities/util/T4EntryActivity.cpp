@@ -3,6 +3,7 @@
 #include <HalGPIO.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Utf8.h>
 
 #include <cctype>
 #include <cstdio>
@@ -15,6 +16,19 @@
 #include "Memory.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+// Count the UTF-8 code points (visual characters) in @p s.  The password mask
+// renders one '*' per code point so multi-byte text (Cyrillic, CJK, …) shows
+// as many dots as visible characters, not bytes.
+static size_t utf8CharCount(const char* s) {
+  size_t n = 0;
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(s);
+  while (*p != '\0') {
+    utf8NextCodepoint(&p);
+    n++;
+  }
+  return n;
+}
 
 // ── Constructor ──────────────────────────────────────────────────────────
 
@@ -310,6 +324,13 @@ bool T4EntryActivity::handleLongPresses() {
       _userMode = _mode;  // Remember user's explicit choice
       SETTINGS.t4UserMode = static_cast<uint8_t>(_userMode);
       SETTINGS.saveToFile();
+      requestUpdate();
+    } else if (_inputType == InputType::Password) {
+      // Right long-press → toggle password visibility.  The Right button is
+      // otherwise unused for a long-press in password mode (no mode toggle),
+      // and the visibility state is shown on its long-press hint.
+      _passwordVisible = !_passwordVisible;
+      LOG_DBG("T4", "loop: Right long-press → toggle password visibility=%d", static_cast<int>(_passwordVisible));
       requestUpdate();
     } else {
       LOG_DBG("T4", "loop: Right long-press ignored — inputType=%d lang=%d", static_cast<int>(_inputType),
@@ -1077,14 +1098,17 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
 
   // Build full text (real content, not masked)
   char fullText[512];
-  if (_inputType == InputType::Password) {
-    size_t confLen = strlen(confirmedText);
+  if (_inputType == InputType::Password && !_passwordVisible) {
+    const size_t maskCount = utf8CharCount(confirmedText);
     size_t i;
-    for (i = 0; i < confLen && i < 511; i++) fullText[i] = '*';
+    for (i = 0; i < maskCount && i < 511; i++) fullText[i] = '*';
     if (hasCandidate) {
-      size_t candLen = strlen(candidate);
-      for (size_t j = 0; j < candLen && (i + j) < 511; j++) fullText[i + j] = '*';
-      fullText[i + (candLen < 511 - i ? candLen : 511 - i)] = '\0';
+      // Multi-tap: the cycling letter may itself be multi-byte — mask it as a
+      // single '*' per code point too.
+      const size_t candMask = utf8CharCount(candidate);
+      const size_t candFit = (i + candMask < 511) ? candMask : (511 - i);
+      for (size_t j = 0; j < candFit; j++) fullText[i + j] = '*';
+      fullText[i + candFit] = '\0';
     } else {
       fullText[i] = '\0';
     }
@@ -1106,11 +1130,7 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
   int leftMargin = 0;
   int rightMargin = 0;
   textFieldMargins(pageWidth, leftMargin, rightMargin);
-  const int toggleReserve =
-      isPassword
-          ? std::max(renderer.getTextWidth(UI_12_FONT_ID, "[abc]"), renderer.getTextWidth(UI_12_FONT_ID, "[***]")) + 4
-          : 0;
-  const int maxLineWidth = pageWidth - leftMargin - rightMargin - toggleReserve;
+  const int maxLineWidth = pageWidth - leftMargin - rightMargin;
 
   // ── Pass 1: collect line boundaries (no rendering) ────────────────────
   struct LineInfo {
@@ -1288,15 +1308,6 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
     renderer.drawLine(cX + 1, cY, cX + serifW, cY, 2, true);
     renderer.drawLine(cX - serifW, cBottom, cX - 1, cBottom, 2, true);
     renderer.drawLine(cX + 1, cBottom, cX + serifW, cBottom, 2, true);
-  }
-
-  // ── Password toggle ───────────────────────────────────────────────────
-  if (isPassword) {
-    const char* toggleLabel = _passwordVisible ? "[***]" : "[abc]";
-    const int toggleWidth = renderer.getTextWidth(UI_12_FONT_ID, toggleLabel);
-    const int toggleX = pageWidth - rightMargin - toggleWidth;
-    const int toggleY = startY + visibleHeight;
-    renderer.drawText(UI_12_FONT_ID, toggleX, toggleY, toggleLabel, true);
   }
 
   return startY + visibleHeight;
@@ -1786,9 +1797,14 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
     //
     // Right long-press → toggle Predict/Multi-tap: show the NEXT mode.
     // Hidden when Predict is unavailable (non-Text input, no dictionary).
+    // For Password input the Right long-press instead toggles visibility
+    // (Predict never applies), so the hint shows the NEXT state: "[abc]"
+    // (will reveal the typed text) or "[***]" (will re-mask it).
     const char* modeHint = "";
     if (_inputType == InputType::Text && languageSupportsPredict(_lang)) {
       modeHint = (_mode == t4::T4Mode::MULTI_TAP) ? tr(STR_T4_MODE_PREDICT) : tr(STR_T4_MODE_TAP);
+    } else if (_inputType == InputType::Password) {
+      modeHint = _passwordVisible ? "[***]" : "[abc]";
     }
     const auto labels = mappedInput.mapLabels(tr(STR_T4_CANCEL), tr(STR_T4_CONFIRM_BTN), langHint, modeHint);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4,
