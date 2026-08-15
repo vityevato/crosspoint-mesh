@@ -8,7 +8,7 @@
 
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
-#include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/T4EntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -113,8 +113,8 @@ void OpdsSettingsActivity::handleSelection() {
         requestUpdate();
       }
     };
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SERVER_NAME),
-                                                                   editServer.name, 63, InputType::Text),
+    startActivityForResult(std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_SERVER_NAME),
+                                                             editServer.name, 63, InputType::Text),
                            handler);
   } else if (selectedIndex == 1) {
     // Server URL
@@ -127,8 +127,8 @@ void OpdsSettingsActivity::handleSelection() {
         requestUpdate();
       }
     };
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_OPDS_SERVER_URL),
-                                                                   prefillUrl, 127, InputType::Url),
+    startActivityForResult(std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_OPDS_SERVER_URL), prefillUrl,
+                                                             127, InputType::Url),
                            handler);
   } else if (selectedIndex == 2) {
     // Username
@@ -140,8 +140,8 @@ void OpdsSettingsActivity::handleSelection() {
         requestUpdate();
       }
     };
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_USERNAME),
-                                                                   editServer.username, 63, InputType::Text),
+    startActivityForResult(std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_USERNAME),
+                                                             editServer.username, 63, InputType::Text),
                            handler);
   } else if (selectedIndex == 3) {
     // Password
@@ -153,8 +153,8 @@ void OpdsSettingsActivity::handleSelection() {
         requestUpdate();
       }
     };
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_PASSWORD),
-                                                                   editServer.password, 63, InputType::Password),
+    startActivityForResult(std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_PASSWORD),
+                                                             editServer.password, 63, InputType::Password),
                            handler);
   } else if (selectedIndex == 4 && !isNewServer) {
     // Delete flow is only available for existing servers.

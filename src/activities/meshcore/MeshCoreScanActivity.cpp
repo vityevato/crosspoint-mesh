@@ -12,7 +12,7 @@
 
 #include "MeshCoreSubtitle.h"
 #include "activities/ActivityResult.h"
-#include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/T4EntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "utils/MeshCoreHeapLog.h"
@@ -72,8 +72,8 @@ void MeshCoreScanActivity::connectToSelected() {
   } else {
     // Truly unknown device — prompt user for BLE PIN with MeshCore factory default
     startActivityForResult(
-        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN), "123456", 6,
-                                                InputType::Text),
+        std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN), "123456", 6,
+                                          InputType::Text),
         [this, addr = std::string(selected.address), addrType = selected.addressType](const ActivityResult& result) {
           if (result.isCancelled) {
             requestUpdate();
@@ -129,23 +129,22 @@ void MeshCoreScanActivity::loop() {
         if (MeshCoreMessageStore::loadCompanionPinForAddress(results[selectedIndex].address, &storedPin)) {
           char defaultPinStr[8];
           snprintf(defaultPinStr, sizeof(defaultPinStr), "%lu", (unsigned long)storedPin);
-          startActivityForResult(
-              std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN), defaultPinStr,
-                                                      6, InputType::Text),
-              [this, addr = std::string(results[selectedIndex].address),
-               addrType = results[selectedIndex].addressType](const ActivityResult& result) {
-                if (result.isCancelled) {
-                  requestUpdate();
-                  return;
-                }
-                const auto& pinStr = std::get<KeyboardResult>(result.data).text;
-                uint32_t pin = strtoul(pinStr.c_str(), nullptr, 10);
-                client.setConnectPin(pin);
-                connecting = true;
-                connectFailed = false;
-                client.connectTo(addr.c_str(), addrType);
-                requestUpdate();
-              });
+          startActivityForResult(std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN),
+                                                                   defaultPinStr, 6, InputType::Text),
+                                 [this, addr = std::string(results[selectedIndex].address),
+                                  addrType = results[selectedIndex].addressType](const ActivityResult& result) {
+                                   if (result.isCancelled) {
+                                     requestUpdate();
+                                     return;
+                                   }
+                                   const auto& pinStr = std::get<KeyboardResult>(result.data).text;
+                                   uint32_t pin = strtoul(pinStr.c_str(), nullptr, 10);
+                                   client.setConnectPin(pin);
+                                   connecting = true;
+                                   connectFailed = false;
+                                   client.connectTo(addr.c_str(), addrType);
+                                   requestUpdate();
+                                 });
           return;
         }
       }

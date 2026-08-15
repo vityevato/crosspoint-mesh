@@ -1295,7 +1295,7 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
     const char* toggleLabel = _passwordVisible ? "[***]" : "[abc]";
     const int toggleWidth = renderer.getTextWidth(UI_12_FONT_ID, toggleLabel);
     const int toggleX = pageWidth - rightMargin - toggleWidth;
-    const int toggleY = startY + visibleHeight - lineHeight;
+    const int toggleY = startY + visibleHeight;
     renderer.drawText(UI_12_FONT_ID, toggleX, toggleY, toggleLabel, true);
   }
 

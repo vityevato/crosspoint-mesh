@@ -9,7 +9,7 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "WifiCredentialStore.h"
-#include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/T4EntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -186,10 +186,10 @@ void WifiSelectionActivity::selectNetwork(const int index) {
     // Show password entry
     state = WifiSelectionState::PASSWORD_ENTRY;
     // Don't allow screen updates while changing activity
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_ENTER_WIFI_PASSWORD),
-                                                                   "",  // No initial text
-                                                                   64,  // Max password length
-                                                                   InputType::Password),
+    startActivityForResult(std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_ENTER_WIFI_PASSWORD),
+                                                             "",  // No initial text
+                                                             64,  // Max password length
+                                                             InputType::Password),
                            [this](const ActivityResult& result) {
                              if (result.isCancelled) {
                                state = WifiSelectionState::NETWORK_LIST;

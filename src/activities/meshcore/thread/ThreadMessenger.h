@@ -19,7 +19,7 @@ struct ThreadMessenger {
   const char* name;
   int bodyFontId;
 
-  /// Called from the KeyboardEntryActivity result callback.
+  /// Called from the T4EntryActivity result callback.
   /// Appends to store, sends via BLE, and reloads the visible batch.
   void onSendComplete(MeshCoreThreadActivity& act, const ActivityResult& result);
 };
