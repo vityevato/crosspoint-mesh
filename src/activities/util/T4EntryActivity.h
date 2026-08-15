@@ -36,6 +36,13 @@ class T4EntryActivity : public Activity {
   // Punctuation cycle
   static constexpr const char* PUNCT_CYCLE[] = {" ", ". ", ", ", "! ", "? ", ": ", "; ", "... "};
   static constexpr int PUNCT_COUNT = 8;
+  // Same cycle without the trailing space, used for Password/URL input where
+  // the text-sentence spacing convention ("period + space", …) doesn't apply —
+  // the substitution is the bare punctuation glyph.
+  static constexpr const char* PUNCT_CYCLE_BARE[] = {" ", ".", ",", "!", "?", ":", ";", "..."};
+
+  // Pick the punctuation cycle active for the current input type.
+  const char* const* punctCycle() const { return (_inputType == InputType::Text) ? PUNCT_CYCLE : PUNCT_CYCLE_BARE; }
 
   void onComplete();
   void onCancel();

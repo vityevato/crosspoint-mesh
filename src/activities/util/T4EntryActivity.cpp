@@ -672,6 +672,7 @@ bool T4EntryActivity::isTextInputFull() const {
 // ── Punctuation Handling ─────────────────────────────────────────────────
 
 constexpr const char* T4EntryActivity::PUNCT_CYCLE[];
+constexpr const char* T4EntryActivity::PUNCT_CYCLE_BARE[];
 // Note: constexpr static arrays need out-of-class definition in C++17
 
 bool T4EntryActivity::isAutoCapPunct(const char* punct, const t4::SentenceConfig& cfg) {
@@ -709,23 +710,23 @@ void T4EntryActivity::handlePunctuation() {
 
     if (_wordJustConfirmed && millis() - _lastConfirmMs <= decltype(_inputEngine)::kMultiTapTimeoutMs) {
       // Within timeout: cycle punctuation
-      const char* prevPunct = PUNCT_CYCLE[_punctIndex];
+      const char* prevPunct = punctCycle()[_punctIndex];
       size_t prevLen = strlen(prevPunct);
       if (text.length() >= prevLen) {
         text.erase(text.length() - prevLen);
       }
       _punctIndex = (_punctIndex + 1) % PUNCT_COUNT;
-      text += PUNCT_CYCLE[_punctIndex];
+      text += punctCycle()[_punctIndex];
       _lastConfirmMs = millis();
       // Sentence-ending punctuation → auto-cap next word (Text only).
-      if (_inputType == InputType::Text && isAutoCapPunct(PUNCT_CYCLE[_punctIndex], *_sentenceCfg)) {
+      if (_inputType == InputType::Text && isAutoCapPunct(punctCycle()[_punctIndex], *_sentenceCfg)) {
         if (_inputEngine.getShiftLevel() == 0) {
           _inputEngine.setShiftLevel(1);
           _autoCap = true;
           _autoCapFromSentence = true;
         }
       }
-      LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, PUNCT_CYCLE[_punctIndex],
+      LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
               text.c_str());
     } else {
       // First confirm or timeout expired: add trailing space
@@ -750,13 +751,13 @@ void T4EntryActivity::handlePunctuation() {
       // Fall through to first-press logic below
     } else {
       // Remove previous punctuation suffix, then append next in cycle
-      const char* prevPunct = PUNCT_CYCLE[_punctIndex];
+      const char* prevPunct = punctCycle()[_punctIndex];
       size_t prevLen = strlen(prevPunct);
       if (text.length() >= prevLen) {
         text.erase(text.length() - prevLen);
       }
       uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
-      const char* nextPunct = PUNCT_CYCLE[nextIdx];
+      const char* nextPunct = punctCycle()[nextIdx];
       size_t nextLen = strlen(nextPunct);
       // Only apply if it won't overflow the engine buffer
       if (text.length() + nextLen <= decltype(_inputEngine)::kMaxTextLen) {
@@ -772,7 +773,7 @@ void T4EntryActivity::handlePunctuation() {
         }
       }
       _lastConfirmMs = millis();
-      LOG_DBG("T4", "handlePunct: PREDICT cycle punct[%d]='%s' → text='%s'", _punctIndex, PUNCT_CYCLE[_punctIndex],
+      LOG_DBG("T4", "handlePunct: PREDICT cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
               text.c_str());
       _inputEngine.setConfirmedText(text.c_str());
       requestUpdate();
@@ -1632,13 +1633,13 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
 
     for (int i = 0; i < PUNCT_COUNT; i++) {
       int iy = popupY + popupPadY + i * lineHeight;
-      int itemW = renderer.getTextWidth(SMALL_FONT_ID, PUNCT_CYCLE[i]);
+      int itemW = renderer.getTextWidth(SMALL_FONT_ID, punctCycle()[i]);
       int textX = popupX + (popupW - itemW) / 2;
       if (i == _punctIndex) {
         renderer.fillRect(popupX + 4, iy, popupW - 8, lineHeight, true);
-        renderer.drawText(SMALL_FONT_ID, textX, iy, PUNCT_CYCLE[i], false);
+        renderer.drawText(SMALL_FONT_ID, textX, iy, punctCycle()[i], false);
       } else {
-        renderer.drawText(SMALL_FONT_ID, textX, iy, PUNCT_CYCLE[i], true);
+        renderer.drawText(SMALL_FONT_ID, textX, iy, punctCycle()[i], true);
       }
     }
   }
