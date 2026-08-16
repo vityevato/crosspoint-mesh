@@ -45,6 +45,16 @@ void FontDecompressor::freeHotGroup() {
   hotGlyphBufCapacity = 0;
 }
 
+bool FontDecompressor::ensureCapacity(uint8_t*& buf, uint32_t& capacity, uint32_t needed) {
+  if (capacity >= needed) return true;
+  // Grow-only, free-then-malloc: every caller fully rewrites the buffer after a grow, so the
+  // old contents are dead -- freeing first gives the allocator its best shot on a tight heap.
+  free(buf);
+  buf = static_cast<uint8_t*>(malloc(needed));  // owned by FontDecompressor, freed in freeHotGroup()
+  capacity = buf ? needed : 0;
+  return buf != nullptr;
+}
+
 uint16_t FontDecompressor::getGroupIndex(const EpdFontData* fontData, uint32_t glyphIndex) {
   // O(1) path for frequency-grouped fonts with glyphToGroup mapping
   if (fontData->glyphToGroup != nullptr) {
@@ -185,27 +195,19 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     stats.cacheMisses++;
     const EpdFontGroup& group = fontData->groups[groupIndex];
 
-    // Grow the reusable buffer only when the new group is larger. Nothrow malloc: on OOM
-    // we return nullptr (missing glyph) rather than abort() the firmware.
-    if (group.uncompressedSize > hotGroupCapacity) {
-      free(hotGroup);
-      hotGroup = static_cast<uint8_t*>(malloc(group.uncompressedSize));
-      hotGroupCapacity = hotGroup ? group.uncompressedSize : 0;
-    }
-    if (!hotGroup) {
-      // Reached at most once per group per page (subsequent glyphs hit the skip above).
+    // ensureCapacity may free the buffer, so the cached-group identity dies with it either way.
+    hotGroupFont = nullptr;
+    hotGroupIndex = UINT16_MAX;
+    if (!ensureCapacity(hotGroup, hotGroupCapacity, group.uncompressedSize)) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
+      // Memoize the failure so the next glyph in this group skips the malloc + error-log storm.
       hotGroupFailedFont = fontData;
       hotGroupFailedIndex = groupIndex;
-      hotGroupFont = nullptr;
-      hotGroupIndex = UINT16_MAX;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
 
     if (!decompressGroup(fontData, groupIndex, hotGroup, group.uncompressedSize)) {
-      hotGroupFont = nullptr;
-      hotGroupIndex = UINT16_MAX;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -218,13 +220,8 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   }
 
   // Compact just the requested glyph from byte-aligned data into scratch buffer
-  if (glyph->dataLength > hotGlyphBufCapacity) {
-    free(hotGlyphBuf);
-    hotGlyphBuf = static_cast<uint8_t*>(malloc(glyph->dataLength));
-    hotGlyphBufCapacity = hotGlyphBuf ? glyph->dataLength : 0;
-  }
-  if (!hotGlyphBuf) {
-    LOG_ERR("FDC", "Failed to allocate %u bytes for hot glyph buffer", glyph->dataLength);
+  if (!ensureCapacity(hotGlyphBuf, hotGlyphBufCapacity, glyph->dataLength)) {
+    LOG_ERR("FDC", "Failed to allocate %u bytes for glyph scratch", (unsigned)glyph->dataLength);
     stats.getBitmapTimeUs += micros() - tStart;
     return nullptr;
   }

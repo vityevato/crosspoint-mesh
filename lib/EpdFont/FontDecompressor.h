@@ -65,14 +65,13 @@ class FontDecompressor {
 
   // Hot group: last decompressed group (byte-aligned) for non-prewarmed fallback path.
   // Kept in byte-aligned format; individual glyphs are compacted on demand into hotGlyphBuf.
-  // Manually managed via nothrow malloc (not std::vector): under -fno-exceptions a vector
-  // resize() aborts() on allocation failure, which would crash the whole reader when the
-  // large (~34KB) Cyrillic group cannot be allocated on a fragmented heap. A nothrow malloc
-  // lets the fallback path return nullptr (missing glyph) instead. Capacity is retained
-  // across calls so same-size groups reuse the buffer without churn.
+  // Nothrow high-water malloc buffers, NOT std::vector: getBitmap() runs on the render path,
+  // and under -fno-exceptions a vector resize that hits OOM abort()s the firmware instead of
+  // failing (field crash: hotGroup.resize() -> std::bad_alloc -> abort with ~11 KB free).
+  // ensureCapacity() returns false on OOM so the caller can skip the glyph gracefully.
   const EpdFontData* hotGroupFont = nullptr;
   uint16_t hotGroupIndex = UINT16_MAX;
-  uint8_t* hotGroup = nullptr;
+  uint8_t* hotGroup = nullptr;  // owned; freed in freeHotGroup()/dtor
   uint32_t hotGroupCapacity = 0;
 
   // Memoizes a hot-group allocation failure. Without it, a single group that cannot be
@@ -85,9 +84,12 @@ class FontDecompressor {
   uint16_t hotGroupFailedIndex = UINT16_MAX;
 
   // Scratch buffer for compacting a single glyph from the hot group.
-  // Valid until the next getBitmap() call. Manually managed (see hotGroup rationale).
+  // Valid until the next getBitmap() call. Same ownership/OOM contract as hotGroup.
   uint8_t* hotGlyphBuf = nullptr;
   uint32_t hotGlyphBufCapacity = 0;
+
+  // Grow (never shrink) an owned buffer to at least `needed` bytes; false on OOM, buffer freed.
+  static bool ensureCapacity(uint8_t*& buf, uint32_t& capacity, uint32_t needed);
 
   void freePageBuffer();
   void freeHotGroup();

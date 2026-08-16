@@ -6,6 +6,8 @@
 # Simulator virtual SD card filesystem
 /fs_/
 .vscode
+open-x4-sdk
+fs_
 lib/EpdFont/fontsrc
 lib/I18n/I18nKeys.h
 lib/I18n/I18nStrings.h
@@ -28,3 +30,9 @@ lib/EpdFont/scripts/output/
 .claude/*
 !.claude/skills/
 opencode.json
+/managed_components
+/.dummy
+/CMakeLists.txt
+/dependencies.lock
+/sdkconfig.*
+sdkconfig.sticky
