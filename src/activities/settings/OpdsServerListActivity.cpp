@@ -11,7 +11,7 @@
 #include "OpdsSettingsActivity.h"
 #include "activities/ActivityManager.h"
 #include "activities/browser/OpdsBookBrowserActivity.h"
-#include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/TextEntryHelpers.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/OpdsFilename.h"
@@ -147,10 +147,9 @@ void OpdsServerListActivity::handleSelection() {
         requestUpdate();
       }
     };
-    startActivityForResult(
-        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_OPDS_DOWNLOAD_FOLDER),
-                                                std::string(SETTINGS.opdsDownloadFolder), 63, InputType::Text),
-        folderHandler);
+    startActivityForResult(textentry::makeEntryActivity(renderer, mappedInput, tr(STR_OPDS_DOWNLOAD_FOLDER),
+                                                        std::string(SETTINGS.opdsDownloadFolder), 63, InputType::Text),
+                           folderHandler);
     return;
   }
 

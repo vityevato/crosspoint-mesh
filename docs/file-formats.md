@@ -462,8 +462,8 @@ There is no automatic deletion of stale companion directories.
 
 Learned-word store for T4 predictive input, at
 `/.crosspoint/dicts/user_words.bin`. Written by `T4EntryActivity` on exit
-when it changed, and only for `InputType::Text` fields — password and URL
-entry never reads or writes it.
+when it changed, and only for `InputType::Text` fields — password, URL, and
+digit entry never reads or writes it.
 
 The store serves both purposes of personalization: words missing from the
 shipped `.trie` (names, jargon typed in Multi-tap) become predictable, and

@@ -12,7 +12,7 @@
 
 #include "MeshCoreSubtitle.h"
 #include "activities/ActivityResult.h"
-#include "activities/util/T4EntryActivity.h"
+#include "activities/util/TextEntryHelpers.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "utils/MeshCoreHeapLog.h"
@@ -72,8 +72,7 @@ void MeshCoreScanActivity::connectToSelected() {
   } else {
     // Truly unknown device — prompt user for BLE PIN with MeshCore factory default
     startActivityForResult(
-        std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN), "123456", 6,
-                                          InputType::Text),
+        textentry::makeEntryActivity(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN), "123456", 6, InputType::Digit),
         [this, addr = std::string(selected.address), addrType = selected.addressType](const ActivityResult& result) {
           if (result.isCancelled) {
             requestUpdate();
@@ -129,8 +128,8 @@ void MeshCoreScanActivity::loop() {
         if (MeshCoreMessageStore::loadCompanionPinForAddress(results[selectedIndex].address, &storedPin)) {
           char defaultPinStr[8];
           snprintf(defaultPinStr, sizeof(defaultPinStr), "%lu", (unsigned long)storedPin);
-          startActivityForResult(std::make_unique<T4EntryActivity>(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN),
-                                                                   defaultPinStr, 6, InputType::Text),
+          startActivityForResult(textentry::makeEntryActivity(renderer, mappedInput, tr(STR_MESHCORE_ENTER_PIN),
+                                                              defaultPinStr, 6, InputType::Digit),
                                  [this, addr = std::string(results[selectedIndex].address),
                                   addrType = results[selectedIndex].addressType](const ActivityResult& result) {
                                    if (result.isCancelled) {

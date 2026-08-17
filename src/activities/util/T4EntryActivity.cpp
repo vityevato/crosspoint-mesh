@@ -93,13 +93,15 @@ void T4EntryActivity::onEnter() {
 
   // Restore the last-used language for Text input.  Password and URL
   // always start with EN — there's no point restoring e.g. Russian for a
-  // password field.
+  // password field.  Digit input always opens on the numeric keyboard.
   if (_inputType == InputType::Text) {
     _lang = static_cast<t4::T4Language>(SETTINGS.t4LastLanguage);
     if (_lang == t4::T4Language::ADDITIONAL && !t4::hasActiveAdditionalLayout()) {
       _lang = t4::T4Language::EN;
     }
     loadUserLexicon();
+  } else if (_inputType == InputType::Digit) {
+    _lang = t4::T4Language::DIGIT;
   }
 
   _inputEngine.setLanguage(_lang);
@@ -276,8 +278,9 @@ bool T4EntryActivity::handleLongPresses() {
     _lang = t4::cycleLanguage(_lang);
     LOG_DBG("T4", "loop: long-press Left → cycle language to %s", t4::getLanguageName(_lang));
 
-    // Persist language changes only for Text input — Password and URL
-    // language choices are transient and shouldn't affect the next session.
+    // Persist language changes only for Text input — Password, URL, and
+    // Digit language choices are transient and shouldn't affect the next
+    // session.
     if (_inputType == InputType::Text) {
       SETTINGS.t4LastLanguage = static_cast<uint8_t>(_lang);
       SETTINGS.saveToFile();
