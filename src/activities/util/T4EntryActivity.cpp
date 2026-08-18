@@ -271,9 +271,11 @@ bool T4EntryActivity::handleLongPresses() {
     return true;
   }
 
-  // Left long-press → cycle language (disabled in cycle mode)
+  // Left long-press → cycle language (disabled in cycle mode; the numeric
+  // keyboard in Digit input never changes layout)
   if (_leftHeld && !_leftLongHandled && mappedInput.isPressed(MappedInputManager::Button::Left) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS && !(_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates)) {
+      mappedInput.getHeldTime() > LONG_PRESS_MS && _inputType != InputType::Digit &&
+      !(_mode == t4::T4Mode::PREDICT && _upSideCyclesCandidates)) {
     _leftLongHandled = true;
     _lang = t4::cycleLanguage(_lang);
     LOG_DBG("T4", "loop: long-press Left → cycle language to %s", t4::getLanguageName(_lang));
@@ -294,6 +296,13 @@ bool T4EntryActivity::handleLongPresses() {
     }
     LOG_DBG("T4", "loop: lang cycle saved text='%s'", savedText.c_str());
 
+    // reset() also clears the engine's Shift level, so save the current
+    // Shift/Caps and sentence-start auto-cap state here and restore it
+    // after the layout switch below.
+    const uint8_t savedShiftLevel = _inputEngine.getShiftLevel();
+    const bool savedAutoCap = _autoCap;
+    const bool savedAutoCapFromSentence = _autoCapFromSentence;
+
     _inputEngine.reset();
     _inputEngine.setLanguage(_lang);
     _sentenceCfg = t4::getSentenceConfig(_lang);
@@ -302,6 +311,15 @@ bool T4EntryActivity::handleLongPresses() {
     if (!savedText.empty()) {
       _inputEngine.setConfirmedText(savedText.c_str());
     }
+
+    // Restore Shift/Caps and sentence-start auto-cap state across the cycle.
+    // reset() clears the engine's Shift level; this state describes the
+    // user's intent for the next typed word (sentence-start) and must
+    // survive a layout switch — including a trip through the case-less
+    // DIGIT layout on the way to another language.
+    _inputEngine.setShiftLevel(savedShiftLevel);
+    _autoCap = savedAutoCap;
+    _autoCapFromSentence = savedAutoCapFromSentence;
 
     // Apply the user's preferred mode.  When the language has no
     // dictionary the effective mode is forced to Multi-tap; _userMode
@@ -1796,8 +1814,11 @@ void T4EntryActivity::renderButtonHints(int lineHeight) {
   } else {
     // Long-press hints (inactive style).
     //
-    // Left long-press → cycle language: show the NEXT language name.
-    const char* langHint = t4::getLanguageName(t4::cycleLanguage(_lang));
+    // Left long-press → cycle language: show the NEXT language name.  Hidden
+    // for Digit input, whose numeric keyboard is fixed and never changes
+    // layout.
+    const bool langCycleEnabled = (_inputType != InputType::Digit);
+    const char* langHint = langCycleEnabled ? t4::getLanguageName(t4::cycleLanguage(_lang)) : "";
     //
     // Right long-press → toggle Predict/Multi-tap: show the NEXT mode.
     // Hidden when Predict is unavailable (non-Text input, no dictionary).
