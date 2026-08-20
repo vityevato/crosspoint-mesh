@@ -81,8 +81,11 @@ void SettingsActivity::rebuildSettingsLists() {
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
-  systemSettings.push_back(
-      SettingInfo::Action(StrId::STR_ADDITIONAL_KEYBOARD_LAYOUT, SettingAction::AdditionalKeyboardLayout));
+  // The T4 keyboard layout picker only applies to button-driven (non-touch) devices.
+  if (!BoardConfig::hasTouch()) {
+    systemSettings.push_back(
+        SettingInfo::Action(StrId::STR_ADDITIONAL_KEYBOARD_LAYOUT, SettingAction::AdditionalKeyboardLayout));
+  }
   // Text Settings groups the reader's typography settings under one action.
   readerSettings.insert(readerSettings.begin(),
                         SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
