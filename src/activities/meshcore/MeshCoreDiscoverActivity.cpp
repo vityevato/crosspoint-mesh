@@ -228,7 +228,7 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
         [nodes](int index) {
           char buf[48];
           char keyLabel[MeshCoreContact::PUBLIC_KEY_DISPLAY_LEN];
-          char ts[16] = "---";
+          char ts[24] = "---";
           nodes[index].getPublicKeyLabel(keyLabel);
           if (nodes[index].lastSeen != 0) {
             formatMeshCoreTimestamp(nodes[index].lastSeen, ts, sizeof(ts));
