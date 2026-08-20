@@ -233,7 +233,7 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
           if (nodes[index].lastSeen != 0) {
             formatMeshCoreTimestamp(nodes[index].lastSeen, ts, sizeof(ts));
           }
-          char hopBuf[12];
+          char hopBuf[24];
           meshcore::formatMeshCoreHopCount(nodes[index].pathLength, hopBuf, sizeof(hopBuf));
           snprintf(buf, sizeof(buf), "%s %s %s %s %s", keyLabel, meshcore::DotSeparator, ts, meshcore::DotSeparator,
                    hopBuf);

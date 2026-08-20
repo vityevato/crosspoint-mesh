@@ -173,7 +173,7 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
     const bool showMeta = outgoing || msg.timestamp > 0;
     if (showMeta && fits(ctx.metaLineH)) {
       char metaBuf[64];
-      char hopBuf[20];
+      char hopBuf[32];
       if (outgoing) {
         if (isChannel) {
           meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
