@@ -90,8 +90,8 @@ uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, i
     height += static_cast<uint16_t>(lines.size()) * lineH;
   }
 
-  // ── Meta line ──
-  if (msg.timestamp > 0) {
+  // ── Meta line (mirrors the render gate: outgoing always draws status) ──
+  if (msg.direction == MsgDirection::SENT || msg.timestamp > 0) {
     height += lineH;
   }
 

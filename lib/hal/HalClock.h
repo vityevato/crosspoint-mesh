@@ -27,6 +27,12 @@ class HalClock {
   // Returns false if RTC is not available.
   bool getTime(uint8_t& hour, uint8_t& minute) const;
 
+  // Read the RTC as a Unix epoch timestamp in seconds (UTC).
+  // The firmware keeps the RTC in UTC (NTP sync writes UTC0), so no
+  // timezone offset is applied. Returns false if RTC is unavailable,
+  // the read fails, or the value is out of uint32 range.
+  bool getEpochUtc(uint32_t& out) const;
+
   // Format time into a caller-provided buffer.
   // 24h mode produces "HH:MM" (needs >=6 bytes); 12h mode produces "H:MM AM"/"HH:MM PM" (needs >=9 bytes).
   // utcOffsetQuarterHoursBiased: biased quarter-hour offset (48 = UTC+0, 0 = UTC-12, 104 = UTC+14).

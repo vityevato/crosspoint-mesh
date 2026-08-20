@@ -5,6 +5,7 @@
 
 #include <cstring>
 
+#include "MeshCoreClock.h"
 #include "MeshCoreProtocol.h"
 
 // Nordic UART Service UUIDs
@@ -456,7 +457,7 @@ bool MeshCoreClient::sendSelfAdvert(bool flood) {
 
 bool MeshCoreClient::sendChannelMessage(uint8_t channelIdx, const char* text) {
   uint8_t buf[CMD_BUF_SIZE];
-  uint32_t ts = static_cast<uint32_t>(millis() / 1000);
+  uint32_t ts = meshcoreNowUtc();
   size_t len = MeshProto::buildSendChannelMsg(buf, sizeof(buf), channelIdx, ts, text);
   // Firmware replies to CMD_SEND_CHAN_MSG with a bare PKT_OK (0x00), not
   // PKT_MSG_SENT (0x06): channel messages are flood broadcasts with no
@@ -493,7 +494,7 @@ bool MeshCoreClient::sendChannelMessage(uint8_t channelIdx, const char* text) {
 
 bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const char* text, uint32_t msgId) {
   uint8_t buf[CMD_BUF_SIZE];
-  uint32_t ts = static_cast<uint32_t>(millis() / 1000);
+  uint32_t ts = meshcoreNowUtc();
   size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), contact.publicKey, ts, text, /*attempt=*/0);
   if (len == 0) return false;
 
@@ -1201,7 +1202,7 @@ void MeshCoreClient::resendDm(uint8_t attempt) {
   if (!_pendingDm.active) return;
 
   uint8_t buf[CMD_BUF_SIZE];
-  uint32_t ts = static_cast<uint32_t>(millis() / 1000);
+  uint32_t ts = meshcoreNowUtc();
   size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), _pendingDm.pubkey, ts, _pendingDm.text, attempt);
   if (len == 0) return;
 

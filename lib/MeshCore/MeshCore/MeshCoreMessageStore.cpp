@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "MeshCoreClock.h"
+
 static constexpr char MESHCORE_DIR[] = "/.crosspoint/meshcore";
 static constexpr char COMPANION_FILE[] = "/.crosspoint/meshcore/companion.json";
 static constexpr uint8_t META_FILE_VERSION = 2;
@@ -366,7 +368,7 @@ bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t
   if (!readMessage(convPath, id, msg)) return false;
   if (msg.deliveryStatus != newStatus) {
     // Update timestamp to reflect the status-change time
-    msg.timestamp = static_cast<uint32_t>(millis() / 1000);
+    msg.timestamp = meshcoreNowUtc();
   }
   msg.deliveryStatus = newStatus;
   return writeMessage(convPath, id, msg);

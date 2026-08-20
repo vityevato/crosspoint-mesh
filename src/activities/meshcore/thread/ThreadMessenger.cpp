@@ -2,6 +2,7 @@
 
 #include <Logging.h>
 #include <MeshCore/MeshCoreClient.h>
+#include <MeshCore/MeshCoreClock.h>
 #include <MeshCore/MeshCoreMessageStore.h>
 #include <MeshCore/MeshCoreTypes.h>
 
@@ -27,7 +28,7 @@ void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const Activity
   msg.direction = MsgDirection::SENT;
   msg.type = isCh ? MsgType::CHANNEL : MsgType::DIRECT;
   msg.channelIdx = chIdx;
-  msg.timestamp = static_cast<uint32_t>(millis() / 1000);
+  msg.timestamp = meshcoreNowUtc();
   msg.deliveryStatus = DeliveryStatus::SENT;
   snprintf(msg.text, sizeof(msg.text), "%s", text.c_str());
 

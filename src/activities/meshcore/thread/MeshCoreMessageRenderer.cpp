@@ -117,32 +117,38 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
       }
     }
 
-    // Meta line (timestamp + delivery status or hops)
-    if (msg.timestamp > 0 && fits(ctx.metaLineH)) {
+    // Meta line: incoming messages show "timestamp · hops"; outgoing messages
+    // show only the delivery status / heard-repeats (the send time is redundant
+    // for a message sent just now, so it is not rendered).
+    const bool showMeta = outgoing || msg.timestamp > 0;
+    if (showMeta && fits(ctx.metaLineH)) {
       char metaBuf[64];
-      char tsBuf[16];
-      formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
       char hopBuf[20];
-      if (isChannel && outgoing) {
-        meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
-      } else if (!isChannel && outgoing) {
-        // Show delivery status instead of hop count for outgoing DMs
-        switch (msg.deliveryStatus) {
-          case DeliveryStatus::ACKED:
-            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_ACKED));
-            break;
-          case DeliveryStatus::FAILED:
-            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_FAILED));
-            break;
-          case DeliveryStatus::SENT:
-          default:
-            snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_SENT));
-            break;
+      if (outgoing) {
+        if (isChannel) {
+          meshcore::formatMeshCoreHeardRepeats(msg.pathLength, hopBuf, sizeof(hopBuf));
+        } else {
+          // Show delivery status instead of hop count for outgoing DMs
+          switch (msg.deliveryStatus) {
+            case DeliveryStatus::ACKED:
+              snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_ACKED));
+              break;
+            case DeliveryStatus::FAILED:
+              snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_FAILED));
+              break;
+            case DeliveryStatus::SENT:
+            default:
+              snprintf(hopBuf, sizeof(hopBuf), "%s", tr(STR_MESHCORE_MSG_SENT));
+              break;
+          }
         }
+        snprintf(metaBuf, sizeof(metaBuf), "%s", hopBuf);
       } else {
+        char tsBuf[16];
+        formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
         meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
+        snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
       }
-      snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
       int metaX;
       if (outgoing) {
         int metaW = renderer.getTextWidth(ctx.metaFontId, metaBuf);
