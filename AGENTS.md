@@ -5,6 +5,7 @@
 - [Project Structure](#project-structure)
 - [Build And Test Commands](#build-and-test-commands)
 - [Simulator Visual Debugging](#simulator-visual-debugging)
+- [Temporary Files & Agent Scratch](#temporary-files--agent-scratch)
 - [Contribution Instructions](#contribution-instructions)
 - [Code Guidelines](#code-guidelines)
     - [System Design](#system-design)
@@ -350,6 +351,18 @@ model.
   and other hold-triggered actions.
 - MeshCore activities can be exercised with mock data via
   `fs_/meshcore_mock.json` (see CLAUDE.md, "MeshCore on simulator").
+
+## Temporary Files & Agent Scratch
+
+- ALL temporary/scratch work (driver scripts, control FIFOs, converted
+  screenshots, scratch notes, dumps) MUST live under `fs_/tmp/`
+  (gitignored via `/fs_/`). This is the simulator's own data dir and is
+  already a safe/inside-workspace location — do NOT use `/tmp`,
+  `$TMPDIR`, or OS temp dirs.
+- Keep scratch self-contained: drive the simulator through
+  `fs_/tmp/xp_in` with one-shot scripts placed in `fs_/tmp/`, and remove
+  them when the session ends. Never leave throwaway files in `/tmp` or
+  in tracked source directories.
 
 ## Contribution Instructions
 

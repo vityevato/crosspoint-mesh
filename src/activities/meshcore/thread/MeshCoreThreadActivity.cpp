@@ -72,9 +72,10 @@ void MeshCoreThreadActivity::onEnter() {
   // Register with Hub for delivery callbacks (Hub writes to store + forwards here)
   if (_hub) _hub->setActiveThread(this);
 
-  // Explicitly reset to Messages tab on every entry
+  // Explicitly reset to Messages tab on every entry, landing focus directly
+  // in the conversation (not on the tab bar).
   currentTab = Tab::MESSAGES;
-  selectedIndex = 0;
+  selectedIndex = 1;
 
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
@@ -530,7 +531,10 @@ void MeshCoreThreadActivity::_loopInputNav() {
       }
     });
     buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this] {
-      if (selectedIndex == 1) {
+      if (selectedIndex == 0) {
+        selectedIndex = 1;
+        requestUpdate();
+      } else {
         scrollUpByMessage();
       }
     });
@@ -545,7 +549,10 @@ void MeshCoreThreadActivity::_loopInputNav() {
       }
     });
     buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this] {
-      if (selectedIndex == 1) {
+      if (selectedIndex == 0) {
+        selectedIndex = 1;
+        requestUpdate();
+      } else {
         scrollUpPage();
       }
     });

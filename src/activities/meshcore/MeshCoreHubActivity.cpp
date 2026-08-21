@@ -639,6 +639,11 @@ void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
     lastCompanion = client.getCompanion();
 
     reconnectOnDisconnect = true;
+
+    // Always land on the first tab after (re)connecting — a previous
+    // disconnect/auto-rescan can otherwise leave the user on the last tab.
+    currentTab = Tab::CONTACTS;
+    selectedIndex = 0;
   } else if (state == BleConnectionState::DISCONNECTED) {
     // Unexpected disconnect while previously connected — auto-scan
     if (reconnectOnDisconnect && !autoReconnecting) {
