@@ -32,11 +32,11 @@ bool ThreadMenuRenderer::renderConfirmPopup(MeshCoreThreadActivity& act) {
   switch (act._confirmAction) {
     case MeshCoreThreadActivity::ConfirmAction::CLEAR_CONVERSATION:
       confirmMsg = tr(STR_MESHCORE_CLEAR_CONFIRM);
-      confirmLabel = tr(STR_MESHCORE_CLEAR_CONVERSATION);
+      confirmLabel = tr(STR_CONFIRM);
       break;
     case MeshCoreThreadActivity::ConfirmAction::REMOVE_CONTACT:
       confirmMsg = tr(STR_MESHCORE_REMOVE_CONTACT_CONFIRM);
-      confirmLabel = tr(STR_MESHCORE_REMOVE_CONTACT);
+      confirmLabel = tr(STR_CONFIRM);
       break;
     default:
       break;
