@@ -740,11 +740,20 @@ void T4EntryActivity::handlePunctuation() {
       text += punctCycle()[_punctIndex];
       _lastConfirmMs = millis();
       // Sentence-ending punctuation → auto-cap next word (Text only).
-      if (_inputType == InputType::Text && isAutoCapPunct(punctCycle()[_punctIndex], *_sentenceCfg)) {
-        if (_inputEngine.getShiftLevel() == 0) {
-          _inputEngine.setShiftLevel(1);
-          _autoCap = true;
-          _autoCapFromSentence = true;
+      // Landing on a non-sentence-ending mark (e.g. ", " after cycling
+      // through ". ") must cancel a previously armed auto-cap: otherwise
+      // the next word would be capitalised after a comma.
+      if (_inputType == InputType::Text) {
+        if (isAutoCapPunct(punctCycle()[_punctIndex], *_sentenceCfg)) {
+          if (_inputEngine.getShiftLevel() == 0) {
+            _inputEngine.setShiftLevel(1);
+            _autoCap = true;
+            _autoCapFromSentence = true;
+          }
+        } else if (_autoCapFromSentence) {
+          _autoCap = false;
+          _autoCapFromSentence = false;
+          if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
         }
       }
       LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
@@ -785,11 +794,19 @@ void T4EntryActivity::handlePunctuation() {
         _punctIndex = nextIdx;
         text += nextPunct;
         // Sentence-ending punctuation → auto-cap next word (Text only).
-        if (_inputType == InputType::Text && isAutoCapPunct(nextPunct, *_sentenceCfg)) {
-          if (_inputEngine.getShiftLevel() == 0) {
-            _inputEngine.setShiftLevel(1);
-            _autoCap = true;
-            _autoCapFromSentence = true;
+        // Cycling onto a non-sentence-ending mark must cancel any pending
+        // auto-cap (see comment above; matches the MULTI_TAP cycle).
+        if (_inputType == InputType::Text) {
+          if (isAutoCapPunct(nextPunct, *_sentenceCfg)) {
+            if (_inputEngine.getShiftLevel() == 0) {
+              _inputEngine.setShiftLevel(1);
+              _autoCap = true;
+              _autoCapFromSentence = true;
+            }
+          } else if (_autoCapFromSentence) {
+            _autoCap = false;
+            _autoCapFromSentence = false;
+            if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
           }
         }
       }

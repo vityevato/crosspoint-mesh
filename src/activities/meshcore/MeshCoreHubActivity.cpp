@@ -790,8 +790,12 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
 
 void MeshCoreHubActivity::handleChannel(const MeshCoreChannel& ch) {
   if (ch.index < 8) {
+    uint16_t prevUnread = channels[ch.index].unreadCount;
     channels[ch.index] = ch;
-    // Preserve unread count from store (not in protocol response)
+    // Preserve the unread counter: PKT_CHANNEL_INFO carries no unread count
+    // (parseChannelInfo leaves it 0), so copying the whole struct would wipe
+    // the persisted/accumulated value on every (re)connect.
+    channels[ch.index].unreadCount = prevUnread;
     requestUpdate();
   }
 }
