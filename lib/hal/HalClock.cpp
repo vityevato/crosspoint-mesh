@@ -3,6 +3,7 @@
 #include <Logging.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include <cstdint>
@@ -28,6 +29,23 @@ int64_t daysFromCivil(int64_t y, unsigned m, unsigned d) {
 void HalClock::begin() {
   _available = _sdkRtc.begin();
   LOG_INF("CLK", _available ? "SDK RTC found" : "RTC not found");
+  if (_available) {
+    // Seed the ESP32 system clock (`time()`) from the RTC so wall-clock
+    // consumers (MeshCore message timestamps, logs, …) see real UTC right
+    // away instead of the epoch (1970). `time()` is otherwise only set by
+    // SNTP, which requires WiFi. The RTC is kept in UTC (NTP writes UTC0).
+    // A sanity floor rejects running-but-never-set RTCs (they typically sit
+    // near 2000-01-01) so we don't seed an obviously bogus time.
+    uint32_t epoch = 0;
+    if (getEpochUtc(epoch) && epoch >= 1420070400) {  // >= 2015-01-01 UTC
+      struct timeval tv = {};
+      tv.tv_sec = static_cast<time_t>(epoch);
+      settimeofday(&tv, nullptr);
+      LOG_INF("CLK", "System clock seeded from RTC: epoch=%u", epoch);
+    } else {
+      LOG_INF("CLK", "RTC time not valid (%u) — keep SNTP as the clock source", epoch);
+    }
+  }
 }
 
 bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
