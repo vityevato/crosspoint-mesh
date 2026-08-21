@@ -49,10 +49,10 @@ class MeshCoreContactListView {
             formatMeshCoreTimestamp(last.timestamp, ts, sizeof(ts));
             char hopBuf[24];
             meshcore::formatMeshCoreHopCount(last.pathLength, hopBuf, sizeof(hopBuf));
-            snprintf(buf, sizeof(buf), "%s%s %s %s %s %s", meshcore::ListSlotBlank, keyLabel, meshcore::DotSeparator,
-                     ts, meshcore::DotSeparator, hopBuf);
+            snprintf(buf, sizeof(buf), "%s %s %s %s %s", keyLabel, meshcore::DotSeparator, ts, meshcore::DotSeparator,
+                     hopBuf);
           } else {
-            snprintf(buf, sizeof(buf), "%s%s", meshcore::ListSlotBlank, keyLabel);
+            snprintf(buf, sizeof(buf), "%s", keyLabel);
           }
           return std::string(buf);
         });

@@ -42,7 +42,7 @@ class MeshCoreChannelListView {
           MeshCoreMessage last;
           char ts[24] = "";
           if (store.loadNewestChannelMessage(chIdx, last) && formatMeshCoreTimestamp(last.timestamp, ts, sizeof(ts))) {
-            snprintf(buf, sizeof(buf), "%s%s", meshcore::ListSlotBlank, ts);
+            snprintf(buf, sizeof(buf), "%s", ts);
             return std::string(buf);
           }
           return std::string("");
