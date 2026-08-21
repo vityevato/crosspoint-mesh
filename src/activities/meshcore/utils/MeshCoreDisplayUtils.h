@@ -3,11 +3,29 @@
 #include <I18n.h>
 
 #include <cstdio>
+#include <string>
 
 namespace meshcore {
 
 // Separator with middle dot for use in lists and status lines
 static constexpr const char* DotSeparator = "·";
+
+/**
+ * Builds a dialog list row title with a fixed-width unread-marker slot so
+ * names always start at the same position whether or not a dialogue has
+ * unread messages (a leading DotSeparator for unread, an equal-width blank
+ * placeholder otherwise). The marker slot ("· " / double space) measures
+ * identically in the list fonts, so dialog names do not jump when the
+ * unread state changes.
+ *
+ * @param unreadCount  Number of unread messages
+ * @param name         Dialog display name
+ * @return  Title string with the fixed-width marker slot prepended
+ */
+inline std::string formatMeshCoreListTitle(uint16_t unreadCount, const char* name) {
+  const char* marker = (unreadCount > 0) ? DotSeparator : " ";
+  return std::string(marker) + " " + name;
+}
 
 /**
  * Formats a path length (hop count) into a readable string.

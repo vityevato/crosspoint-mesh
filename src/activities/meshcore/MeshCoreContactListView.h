@@ -3,15 +3,16 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
-#include <cstdio>
 #include <string>
 
 #include "MeshCore/MeshCoreTypes.h"
 #include "components/UITheme.h"
+#include "utils/MeshCoreDisplayUtils.h"
 
 /**
  * Renders the Contacts tab content within MeshCoreHubActivity.
- * Displays saved peer contacts with unread counts.
+ * Displays saved peer contacts; dialogs with unread messages are marked
+ * with a leading meshcore::DotSeparator.
  */
 class MeshCoreContactListView {
  public:
@@ -22,20 +23,10 @@ class MeshCoreContactListView {
       return;
     }
 
-    GUI.drawList(
-        renderer, contentRect, contactCount, selectedIndex - 1,
-        [c = contacts](int index) {
-          const char* n = c[index].name;
-          if (n[0] == '\0') n = tr(STR_MESHCORE_UNKNOWN);
-          return std::string(n);
-        },
-        [c = contacts](int index) {
-          if (c[index].unreadCount > 0) {
-            char buf[16];
-            snprintf(buf, sizeof(buf), "(%d)", c[index].unreadCount);
-            return std::string(buf);
-          }
-          return std::string();
-        });
+    GUI.drawList(renderer, contentRect, contactCount, selectedIndex - 1, [c = contacts](int index) {
+      const char* n = c[index].name;
+      if (n[0] == '\0') n = tr(STR_MESHCORE_UNKNOWN);
+      return meshcore::formatMeshCoreListTitle(c[index].unreadCount, n);
+    });
   }
 };

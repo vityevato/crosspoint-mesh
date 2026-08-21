@@ -24,6 +24,7 @@
 #include "components/UITheme.h"
 #include "thread/MeshCoreThreadActivity.h"
 #include "utils/MeshCoreContactUrlParser.h"
+#include "utils/MeshCoreDisplayUtils.h"
 #include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreMessageHeight.h"
 
@@ -521,14 +522,43 @@ void MeshCoreHubActivity::render(RenderLock&&) {
                  headerSubtitle);
 
   // Tab bar — Settings-style: highlight tab bar when selectedIndex == 0
-  int tabBarTop = metrics.topPadding + metrics.headerHeight;
+  // Prefix the Contacts/Channels tab label with a dot when any dialog in
+  // that list has unread messages.
   constexpr int tabCount = static_cast<int>(Tab::TAB_COUNT);
-  const char* tabNames[tabCount] = {tr(STR_MESHCORE_CONTACTS), tr(STR_MESHCORE_CHANNEL_LIST), tr(STR_MESHCORE_MENU)};
+  const char* plainTabNames[tabCount] = {tr(STR_MESHCORE_CONTACTS), tr(STR_MESHCORE_CHANNEL_LIST),
+                                         tr(STR_MESHCORE_MENU)};
+
+  bool contactsUnread = false;
+  for (uint8_t i = 0; i < savedContactCount; ++i) {
+    if (savedContacts[i].unreadCount > 0) {
+      contactsUnread = true;
+      break;
+    }
+  }
+
+  bool channelsUnread = false;
+  uint8_t unreadChIdx[8];
+  const uint8_t unreadChCount = collectVisibleChannels(unreadChIdx);
+  for (uint8_t i = 0; i < unreadChCount; ++i) {
+    if (channels[unreadChIdx[i]].unreadCount > 0) {
+      channelsUnread = true;
+      break;
+    }
+  }
+
+  const bool tabUnread[tabCount] = {contactsUnread, channelsUnread, false};
+  char tabNames[tabCount][32] = {};
   std::vector<TabInfo> tabs;
   tabs.reserve(tabCount);
   for (int i = 0; i < tabCount; ++i) {
+    if (tabUnread[i]) {
+      snprintf(tabNames[i], sizeof(tabNames[i]), "%s %s", meshcore::DotSeparator, plainTabNames[i]);
+    } else {
+      snprintf(tabNames[i], sizeof(tabNames[i]), "%s", plainTabNames[i]);
+    }
     tabs.push_back({tabNames[i], currentTab == static_cast<Tab>(i)});
   }
+  int tabBarTop = metrics.topPadding + metrics.headerHeight;
   GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, selectedIndex == 0);
 
   // Content area
@@ -555,7 +585,7 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   const char* btn2 = "";
   if (selectedIndex == 0) {
     int nextTab = (static_cast<int>(currentTab) + 1) % tabCount;
-    btn2 = tabNames[nextTab];
+    btn2 = plainTabNames[nextTab];
   } else if (currentTab == Tab::CHANNELS || currentTab == Tab::CONTACTS) {
     btn2 = tr(STR_OPEN);
   } else if (currentTab == Tab::MENU) {
