@@ -396,6 +396,12 @@ bool parseChannelMessage(const uint8_t* data, size_t len, MeshCoreMessage& out) 
     size_t nameLen = colonSpace - out.text;
     memcpy(out.senderName, out.text, nameLen);
     out.senderName[nameLen] = '\0';
+    // The wire text carries "<sender>: <body>" (the companion concatenates
+    // them). The renderer draws the sender as its own line from senderName,
+    // so strip the prefix from the stored body to avoid showing the name
+    // twice (sender line + inline "Name:" prefix).
+    const size_t bodyLen = strlen(colonSpace + 2);
+    memmove(out.text, colonSpace + 2, bodyLen + 1);
   }
 
   return true;
