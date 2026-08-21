@@ -78,7 +78,7 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
       if (msg.text[0]) {
         renderer.drawText(ctx.bodyFontId, 0, 0, msg.text, true);
       }
-      if (msg.timestamp > 0) {
+      if (meshcoreIsPlausibleTime(msg.timestamp)) {
         char tsBuf[24];
         formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
         renderer.drawText(ctx.metaFontId, 0, 0, tsBuf, true);
@@ -96,7 +96,7 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
       if (filler.text[0]) {
         renderer.drawText(ctx.bodyFontId, 0, 0, filler.text, true);
       }
-      if (filler.timestamp > 0) {
+      if (meshcoreIsPlausibleTime(filler.timestamp)) {
         char tsBuf[24];
         formatMeshCoreTimestamp(filler.timestamp, tsBuf, sizeof(tsBuf));
         renderer.drawText(ctx.metaFontId, 0, 0, tsBuf, true);
@@ -194,10 +194,18 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
         }
         snprintf(metaBuf, sizeof(metaBuf), "%s", hopBuf);
       } else {
-        char tsBuf[24];
-        formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
         meshcore::formatMeshCoreHopCount(msg.pathLength, hopBuf, sizeof(hopBuf));
-        snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
+        if (meshcoreIsPlausibleTime(msg.timestamp)) {
+          // Valid clock — show "timestamp · hops" as before.
+          char tsBuf[24];
+          formatMeshCoreTimestamp(msg.timestamp, tsBuf, sizeof(tsBuf));
+          snprintf(metaBuf, sizeof(metaBuf), "%s %s %s", tsBuf, meshcore::DotSeparator, hopBuf);
+        } else {
+          // Epoch-era timestamp (device/companion without a valid clock) —
+          // render hops only, never a bogus 1970 date. Same line count, so
+          // height/scroll math is unaffected.
+          snprintf(metaBuf, sizeof(metaBuf), "%s", hopBuf);
+        }
       }
       int metaX;
       if (outgoing) {
@@ -226,7 +234,10 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
     // viewport — a partially cut row at the bottom edge would look broken.
     const MeshCoreMessage* next = (i + 1 < count) ? &msgs[i + 1] : (filler.id != 0 ? &filler : nullptr);
     if (next && y + dividerPx <= rect.y + rect.height) {
-      if (msgs[i].timestamp > 0 && next->timestamp > 0 &&
+      // Only render a date divider when both sides carry a plausible clock —
+      // a device without an RTC stamps messages with epoch-era times, which
+      // would otherwise render a bogus "1 Jan 1970" divider.
+      if (meshcoreIsPlausibleTime(msgs[i].timestamp) && meshcoreIsPlausibleTime(next->timestamp) &&
           meshcoreLocalDayOf(msgs[i].timestamp) != meshcoreLocalDayOf(next->timestamp)) {
         drawDayDivider(y, next->timestamp);
       }

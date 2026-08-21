@@ -40,6 +40,19 @@ inline uint32_t meshcoreLocalDayOf(uint32_t timestamp) {
 }
 
 /**
+ * Floor for "plausible" Unix timestamps (seconds since the epoch, UTC).
+ *
+ * Devices without an RTC start their clock at the 1970 epoch and count up
+ * from boot/uptime, so locally-generated timestamps are epoch-era garbage.
+ * A message timestamp below this floor is treated as "no valid clock" and
+ * never rendered.
+ */
+static constexpr uint32_t MESHCORE_MIN_PLAUSIBLE_TIME_UTC = 1704067200;  // 2024-01-01 UTC
+
+/** True when ts is high enough to be a real wall-clock time (post-2023). */
+inline bool meshcoreIsPlausibleTime(uint32_t ts) { return ts >= MESHCORE_MIN_PLAUSIBLE_TIME_UTC; }
+
+/**
  * Formats a Unix timestamp into a date-only string for day dividers.
  *
  * Output format: "1/Jan 2026"  (day, 3-letter month, 4-digit year)
@@ -51,10 +64,12 @@ inline uint32_t meshcoreLocalDayOf(uint32_t timestamp) {
  * @param timestamp  Unix seconds since 1970-01-01 00:00 UTC
  * @param buf        Destination buffer (must be >= 24 chars)
  * @param bufSize    Size of destination buffer
- * @return true on success, false on invalid input
+ * @return true on success, false on invalid input or an implausible
+ *         (pre-2024 / epoch-era) timestamp that must not be rendered
  */
 inline bool formatMeshCoreDate(uint32_t timestamp, char* buf, size_t bufSize) {
   if (!buf || bufSize < 24) return false;
+  if (!meshcoreIsPlausibleTime(timestamp)) return false;
 
   time_t t = meshcoreLocalTime(timestamp);
 
@@ -85,10 +100,12 @@ inline bool formatMeshCoreDate(uint32_t timestamp, char* buf, size_t bufSize) {
  * @param timestamp  Unix seconds since 1970-01-01 00:00 UTC
  * @param buf        Destination buffer (must be >= 24 chars)
  * @param bufSize    Size of destination buffer
- * @return true on success, false on invalid input
+ * @return true on success, false on invalid input or an implausible
+ *         (pre-2024 / epoch-era) timestamp that must not be rendered
  */
 inline bool formatMeshCoreTimestamp(uint32_t timestamp, char* buf, size_t bufSize) {
   if (!buf || bufSize < 24) return false;
+  if (!meshcoreIsPlausibleTime(timestamp)) return false;
 
   time_t t = meshcoreLocalTime(timestamp);
 
