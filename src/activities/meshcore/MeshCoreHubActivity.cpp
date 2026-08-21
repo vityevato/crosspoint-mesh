@@ -600,11 +600,11 @@ void MeshCoreHubActivity::render(RenderLock&&) {
 void MeshCoreHubActivity::renderChannelList(const Rect& contentRect) {
   uint8_t visibleIdx[8];
   uint8_t visibleCount = collectVisibleChannels(visibleIdx);
-  MeshCoreChannelListView::render(renderer, contentRect, channels, visibleIdx, visibleCount, selectedIndex);
+  MeshCoreChannelListView::render(renderer, contentRect, channels, visibleIdx, visibleCount, selectedIndex, store);
 }
 
 void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
-  MeshCoreContactListView::render(renderer, contentRect, savedContacts, savedContactCount, selectedIndex);
+  MeshCoreContactListView::render(renderer, contentRect, savedContacts, savedContactCount, selectedIndex, store);
 }
 
 void MeshCoreHubActivity::renderMenu(const Rect& contentRect) {

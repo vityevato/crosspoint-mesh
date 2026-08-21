@@ -95,6 +95,16 @@ class MeshCoreMessageStore {
   // status transitions (SENT → ACKED or SENT → FAILED).
   bool updateDirectMessage(const uint8_t* pubkey32, uint32_t id, DeliveryStatus newStatus);
 
+  /// Loads the most recent message (highest id) in a channel conversation,
+  /// regardless of direction. Returns false when the conversation has no
+  /// messages; @p out is left untouched on failure.
+  bool loadNewestChannelMessage(uint8_t channelIdx, MeshCoreMessage& out);
+
+  /// Loads the most recent inbound (RECEIVED) direct message from a contact,
+  /// scanning backwards from the newest id. Returns false when the contact
+  /// has no received messages; @p out is left untouched on failure.
+  bool loadNewestReceivedDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out);
+
   // Conversation metadata
   bool getChannelMeta(uint8_t channelIdx, ConvMeta& out);
   bool getDirectMeta(const uint8_t* pubkey32, ConvMeta& out);
