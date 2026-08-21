@@ -1,9 +1,12 @@
+// ---- MeshCoreHubActivity.h ----
 #pragma once
 
 #include <HalStorage.h>
 #include <MeshCore/MeshCoreClient.h>
 #include <MeshCore/MeshCoreMessageStore.h>
 #include <MeshCore/MeshCoreTypes.h>
+
+#include <memory>
 
 #include "StatusMessageOverlay.h"
 #include "activities/Activity.h"
@@ -73,23 +76,58 @@ class MeshCoreHubActivity final : public Activity {
   StatusMessageOverlay _toast;
 
   // Data loaded from client/store
-  MeshCoreChannel channels[8] = {};
+  MeshCoreChannel channels[MESHCORE_MAX_CHANNELS] = {};
   uint8_t channelCount = 0;
 
-  static constexpr uint8_t MAX_VISIBLE_CONTACTS = 20;
+  // Transient buffers with fixed (small) capacities. savedContacts below grows
+  // dynamically up to MESHCORE_MAX_CONTACTS, bounded by free heap.
+  static constexpr uint16_t MESHCORE_DISCOVERED_NODES_MAX = 32;
+  static constexpr uint16_t MESHCORE_FILE_IMPORT_MAX = 64;
+
+  // Contact-list sync bookkeeping.
+  // _contactsDirty: a companion state change happened during the stream — flush
+  //   the file once at PKT_CONTACT_END instead of once per contact (each write is
+  //   a full SD rewrite and slowed the main loop, aggravating RX overflow).
+  // _contactSyncSeen/Total/Retries: verify a full GET_CONTACTS delivered every
+  //   frame the companion reported; re-fetch the list when it fell short.
+  bool _contactsDirty = false;
+  uint16_t _contactSyncSeen = 0;
+  uint32_t _contactSyncTotal = 0;
+  uint8_t _contactSyncRetries = 0;
+  static constexpr uint8_t MAX_CONTACT_SYNC_RETRIES = 3;
 
   // Batch contact loading from file (async via BLE, like DiscoverActivity)
-  MeshCoreContact _pendingFileContacts[MAX_VISIBLE_CONTACTS] = {};
-  uint8_t _pendingFileContactCount = 0;
-  uint8_t _pendingFileContactIndex = 0;
-  uint8_t _pendingFileContactSuccessCount = 0;
+  std::unique_ptr<MeshCoreContact[]> _pendingFileContacts;
+  uint16_t _pendingFileContactCount = 0;
+  uint16_t _pendingFileContactIndex = 0;
+  uint16_t _pendingFileContactSuccessCount = 0;
   bool _contactsFileLoadPending = false;
   uint32_t _contactsFileLoadStartMs = 0;
-  MeshCoreContact savedContacts[MAX_VISIBLE_CONTACTS] = {};
-  uint8_t savedContactCount = 0;
 
-  MeshCoreContact discoveredNodes[MAX_VISIBLE_CONTACTS] = {};
-  uint8_t discoveredNodeCount = 0;
+  // Saved contacts (authoritative in-RAM copy, persisted to contacts.bin).
+  // Capacity grows on demand (see ensureContactsCapacity) so we never reserve
+  // MESHCORE_MAX_CONTACTS up front — that would starve the reconnect scan.
+  std::unique_ptr<MeshCoreContact[]> savedContacts;
+  uint16_t savedContactCount = 0;
+  uint16_t savedContactsCapacity = 0;
+
+  // Sorting keyed by last-message activity (contacts + channels).
+  // contactLastActivity[i] is the timestamp of the most recent *received* direct
+  // message from savedContacts[i] (0 = none yet). contactSortIndex maps a display
+  // position to a savedContacts index: favourites (flags bit 0) first, then by
+  // activity desc, name asc. contactSortIndex has identity order until the
+  // background sweep (loop()) populates the activity cache.
+  std::unique_ptr<uint32_t[]> contactLastActivity;
+  std::unique_ptr<uint16_t[]> contactSortIndex;
+  uint32_t channelLastActivity[MESHCORE_MAX_CHANNELS] = {};
+  bool _activitySweepPending = false;
+  uint16_t _activitySweepIndex = 0;
+  bool _channelActivityNeedsLoad = true;
+
+  // Recently seen nodes (adverts) — transient, small fixed buffer.
+  std::unique_ptr<MeshCoreContact[]> discoveredNodes;
+  uint16_t discoveredNodeCount = 0;
+  uint16_t discoveredNodesCapacity = 0;
 
   // The currently-open Thread activity, set by Thread::onEnter().
   // Used to forward delivery callbacks for UI updates.
@@ -149,6 +187,17 @@ class MeshCoreHubActivity final : public Activity {
   void loadContactsFromFile();
   void advanceFileContactLoad(bool success);
   void shareContactQr();
+
+  /** Grows savedContacts so it can hold at least needed entries. Bounded by
+   *  MESHCORE_MAX_CONTACTS and by free heap (reconnect scan must stay viable).
+   *  Returns true when the array is big enough (possibly by doing nothing). */
+  bool ensureContactsCapacity(uint16_t needed);
+  /** Loads savedContacts from the store, growing the buffer as needed. */
+  void reloadContactsFromStore();
+  /** Sorts contactSortIndex by (favourite, lastActivity desc, name asc). */
+  void rebuildContactSortIndex();
+  /** Begins the background per-contact last-message sweep (runs in loop()). */
+  void startContactActivitySweep();
 
   int getListCountForCurrentTab() const;
 

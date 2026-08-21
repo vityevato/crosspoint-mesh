@@ -52,15 +52,10 @@ void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const Activity
       memcpy(contact.publicKey, pubkey, 32);
       snprintf(contact.name, sizeof(contact.name), "%s", name);
       // Try to load saved contact for pathLength
-      constexpr uint8_t kMaxSend = 20;
-      MeshCoreContact saved[kMaxSend] = {};
-      uint8_t savedCount = store.loadContacts(saved, kMaxSend);
-      for (uint8_t i = 0; i < savedCount; ++i) {
-        if (memcmp(saved[i].publicKey, pubkey, 32) == 0) {
-          contact.pathLength = saved[i].pathLength;
-          contact.type = saved[i].type;
-          break;
-        }
+      MeshCoreContact saved;
+      if (store.findContactByPubkey(pubkey, saved)) {
+        contact.pathLength = saved.pathLength;
+        contact.type = saved.type;
       }
       sent = client.sendDirectMessage(contact, text.c_str(), msgId);
       if (!sent) {

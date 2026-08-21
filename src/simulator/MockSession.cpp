@@ -206,8 +206,8 @@ bool MockSession::parseCompanion(JsonObjectConst obj, MockCompanion& out) {
   // Parse contacts array
   JsonArrayConst contactsArr = obj["contacts"];
   if (!contactsArr.isNull()) {
-    out.contactCount = std::min(static_cast<uint8_t>(contactsArr.size()), MOCK_MAX_CONTACTS);
-    for (uint8_t i = 0; i < out.contactCount; ++i) {
+    out.contactCount = std::min(static_cast<uint16_t>(contactsArr.size()), MOCK_MAX_CONTACTS);
+    for (uint16_t i = 0; i < out.contactCount; ++i) {
       parseContact(contactsArr[i], out.contacts[i]);
     }
   }

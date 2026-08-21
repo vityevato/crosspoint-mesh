@@ -22,8 +22,8 @@
 class MeshCoreDiscoverActivity final : public Activity {
  public:
   MeshCoreDiscoverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, MeshCoreClient& client,
-                           MeshCoreMessageStore& store, MeshCoreContact* discoveredNodes, uint8_t& discoveredNodeCount,
-                           MeshCoreContact* savedContacts, uint8_t& savedContactCount);
+                           MeshCoreMessageStore& store, MeshCoreContact* discoveredNodes, uint16_t& discoveredNodeCount,
+                           MeshCoreContact* savedContacts, uint16_t& savedContactCount, uint16_t savedContactsCapacity);
 
   void onEnter() override;
   void onExit() override;
@@ -40,9 +40,13 @@ class MeshCoreDiscoverActivity final : public Activity {
   StatusMessageOverlay _toast;
 
   MeshCoreContact* discoveredNodes;
-  uint8_t& discoveredNodeCount;
+  uint16_t& discoveredNodeCount;
   MeshCoreContact* savedContacts;
-  uint8_t& savedContactCount;
+  uint16_t& savedContactCount;
+  /// Allocated capacity of savedContacts (snapshot — the Hub may grow it
+  /// while Discover is open for its own sync traffic, but that only relaxes
+  /// this guard, never invalidates the array we write into).
+  uint16_t savedContactsCapacity = 0;
 
   // Async BLE command state machine. PENDING = command fired, waiting
   // for companion PKT_OK; loop() polls client.getLastCommandResult().
@@ -50,7 +54,7 @@ class MeshCoreDiscoverActivity final : public Activity {
   PendingOp _pendingOp = PendingOp::IDLE;
   MeshCoreContact _pendingContact = {};
   /// Index into savedContacts[] for a delete operation.
-  uint8_t _pendingDeleteIndex = 0;
+  uint16_t _pendingDeleteIndex = 0;
   uint32_t _pendingStartMs = 0;
 
   void addSelectedToContacts();

@@ -48,7 +48,7 @@ struct MeshCoreCompanion {
 
 struct MeshCoreContact {
   uint8_t publicKey[32] = {};                 ///< Ed25519 public key of the contact
-  char name[64] = {};                         ///< Contact display name
+  char name[33] = {};                         ///< Contact display name (protocol sends max 32 + NUL)
   MeshNodeType type = MeshNodeType::UNKNOWN;  ///< Mesh node type
   uint8_t flags = 0;                          ///< Wire format flags (bit 0 = favourite)
   uint32_t lastSeen = 0;                      ///< Last seen time (unix timestamp, sec)
@@ -110,6 +110,17 @@ struct MeshCoreMessage {
 };
 
 // Contact store file version
-static constexpr uint8_t MESHCORE_CONTACT_FILE_VERSION = 2;
+static constexpr uint8_t MESHCORE_CONTACT_FILE_VERSION = 3;
 // Conservative max message text length for send UI
 static constexpr uint16_t MESHCORE_SEND_CHAR_LIMIT = 140;
+
+// Capacity limits, derived from the companion firmware (T1000-E build: MAX_CONTACTS=350,
+// MAX_GROUP_CHANNELS=40). The client never exceeds these regardless of what the
+// companion's DEVICE_INFO advertises. Note: the wire carries max_contacts_div_2 (uint8),
+// so the protocol ceiling for contacts is 510; 350 is the supported node cap.
+static constexpr uint16_t MESHCORE_MAX_CONTACTS = 350;
+static constexpr uint8_t MESHCORE_MAX_CHANNELS = 40;
+// RAM-budget guard: contacts are loaded into RAM so they only grow while free heap
+// stays above this reserve, keeping the reconnect scan (30 KB guard) and the message
+// store alive even with a large address book.
+static constexpr uint32_t MESHCORE_CONTACT_HEAP_RESERVE = 32000;

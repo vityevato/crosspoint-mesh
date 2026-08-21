@@ -94,15 +94,9 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
         if (act.isChannel) return false;
         if (index == 0) {
           if (!connected) return true;
-          constexpr uint8_t kMaxDim = 20;
-          MeshCoreContact contacts[kMaxDim] = {};
-          uint8_t count = act.store.loadContacts(contacts, kMaxDim);
-          for (uint8_t i = 0; i < count; ++i) {
-            if (memcmp(contacts[i].publicKey, act.contactPubkey, 32) == 0) {
-              return (contacts[i].pathLength == 0xFF);
-            }
-          }
-          return true;
+          // Dim "Reset Path" when the contact has no learned path (0xFF).
+          MeshCoreContact c;
+          return !act.store.findContactByPubkey(act.contactPubkey, c) || c.pathLength == 0xFF;
         }
         if (!connected) return (index == 4);  // Unlist requires a connected companion
         return false;

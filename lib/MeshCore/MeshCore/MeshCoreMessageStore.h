@@ -112,8 +112,18 @@ class MeshCoreMessageStore {
   bool saveDirectMeta(const uint8_t* pubkey32, const ConvMeta& meta);
 
   // Saved contacts
-  bool saveContacts(const MeshCoreContact* contacts, uint8_t count);
-  uint8_t loadContacts(MeshCoreContact* out, uint8_t maxCount);
+  bool saveContacts(const MeshCoreContact* contacts, uint16_t count);
+  /// Read the stored contact count without loading any records, so callers can
+  /// size their destination buffer first. Returns 0 when absent or version
+  /// mismatched (no migration — pre-production format bumps are dropped).
+  uint16_t peekContactsCount() const;
+  uint16_t loadContacts(MeshCoreContact* out, uint16_t maxCount);
+  /// Load a single saved contact by full public key. Streams records straight
+  /// from the file — no heap buffer needed. Returns false when absent.
+  bool findContactByPubkey(const uint8_t* pubkey32, MeshCoreContact& out);
+  /// Remove a saved contact by public key, persisting the updated list.
+  /// Returns true when it existed and was removed.
+  bool removeContactByPubkey(const uint8_t* pubkey32);
 
   // Companion auto-reconnect address
   bool saveCompanionAddress(const char* bleAddr, uint8_t addressType = 0);
@@ -127,9 +137,10 @@ class MeshCoreMessageStore {
   static bool loadCompanionPinForAddress(const char* bleAddr, uint32_t* out);
 
   // Unread counts
-  bool saveUnreadCounts(const uint16_t* channelUnread, uint8_t channelCount, const MeshCoreContact* contacts,
-                        uint8_t contactCount);
-  bool loadUnreadCounts(uint16_t* channelUnread, uint8_t channelCount, MeshCoreContact* contacts, uint8_t contactCount);
+  bool saveUnreadCounts(const uint16_t* channelUnread, uint16_t channelCount, const MeshCoreContact* contacts,
+                        uint16_t contactCount);
+  bool loadUnreadCounts(uint16_t* channelUnread, uint16_t channelCount, MeshCoreContact* contacts,
+                        uint16_t contactCount);
 
  private:
   // Companion-scoped data directory: "/.crosspoint/meshcore/<12-hex-key>"
@@ -137,7 +148,7 @@ class MeshCoreMessageStore {
   char companionDir[50] = {};
 
   bool ensureDir(const char* path);
-  void buildDataPath(const char* subPath, char* out, size_t maxLen);
+  void buildDataPath(const char* subPath, char* out, size_t maxLen) const;
   void buildChannelPath(uint8_t idx, char* out, size_t maxLen);
   void buildContactPath(const uint8_t* pubkey32, char* out, size_t maxLen);
 

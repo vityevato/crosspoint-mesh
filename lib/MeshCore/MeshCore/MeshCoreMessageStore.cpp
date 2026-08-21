@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Serialization.h>
 
 #include <cstdio>
@@ -63,7 +64,7 @@ bool MeshCoreMessageStore::init(const char* companionBleAddr) {
   return true;
 }
 
-void MeshCoreMessageStore::buildDataPath(const char* subPath, char* out, size_t maxLen) {
+void MeshCoreMessageStore::buildDataPath(const char* subPath, char* out, size_t maxLen) const {
   snprintf(out, maxLen, "%s/%s", companionDir, subPath);
 }
 
@@ -610,7 +611,7 @@ bool MeshCoreMessageStore::saveDirectMeta(const uint8_t* pubkey32, const ConvMet
 
 // --- Contacts ---
 
-bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint8_t count) {
+bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint16_t count) {
   if (companionDir[0] == '\0') return false;
   char filePath[64];
   buildDataPath("contacts.bin", filePath, sizeof(filePath));
@@ -622,9 +623,10 @@ bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint8_t
 
   uint8_t version = MESHCORE_CONTACT_FILE_VERSION;
   file.write(&version, 1);
-  file.write(&count, 1);
+  uint16_t count16 = static_cast<uint16_t>(count);
+  file.write(reinterpret_cast<const uint8_t*>(&count16), 2);  // LE
 
-  for (uint8_t i = 0; i < count; ++i) {
+  for (uint16_t i = 0; i < count; ++i) {
     file.write(reinterpret_cast<const uint8_t*>(&contacts[i]), sizeof(MeshCoreContact));
   }
 
@@ -632,7 +634,26 @@ bool MeshCoreMessageStore::saveContacts(const MeshCoreContact* contacts, uint8_t
   return true;
 }
 
-uint8_t MeshCoreMessageStore::loadContacts(MeshCoreContact* out, uint8_t maxCount) {
+uint16_t MeshCoreMessageStore::peekContactsCount() const {
+  if (companionDir[0] == '\0') return 0;
+  char filePath[64];
+  buildDataPath("contacts.bin", filePath, sizeof(filePath));
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) {
+    return 0;
+  }
+  uint8_t version = 0;
+  if (file.read(&version, 1) != 1 || version != MESHCORE_CONTACT_FILE_VERSION) {
+    return 0;
+  }
+  uint16_t count = 0;
+  if (file.read(reinterpret_cast<uint8_t*>(&count), 2) != 2) {
+    return 0;
+  }
+  return count;
+}
+
+uint16_t MeshCoreMessageStore::loadContacts(MeshCoreContact* out, uint16_t maxCount) {
   if (companionDir[0] == '\0') return 0;
   char filePath[64];
   buildDataPath("contacts.bin", filePath, sizeof(filePath));
@@ -642,26 +663,81 @@ uint8_t MeshCoreMessageStore::loadContacts(MeshCoreContact* out, uint8_t maxCoun
   }
 
   uint8_t version = 0;
-  file.read(&version, 1);
+  if (file.read(&version, 1) != 1) {
+    return 0;
+  }
   if (version != MESHCORE_CONTACT_FILE_VERSION) {
     LOG_ERR("MESH", "Bad contacts file version: %d", version);
     return 0;
   }
 
-  uint8_t count = 0;
-  file.read(&count, 1);
+  uint16_t count = 0;
+  if (file.read(reinterpret_cast<uint8_t*>(&count), 2) != 2) {
+    return 0;
+  }
   if (count > maxCount) count = maxCount;
 
-  for (uint8_t i = 0; i < count; ++i) {
+  for (uint16_t i = 0; i < count; ++i) {
     int bytesRead = file.read(reinterpret_cast<uint8_t*>(&out[i]), sizeof(MeshCoreContact));
-    if (bytesRead != sizeof(MeshCoreContact)) {
-      LOG_ERR("MESH", "Short read at contact %d", i);
+    if (bytesRead != static_cast<int>(sizeof(MeshCoreContact))) {
+      LOG_ERR("MESH", "Short read at contact %d", (int)i);
       return i;
     }
   }
 
   LOG_INF("MESH", "Loaded %d contacts", count);
   return count;
+}
+
+bool MeshCoreMessageStore::findContactByPubkey(const uint8_t* pubkey32, MeshCoreContact& out) {
+  if (companionDir[0] == '\0') return false;
+  char filePath[64];
+  buildDataPath("contacts.bin", filePath, sizeof(filePath));
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) {
+    return false;
+  }
+  uint8_t version = 0;
+  if (file.read(&version, 1) != 1 || version != MESHCORE_CONTACT_FILE_VERSION) {
+    return false;
+  }
+  uint16_t count = 0;
+  if (file.read(reinterpret_cast<uint8_t*>(&count), 2) != 2) {
+    return false;
+  }
+  for (uint16_t i = 0; i < count; ++i) {
+    MeshCoreContact c = {};
+    int bytesRead = file.read(reinterpret_cast<uint8_t*>(&c), sizeof(MeshCoreContact));
+    if (bytesRead != static_cast<int>(sizeof(MeshCoreContact))) return false;
+    if (memcmp(c.publicKey, pubkey32, 32) == 0) {
+      out = c;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MeshCoreMessageStore::removeContactByPubkey(const uint8_t* pubkey32) {
+  uint16_t count = peekContactsCount();
+  if (count == 0 || count > MESHCORE_MAX_CONTACTS) return false;
+  auto contacts = makeUniqueNoThrow<MeshCoreContact[]>(count);
+  if (!contacts) {
+    LOG_ERR("MESH", "removeContactByPubkey: OOM (%d records)", (int)count);
+    return false;
+  }
+  uint16_t loaded = loadContacts(contacts.get(), count);
+  if (loaded != count) return false;
+
+  for (uint16_t i = 0; i < loaded; ++i) {
+    if (memcmp(contacts[i].publicKey, pubkey32, 32) == 0) {
+      for (uint16_t j = i; j + 1 < loaded; ++j) {
+        contacts[j] = contacts[j + 1];
+      }
+      loaded--;
+      return saveContacts(contacts.get(), loaded);
+    }
+  }
+  return false;
 }
 
 // --- Companion address ---
@@ -781,8 +857,8 @@ bool MeshCoreMessageStore::loadCompanionPinForAddress(const char* bleAddr, uint3
 
 // --- Unread counts ---
 
-bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8_t channelCount,
-                                            const MeshCoreContact* contacts, uint8_t contactCount) {
+bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint16_t channelCount,
+                                            const MeshCoreContact* contacts, uint16_t contactCount) {
   if (companionDir[0] == '\0') return false;
   char filePath[64];
   buildDataPath("unread.bin", filePath, sizeof(filePath));
@@ -792,18 +868,18 @@ bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8
     return false;
   }
 
-  uint8_t version = 1;
+  uint8_t version = 2;
   file.write(&version, 1);
 
-  // Channel unread counts
-  file.write(&channelCount, 1);
-  for (uint8_t i = 0; i < channelCount; ++i) {
+  // Channel unread counts (uint16 count)
+  file.write(reinterpret_cast<const uint8_t*>(&channelCount), 2);
+  for (uint16_t i = 0; i < channelCount; ++i) {
     file.write(reinterpret_cast<const uint8_t*>(&channelUnread[i]), 2);
   }
 
-  // Contact unread counts (pubkey prefix + count)
-  file.write(&contactCount, 1);
-  for (uint8_t i = 0; i < contactCount; ++i) {
+  // Contact unread counts (pubkey prefix + count), uint16 count
+  file.write(reinterpret_cast<const uint8_t*>(&contactCount), 2);
+  for (uint16_t i = 0; i < contactCount; ++i) {
     file.write(contacts[i].publicKey, 6);  // 6-byte prefix
     file.write(reinterpret_cast<const uint8_t*>(&contacts[i].unreadCount), 2);
   }
@@ -811,8 +887,8 @@ bool MeshCoreMessageStore::saveUnreadCounts(const uint16_t* channelUnread, uint8
   return true;
 }
 
-bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint8_t channelCount, MeshCoreContact* contacts,
-                                            uint8_t contactCount) {
+bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint16_t channelCount, MeshCoreContact* contacts,
+                                            uint16_t contactCount) {
   if (companionDir[0] == '\0') return false;
   char filePath[64];
   buildDataPath("unread.bin", filePath, sizeof(filePath));
@@ -823,12 +899,12 @@ bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint8_t cha
 
   uint8_t version = 0;
   file.read(&version, 1);
-  if (version != 1) return false;
+  if (version != 2) return false;
 
   // Channel unread counts
-  uint8_t savedChannelCount = 0;
-  file.read(&savedChannelCount, 1);
-  for (uint8_t i = 0; i < savedChannelCount; ++i) {
+  uint16_t savedChannelCount = 0;
+  file.read(reinterpret_cast<uint8_t*>(&savedChannelCount), 2);
+  for (uint16_t i = 0; i < savedChannelCount; ++i) {
     uint16_t val = 0;
     file.read(reinterpret_cast<uint8_t*>(&val), 2);
     if (i < channelCount) {
@@ -837,16 +913,16 @@ bool MeshCoreMessageStore::loadUnreadCounts(uint16_t* channelUnread, uint8_t cha
   }
 
   // Contact unread counts
-  uint8_t savedContactCount = 0;
-  file.read(&savedContactCount, 1);
-  for (uint8_t i = 0; i < savedContactCount; ++i) {
+  uint16_t savedContactCount = 0;
+  file.read(reinterpret_cast<uint8_t*>(&savedContactCount), 2);
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
     uint8_t prefix[6];
     uint16_t val = 0;
     file.read(prefix, 6);
     file.read(reinterpret_cast<uint8_t*>(&val), 2);
 
     // Match to loaded contacts by pubkey prefix
-    for (uint8_t j = 0; j < contactCount; ++j) {
+    for (uint16_t j = 0; j < contactCount; ++j) {
       if (memcmp(contacts[j].publicKey, prefix, 6) == 0) {
         contacts[j].unreadCount = val;
         break;

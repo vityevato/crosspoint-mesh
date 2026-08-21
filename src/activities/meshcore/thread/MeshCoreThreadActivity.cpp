@@ -215,22 +215,14 @@ void MeshCoreThreadActivity::clearConversation() {
 
 void MeshCoreThreadActivity::shareContactQr() {
   // Pull the full contact record from the store to get the node name and type.
-  constexpr uint8_t kMaxContacts = 20;
-  MeshCoreContact contacts[kMaxContacts] = {};
-  uint8_t count = store.loadContacts(contacts, kMaxContacts);
-  const MeshCoreContact* found = nullptr;
-  for (uint8_t i = 0; i < count; ++i) {
-    if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
-      found = &contacts[i];
-      break;
-    }
-  }
+  MeshCoreContact foundContact;
+  const bool haveContact = store.findContactByPubkey(contactPubkey, foundContact);
 
   MeshNodeType nodeType = MeshNodeType::COMPANION;
   const char* name = threadName;  // already resolved (contact name or "Unknown")
-  if (found != nullptr) {
-    nodeType = found->type;
-    if (found->name[0] != '\0') name = found->name;
+  if (haveContact) {
+    nodeType = foundContact.type;
+    if (foundContact.name[0] != '\0') name = foundContact.name;
   }
 
   char url[384] = {};
@@ -450,18 +442,9 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
             break;
           }
           // Load the contact from the store to get current pathLength
-          constexpr uint8_t kMaxContacts = 20;
-          MeshCoreContact contacts[kMaxContacts] = {};
-          uint8_t count = store.loadContacts(contacts, kMaxContacts);
-          bool hasPath = false;
           MeshCoreContact found = {};
-          for (uint8_t i = 0; i < count; ++i) {
-            if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
-              found = contacts[i];
-              hasPath = (found.pathLength != 0xFF);
-              break;
-            }
-          }
+          const bool haveContact = store.findContactByPubkey(contactPubkey, found);
+          bool hasPath = haveContact && (found.pathLength != 0xFF);
           if (!hasPath) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -624,21 +607,9 @@ void MeshCoreThreadActivity::completeUnlistOp(bool success) {
   if (success) {
     LOG_DBG("MESH", "Contact unlist succeeded");
 
-    // Load current contacts, remove this one, save back — same pattern
-    // as Discovery's completeContactSave(DELETING).
-    constexpr uint8_t kMaxContacts = 20;
-    MeshCoreContact contacts[kMaxContacts] = {};
-    uint8_t count = store.loadContacts(contacts, kMaxContacts);
-    for (uint8_t i = 0; i < count; ++i) {
-      if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
-        for (uint8_t j = i; j + 1 < count; ++j) {
-          contacts[j] = contacts[j + 1];
-        }
-        count--;
-        store.saveContacts(contacts, count);
-        LOG_INF("MESH", "Removed contact from saved list");
-        break;
-      }
+    // Remove the contact from the persisted list so the Hub picks up the change.
+    if (store.removeContactByPubkey(contactPubkey)) {
+      LOG_INF("MESH", "Removed contact from saved list");
     }
 
     setResult(ActivityResult(MeshCoreUnlistResult{}));

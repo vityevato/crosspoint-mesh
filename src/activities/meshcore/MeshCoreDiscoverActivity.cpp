@@ -18,15 +18,17 @@
 
 MeshCoreDiscoverActivity::MeshCoreDiscoverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                    MeshCoreClient& client, MeshCoreMessageStore& store,
-                                                   MeshCoreContact* discoveredNodes, uint8_t& discoveredNodeCount,
-                                                   MeshCoreContact* savedContacts, uint8_t& savedContactCount)
+                                                   MeshCoreContact* discoveredNodes, uint16_t& discoveredNodeCount,
+                                                   MeshCoreContact* savedContacts, uint16_t& savedContactCount,
+                                                   uint16_t savedContactsCapacity)
     : Activity("MeshCoreDiscover", renderer, mappedInput),
       client(client),
       store(store),
       discoveredNodes(discoveredNodes),
       discoveredNodeCount(discoveredNodeCount),
       savedContacts(savedContacts),
-      savedContactCount(savedContactCount) {}
+      savedContactCount(savedContactCount),
+      savedContactsCapacity(savedContactsCapacity) {}
 
 void MeshCoreDiscoverActivity::provideSubtitle(const void* ctx, char* buf, size_t bufSize) {
   formatMeshCoreSubtitle(*static_cast<const MeshCoreClient*>(ctx), buf, bufSize);
@@ -102,8 +104,8 @@ void MeshCoreDiscoverActivity::addSelectedToContacts() {
   const auto& node = discoveredNodes[selectedIndex];
   if (isAlreadySaved(node)) return;
 
-  if (savedContactCount >= 20) {
-    LOG_ERR("MESH", "Contact list full");
+  if (savedContactCount >= savedContactsCapacity) {
+    LOG_ERR("MESH", "Contact list full (capacity %d)", (int)savedContactsCapacity);
     _toast.show(tr(STR_MESHCORE_CONTACT_LIST_FULL), 3000);
     requestUpdate();
     return;
@@ -129,7 +131,7 @@ void MeshCoreDiscoverActivity::removeSelectedFromContacts() {
 
   const auto& node = discoveredNodes[selectedIndex];
   // Find the index in savedContacts
-  for (uint8_t i = 0; i < savedContactCount; ++i) {
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
     if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
       if (!client.removeContact(node.publicKey)) {
         LOG_ERR("MESH", "Failed to queue contact delete: %s", node.name);
@@ -156,6 +158,12 @@ void MeshCoreDiscoverActivity::completeContactSave(bool success) {
 
   if (op == PendingOp::SAVING) {
     if (success) {
+      if (savedContactCount >= savedContactsCapacity) {
+        LOG_ERR("MESH", "Saved contact list full (capacity %d)", (int)savedContactsCapacity);
+        _toast.show(tr(STR_MESHCORE_CONTACT_LIST_FULL), 3000);
+        requestUpdate();
+        return;
+      }
       savedContacts[savedContactCount] = _pendingContact;
       savedContacts[savedContactCount].isSaved = true;
       savedContactCount++;
@@ -168,7 +176,7 @@ void MeshCoreDiscoverActivity::completeContactSave(bool success) {
   } else if (op == PendingOp::DELETING) {
     if (success) {
       // Shift remaining contacts down
-      for (uint8_t j = _pendingDeleteIndex; j < savedContactCount - 1; ++j) {
+      for (uint16_t j = _pendingDeleteIndex; j < savedContactCount - 1; ++j) {
         savedContacts[j] = savedContacts[j + 1];
       }
       savedContactCount--;
@@ -184,7 +192,7 @@ void MeshCoreDiscoverActivity::completeContactSave(bool success) {
 }
 
 bool MeshCoreDiscoverActivity::isAlreadySaved(const MeshCoreContact& node) const {
-  for (uint8_t i = 0; i < savedContactCount; ++i) {
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
     if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) return true;
   }
   return false;
@@ -242,7 +250,7 @@ void MeshCoreDiscoverActivity::render(RenderLock&&) {
         nullptr, nullptr, false,
         [this, nodes, saved, savedCount](int index) {
           // Dim already-saved contacts
-          for (uint8_t i = 0; i < savedCount; ++i) {
+          for (uint16_t i = 0; i < savedCount; ++i) {
             if (memcmp(saved[i].publicKey, nodes[index].publicKey, 32) == 0) return true;
           }
           // Dim contact currently being saved (immediate feedback)

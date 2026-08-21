@@ -89,6 +89,14 @@ class MeshCoreClient {
   /// Result of the last completed command. Reset on disconnect.
   bool getLastCommandResult() const { return lastCmdSuccess; }
 
+  /// Total contact count reported by the companion in the most recent
+  /// PKT_CONTACT_START. Used to verify a full contact fetch arrived complete.
+  uint32_t getLastContactListTotal() const { return lastContactListTotal; }
+  /// True when the most recent contact request was a full sync (since=0).
+  /// Incremental syncs (requestNewContacts) only stream changed contacts, so
+  /// their count must not be compared against the reported total.
+  bool isLastContactListFull() const { return lastContactListFull; }
+
   // Callbacks (set before connect)
 
   /// Called when BLE connection state changes (DISCONNECTED → SCANNING →
@@ -196,6 +204,15 @@ class MeshCoreClient {
   // Used as the 'since' filter for incremental contact syncs (requestNewContacts).
   uint32_t contactsMostRecentLastmod = 0;
 
+  // Contact-list integrity tracking (RX-overflow recovery).
+  // lastContactListTotal: count from the most recent PKT_CONTACT_START.
+  // lastContactListFull: whether the last request was a full sync (since=0).
+  // retryContactsCount: GET_CONTACTS re-fetch retries; reset when a list ends.
+  uint32_t lastContactListTotal = 0;
+  bool lastContactListFull = true;
+  uint8_t retryContactsCount = 0;
+  static constexpr uint8_t MAX_CONTACT_RETRIES = 3;
+
   // True while runInitSequence() owns rxBuf; poll() must not consume responses.
   volatile bool inInitSequence = false;
 
@@ -288,11 +305,14 @@ class MeshCoreClient {
   // a single-slot buffer would silently overwrite earlier entries.
   // After init, the device can burst out a full contact list (one PKT_CONTACT
   // per contact) plus channels and messages before poll() drains them.
-  // 24 slots × 256 bytes = 6 KB — keeps comfortable headroom over the realistic
-  // contact-list burst (tested device sent 15+ packets before the next poll() call)
-  // while trimming static RAM vs the previous 32-slot ring.
+  // 64 slots × 256 bytes = 16 KB. Sized to absorb a contact-list burst that
+  // arrives while the main loop is blocked by a single e-ink refresh (~300 ms
+  // at ~5 ms/notification) WITHOUT starving RAM: growing the ring further
+  // pushed free heap below MeshCoreScanActivity's 30 KB guard, which bailed
+  // out of the reconnect fallback when the node was unreachable. Any residual
+  // overflow is recovered by poll() re-fetching a short contact list.
   static constexpr size_t RX_BUF_SIZE = 256;
-  static constexpr uint8_t RX_QUEUE_SIZE = 24;
+  static constexpr uint8_t RX_QUEUE_SIZE = 64;
   struct RxEntry {
     uint8_t data[RX_BUF_SIZE];
     uint16_t len;

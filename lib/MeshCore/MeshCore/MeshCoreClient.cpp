@@ -393,6 +393,7 @@ void MeshCoreClient::disconnect() {
 }
 
 bool MeshCoreClient::requestContacts(uint32_t since) {
+  lastContactListFull = (since == 0);
   uint8_t buf[5];
   size_t len = MeshProto::buildGetContacts(buf, sizeof(buf), since);
   // Expect PKT_CONTACT_END (0x04), NOT PKT_CONTACT_START (0x02): the command must
@@ -762,9 +763,21 @@ void MeshCoreClient::poll() {
   // Check command timeout
   if (cmdPending && (millis() - cmdSentTime) > MeshProto::CMD_TIMEOUT_MS) {
     LOG_ERR("MESH", "Command timeout");
+    // If the timed-out command was GET_CONTACTS, the companion never streamed
+    // the list to its end (PKT_CONTACT_END dropped by RX overflow). Re-fetch the
+    // full list so no contact is silently lost. Bounded by retryContactsCount,
+    // which resets whenever a list does reach PKT_CONTACT_END.
+    const bool retryContacts = (cmdInFlightCommandByte == MeshProto::CMD_GET_CONTACTS &&  //
+                                retryContactsCount < MAX_CONTACT_RETRIES);
     lastCmdSuccess = false;
     cmdPending = false;
     sendNextCmd();
+    if (retryContacts) {
+      retryContactsCount++;
+      LOG_DBG("MESH", "GET_CONTACTS timed out, re-fetching full list (%d/%d)", (int)retryContactsCount,
+              (int)MAX_CONTACT_RETRIES);
+      requestContacts(0);
+    }
   }
 
   // Send next queued command
@@ -917,6 +930,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
       uint32_t total = 0;
       if (len >= 5) memcpy(&total, data + 1, sizeof(total));  // memcpy: data+1 may be unaligned
       LOG_DBG("MESH", "Contact list start (companion reports %lu contacts)", (unsigned long)total);
+      lastContactListTotal = total;
       if (contactCb) contactCb(MeshCoreContact{}, false, contactCbCtx);
       break;
     }
@@ -943,6 +957,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
         if (lastmod > contactsMostRecentLastmod) contactsMostRecentLastmod = lastmod;
       }
       LOG_DBG("MESH", "Contact list end (mostRecentLastmod=%lu)", (unsigned long)contactsMostRecentLastmod);
+      retryContactsCount = 0;  // list delivered — reset GET_CONTACTS retry budget
       if (contactCb) contactCb(MeshCoreContact{}, true, contactCbCtx);
       break;
 

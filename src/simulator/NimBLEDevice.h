@@ -58,10 +58,12 @@ class NimBLEClientCallbacks {
 // --- Mock data for MeshCore BLE simulation ---
 // Defined early so NimBLE scan classes can use them.
 //
-// Capacity limits (conservative for heap; 380 KB total RAM target)
+// Capacity limits (conservative for heap; 380 KB total RAM target).
+// MOCK_MAX_CONTACTS matches the T1000-E firmware cap (350) so address-book
+// and RX-queue behaviour can be exercised at the protocol limit.
 static constexpr uint8_t MOCK_MAX_COMPANIONS = 4;
-static constexpr uint8_t MOCK_MAX_CONTACTS = 20;
-static constexpr uint8_t MOCK_MAX_CHANNELS = 8;
+static constexpr uint16_t MOCK_MAX_CONTACTS = 350;
+static constexpr uint8_t MOCK_MAX_CHANNELS = 40;
 static constexpr uint8_t MOCK_MAX_MESSAGES = 50;
 static constexpr uint8_t MOCK_MAX_DISCOVERED_NODES = 8;
 static constexpr uint16_t MOCK_MAX_TEXT_LEN = 184;  // matches MAX_MSG_TEXT_LEN
@@ -121,7 +123,7 @@ struct MockCompanion {
   uint8_t maxChannels = 8;
 
   MockContact contacts[MOCK_MAX_CONTACTS] = {};
-  uint8_t contactCount = 0;
+  uint16_t contactCount = 0;
 
   MockChannel channels[MOCK_MAX_CHANNELS] = {};
   uint8_t channelCount = 0;
@@ -474,12 +476,15 @@ class NimBLERemoteCharacteristic {
     auto cb = effectiveNotifyCb();
     if (!cb || !mockCompanion) return;
 
-    // 1. PKT_CONTACT_START (just the code byte)
-    uint8_t start = 0x02;
-    cb(this, &start, 1, true);
+    // 1. PKT_CONTACT_START + total (4 LE) — mirror the real companion, which
+    //    appends getNumContacts() so the client/hub can verify completeness.
+    uint8_t start[5] = {0x02, 0, 0, 0, 0};
+    uint32_t total = mockCompanion->contactCount;
+    memcpy(start + 1, reinterpret_cast<const uint8_t*>(&total), 4);
+    cb(this, start, sizeof(start), true);
 
     // 2. PKT_CONTACT for each contact
-    for (uint8_t i = 0; i < mockCompanion->contactCount; ++i) {
+    for (uint16_t i = 0; i < mockCompanion->contactCount; ++i) {
       injectOneContact(cb, mockCompanion->contacts[i]);
     }
 

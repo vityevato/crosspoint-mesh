@@ -3,6 +3,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <time.h>
 
@@ -82,15 +83,24 @@ void MeshCoreHubActivity::onEnter() {
   uint8_t addrType = 0;
   bool hasAddr = store.loadCompanionAddress(addr, sizeof(addr), &addrType);
 
+  // Fixed transient buffers: recently-seen nodes and the file-import batch.
+  // Allocated before BLE init while the heap is still roomy.
+  discoveredNodes = makeUniqueNoThrow<MeshCoreContact[]>(MESHCORE_DISCOVERED_NODES_MAX);
+  discoveredNodesCapacity = discoveredNodes ? MESHCORE_DISCOVERED_NODES_MAX : 0;
+  _pendingFileContacts = makeUniqueNoThrow<MeshCoreContact[]>(MESHCORE_FILE_IMPORT_MAX);
+  if (!_pendingFileContacts) {
+    LOG_ERR("MESH", "Failed to allocate pending file contacts buffer");
+  }
+
   // Now scope the store to this companion's data directory
   if (hasAddr && addr[0] != '\0') {
     store.init(addr);
-    savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
+    reloadContactsFromStore();
 
     // Load unread counts
-    uint16_t channelUnread[8] = {};
-    store.loadUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
-    for (int i = 0; i < 8; ++i) {
+    uint16_t channelUnread[MESHCORE_MAX_CHANNELS] = {};
+    store.loadUnreadCounts(channelUnread, MESHCORE_MAX_CHANNELS, savedContacts.get(), savedContactCount);
+    for (uint16_t i = 0; i < MESHCORE_MAX_CHANNELS; ++i) {
       channels[i].unreadCount = channelUnread[i];
     }
   }
@@ -148,15 +158,17 @@ void MeshCoreHubActivity::onExit() {
   MESHCORE_LOG_HEAP("Hub onExit:start");
 
   // Save state
-  store.saveContacts(savedContacts, savedContactCount);
+  if (savedContacts) {
+    store.saveContacts(savedContacts.get(), savedContactCount);
+  }
   store.saveCompanionAddress(client.getAutoReconnectAddress(), client.getAutoReconnectAddressType());
   store.saveCompanionPin(client.getConnectPin());
 
-  uint16_t channelUnread[8] = {};
-  for (int i = 0; i < 8; ++i) {
+  uint16_t channelUnread[MESHCORE_MAX_CHANNELS] = {};
+  for (uint16_t i = 0; i < MESHCORE_MAX_CHANNELS; ++i) {
     channelUnread[i] = channels[i].unreadCount;
   }
-  store.saveUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
+  store.saveUnreadCounts(channelUnread, MESHCORE_MAX_CHANNELS, savedContacts.get(), savedContactCount);
 
   client.deinit();
   MESHCORE_LOG_HEAP("Hub onExit:after BLE deinit");
@@ -181,7 +193,7 @@ void MeshCoreHubActivity::launchScanActivity() {
                            }
                            // Connected — fetch channels
                            channelCount = client.getCompanion().maxChannels;
-                           if (channelCount > 8) channelCount = 8;
+                           if (channelCount > MESHCORE_MAX_CHANNELS) channelCount = MESHCORE_MAX_CHANNELS;
                            requestUpdate();
                          });
 }
@@ -192,6 +204,47 @@ void MeshCoreHubActivity::loop() {
   client.poll();
 
   if (pollMeshCoreBattery(client, lastBatteryRequestMs, lastBatteryMv)) {
+    requestUpdate();
+  }
+
+  // Background contact-activity sweep: reads the newest received DM for each
+  // saved contact in chunks so the main loop stays responsive (SD reads). Once
+  // complete, contactSortIndex switches from identity to activity order.
+  if (_activitySweepPending) {
+    constexpr uint16_t kSweepChunk = 4;
+    const uint16_t end =
+        (_activitySweepIndex + kSweepChunk < savedContactCount) ? _activitySweepIndex + kSweepChunk : savedContactCount;
+    const bool hasCompanion = store.hasCompanionKey();
+    for (; _activitySweepIndex < end && _activitySweepIndex < savedContactCount; ++_activitySweepIndex) {
+      uint32_t ts = 0;
+      if (hasCompanion) {
+        MeshCoreMessage last;
+        if (store.loadNewestReceivedDirectMessage(savedContacts[_activitySweepIndex].publicKey, last)) {
+          ts = last.timestamp;
+        }
+      }
+      contactLastActivity[_activitySweepIndex] = ts;
+    }
+    if (_activitySweepIndex >= savedContactCount) {
+      _activitySweepPending = false;
+      rebuildContactSortIndex();
+      requestUpdate();
+    }
+  }
+
+  // Channel activity: load the newest message timestamp per configured channel
+  // once the channel list is in (and after every reconnect).
+  if (_channelActivityNeedsLoad && channelCount > 0 && !client.isCommandPending() && store.hasCompanionKey()) {
+    for (uint8_t i = 0; i < channelCount && i < MESHCORE_MAX_CHANNELS; ++i) {
+      if (!channels[i].configured) continue;
+      uint32_t ts = 0;
+      MeshCoreMessage last;
+      if (store.loadNewestChannelMessage(i, last)) {
+        ts = last.timestamp;
+      }
+      channelLastActivity[i] = ts;
+    }
+    _channelActivityNeedsLoad = false;
     requestUpdate();
   }
 
@@ -217,8 +270,8 @@ void MeshCoreHubActivity::loop() {
     } else if (millis() - _contactsFileLoadStartMs > 30000) {
       // 30 s timeout for the whole batch
       _contactsFileLoadPending = false;
-      if (_pendingFileContactCount > 0) {
-        store.saveContacts(savedContacts, savedContactCount);
+      if (_pendingFileContactCount > 0 && savedContacts) {
+        store.saveContacts(savedContacts.get(), savedContactCount);
         _toast.show(tr(STR_MESHCORE_CONTACTS_IMPORTED), 5000);
         switchTab(Tab::CONTACTS);
         selectedIndex = 0;
@@ -238,7 +291,7 @@ void MeshCoreHubActivity::loop() {
     if (bleState == BleConnectionState::CONNECTED) {
       autoReconnecting = false;
       channelCount = client.getCompanion().maxChannels;
-      if (channelCount > 8) channelCount = 8;
+      if (channelCount > MESHCORE_MAX_CHANNELS) channelCount = MESHCORE_MAX_CHANNELS;
       requestUpdate();
     } else if (bleState == BleConnectionState::DISCONNECTED) {
       autoReconnecting = false;
@@ -321,18 +374,22 @@ void MeshCoreHubActivity::loop() {
       int itemIdx = selectedIndex - 1;
       switch (currentTab) {
         case Tab::CHANNELS: {
-          uint8_t visibleIdx[8];
+          uint8_t visibleIdx[MESHCORE_MAX_CHANNELS];
           uint8_t visibleCount = collectVisibleChannels(visibleIdx);
           if (itemIdx >= 0 && itemIdx < visibleCount) {
             openChannelThread(visibleIdx[itemIdx]);
           }
           break;
         }
-        case Tab::CONTACTS:
-          if (itemIdx < savedContactCount) {
-            openContactThread(savedContacts[itemIdx]);
+        case Tab::CONTACTS: {
+          uint16_t contactIdx = (contactSortIndex && itemIdx >= 0 && itemIdx < savedContactCount)
+                                    ? contactSortIndex[itemIdx]
+                                    : static_cast<uint16_t>(itemIdx);
+          if (contactIdx < savedContactCount) {
+            openContactThread(savedContacts[contactIdx]);
           }
           break;
+        }
         case Tab::MENU: {
           if (itemIdx >= 0 && itemIdx < 8) {
             bool connected = (client.getState() == BleConnectionState::CONNECTED);
@@ -432,6 +489,22 @@ uint8_t MeshCoreHubActivity::collectVisibleChannels(uint8_t* outIdx) const {
   for (uint8_t i = 0; i < channelCount; ++i) {
     if (channels[i].configured) outIdx[n++] = i;
   }
+  // Rank by last-message activity (desc), channel index as tiebreak, so the
+  // most recently active channel is at the top. Channels with no messages sort
+  // by index, as before.
+  for (uint8_t i = 1; i < n; ++i) {
+    const uint8_t key = outIdx[i];
+    const uint32_t keyAct = channelLastActivity[key];
+    uint8_t j = i;
+    while (j > 0) {
+      const uint8_t prev = outIdx[j - 1];
+      const uint32_t prevAct = channelLastActivity[prev];
+      if (keyAct < prevAct || (keyAct == prevAct && key >= prev)) break;
+      outIdx[j] = prev;
+      --j;
+    }
+    outIdx[j] = key;
+  }
   return n;
 }
 
@@ -444,7 +517,7 @@ void MeshCoreHubActivity::switchTab(Tab tab) {
 int MeshCoreHubActivity::getListCountForCurrentTab() const {
   switch (currentTab) {
     case Tab::CHANNELS: {
-      uint8_t visibleIdx[8];
+      uint8_t visibleIdx[MESHCORE_MAX_CHANNELS];
       return collectVisibleChannels(visibleIdx);
     }
     case Tab::CONTACTS:
@@ -534,7 +607,7 @@ void MeshCoreHubActivity::render(RenderLock&&) {
                                          tr(STR_MESHCORE_MENU)};
 
   bool contactsUnread = false;
-  for (uint8_t i = 0; i < savedContactCount; ++i) {
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
     if (savedContacts[i].unreadCount > 0) {
       contactsUnread = true;
       break;
@@ -542,7 +615,7 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   }
 
   bool channelsUnread = false;
-  uint8_t unreadChIdx[8];
+  uint8_t unreadChIdx[MESHCORE_MAX_CHANNELS];
   const uint8_t unreadChCount = collectVisibleChannels(unreadChIdx);
   for (uint8_t i = 0; i < unreadChCount; ++i) {
     if (channels[unreadChIdx[i]].unreadCount > 0) {
@@ -603,13 +676,14 @@ void MeshCoreHubActivity::render(RenderLock&&) {
 }
 
 void MeshCoreHubActivity::renderChannelList(const Rect& contentRect) {
-  uint8_t visibleIdx[8];
+  uint8_t visibleIdx[MESHCORE_MAX_CHANNELS];
   uint8_t visibleCount = collectVisibleChannels(visibleIdx);
   MeshCoreChannelListView::render(renderer, contentRect, channels, visibleIdx, visibleCount, selectedIndex, store);
 }
 
 void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
-  MeshCoreContactListView::render(renderer, contentRect, savedContacts, savedContactCount, selectedIndex, store);
+  MeshCoreContactListView::render(renderer, contentRect, savedContacts.get(), savedContactCount,
+                                  contactSortIndex ? contactSortIndex.get() : nullptr, selectedIndex, store);
 }
 
 void MeshCoreHubActivity::renderMenu(const Rect& contentRect) {
@@ -628,10 +702,10 @@ void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
     const char* addr = client.getAutoReconnectAddress();
     if (addr[0] != '\0') {
       store.init(addr);
-      savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
-      uint16_t channelUnread[8] = {};
-      store.loadUnreadCounts(channelUnread, 8, savedContacts, savedContactCount);
-      for (int i = 0; i < 8; ++i) {
+      reloadContactsFromStore();
+      uint16_t channelUnread[MESHCORE_MAX_CHANNELS] = {};
+      store.loadUnreadCounts(channelUnread, MESHCORE_MAX_CHANNELS, savedContacts.get(), savedContactCount);
+      for (int i = 0; i < MESHCORE_MAX_CHANNELS; ++i) {
         channels[i].unreadCount = channelUnread[i];
       }
     }
@@ -639,6 +713,9 @@ void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
     lastCompanion = client.getCompanion();
 
     reconnectOnDisconnect = true;
+
+    // Re-rank channels by message activity after (re)connecting.
+    _channelActivityNeedsLoad = true;
 
     // Always land on the first tab after (re)connecting — a previous
     // disconnect/auto-rescan can otherwise leave the user on the last tab.
@@ -674,15 +751,21 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
     } else {
       LOG_ERR("MESH", "Failed to store ch%d msg", msg.channelIdx);
     }
-    if (msg.channelIdx < 8) {
+    if (msg.channelIdx < MESHCORE_MAX_CHANNELS) {
       channels[msg.channelIdx].unreadCount++;
+      // Ranking: most recently active channel climbs to the top of the list.
+      channelLastActivity[msg.channelIdx] = msgWithHeight.timestamp;
     }
   } else {
     // Check if sender is in saved contacts
-    for (uint8_t i = 0; i < savedContactCount; ++i) {
+    for (uint16_t i = 0; i < savedContactCount; ++i) {
       if (memcmp(savedContacts[i].publicKey, msg.pubkeyPrefix, 6) == 0) {
         store.appendDirectMessage(savedContacts[i].publicKey, msgWithHeight);
         savedContacts[i].unreadCount++;
+        if (contactLastActivity) {
+          contactLastActivity[i] = msgWithHeight.timestamp;
+          rebuildContactSortIndex();  // sender rises to the top (after favourites)
+        }
         requestUpdate();
         return;
       }
@@ -694,17 +777,141 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
   requestUpdate();
 }
 
+bool MeshCoreHubActivity::ensureContactsCapacity(uint16_t needed) {
+  if (needed <= savedContactsCapacity) return savedContacts != nullptr;
+  if (needed > MESHCORE_MAX_CONTACTS) return false;  // beyond the node/protocol cap
+
+  uint16_t newCap = (savedContactsCapacity == 0) ? 32 : savedContactsCapacity * 2;
+  if (newCap < needed) newCap = needed;
+  if (newCap > MESHCORE_MAX_CONTACTS) newCap = MESHCORE_MAX_CONTACTS;
+
+  // Keep free heap above the reserve so the reconnect scan (30 KB guard) and the
+  // message store stay viable even with a large address book. Grow only when there
+  // is room; otherwise refuse new contacts (logged) instead of crashing.
+  if (ESP.getFreeHeap() < MESHCORE_CONTACT_HEAP_RESERVE) {
+    LOG_ERR("MESH", "ensureContactsCapacity: heap low (%d), capped at %d contacts", (int)ESP.getFreeHeap(),
+            (int)savedContactsCapacity);
+    return false;
+  }
+
+  auto next = makeUniqueNoThrow<MeshCoreContact[]>(newCap);
+  auto nextAct = makeUniqueNoThrow<uint32_t[]>(newCap);
+  auto nextSort = makeUniqueNoThrow<uint16_t[]>(newCap);
+  if (!next || !nextAct || !nextSort) {
+    LOG_ERR("MESH", "ensureContactsCapacity: OOM for %d records", (int)newCap);
+    return false;
+  }
+  if (savedContacts && savedContactCount > 0) {
+    memcpy(next.get(), savedContacts.get(), static_cast<size_t>(savedContactCount) * sizeof(MeshCoreContact));
+    if (contactLastActivity) {
+      memcpy(nextAct.get(), contactLastActivity.get(), static_cast<size_t>(savedContactCount) * sizeof(uint32_t));
+    }
+  }
+  // Carried entries keep identity order; callers (re)build the real order later.
+  for (uint16_t i = 0; i < savedContactCount; ++i) nextSort[i] = i;
+  savedContacts = std::move(next);
+  contactLastActivity = std::move(nextAct);
+  contactSortIndex = std::move(nextSort);
+  savedContactsCapacity = newCap;
+  return true;
+}
+
+void MeshCoreHubActivity::reloadContactsFromStore() {
+  uint16_t stored = store.peekContactsCount();
+  if (stored == 0) {
+    savedContactCount = 0;
+    return;
+  }
+  if (!ensureContactsCapacity(stored)) {
+    LOG_ERR("MESH", "reloadContactsFromStore: cannot size buffer for %d contacts", (int)stored);
+    return;
+  }
+  savedContactCount = store.loadContacts(savedContacts.get(), savedContactsCapacity);
+  if (savedContactCount == 0) {
+    startContactActivitySweep();
+    return;
+  }
+  // Reset activity cache to "unknown" and identity order; the background sweep
+  // fills the cache, then the list re-sorts by last-message activity.
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
+    contactLastActivity[i] = 0;
+    contactSortIndex[i] = i;
+  }
+  startContactActivitySweep();
+}
+
+void MeshCoreHubActivity::startContactActivitySweep() {
+  _activitySweepPending = (savedContacts && contactLastActivity && contactSortIndex && savedContactCount > 0);
+  _activitySweepIndex = 0;
+}
+
+void MeshCoreHubActivity::rebuildContactSortIndex() {
+  if (!contactSortIndex || savedContactCount == 0) return;
+  for (uint16_t i = 0; i < savedContactCount; ++i) contactSortIndex[i] = i;
+
+  auto before = [this](uint16_t a, uint16_t b) -> bool {
+    const auto& ca = savedContacts[a];
+    const auto& cb = savedContacts[b];
+    const bool fa = (ca.flags & 1) != 0;  // favourite
+    const bool fb = (cb.flags & 1) != 0;
+    if (fa != fb) return fa;  // favourites pinned on top
+    const uint32_t ta = contactLastActivity ? contactLastActivity[a] : 0;
+    const uint32_t tb = contactLastActivity ? contactLastActivity[b] : 0;
+    if (ta != tb) return ta > tb;         // most recently heard first
+    return strcmp(ca.name, cb.name) < 0;  // stable name tiebreak
+  };
+
+  // Stable insertion sort (small counts; rarely rebuilt).
+  for (uint16_t i = 1; i < savedContactCount; ++i) {
+    const uint16_t key = contactSortIndex[i];
+    uint16_t j = i;
+    while (j > 0 && before(key, contactSortIndex[j - 1])) {
+      contactSortIndex[j] = contactSortIndex[j - 1];
+      --j;
+    }
+    contactSortIndex[j] = key;
+  }
+}
+
 void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
   if (isEnd) {
+    // Flush any dirty contact data in one batch (single SD write) rather than
+    // once per contact — per-contact writes stalled the main loop mid-stream and
+    // let the RX ring overflow, dropping frames.
+    if (_contactsDirty && savedContacts) {
+      store.saveContacts(savedContacts.get(), savedContactCount);
+      _contactsDirty = false;
+    }
+    // A full GET_CONTACTS (since=0) must deliver exactly the count the companion
+    // reported. If any frame was dropped, re-fetch the whole list so contacts do
+    // not silently vanish. Incremental syncs stream only changed records — never
+    // count-compare those.
+    if (client.isLastContactListFull() && _contactSyncSeen < _contactSyncTotal &&
+        _contactSyncRetries < MAX_CONTACT_SYNC_RETRIES) {
+      _contactSyncRetries++;
+      LOG_INF("MESH", "Contact list short (%d/%d), re-requesting (%d/%d)", (int)_contactSyncSeen,
+              (int)_contactSyncTotal, (int)_contactSyncRetries, (int)MAX_CONTACT_SYNC_RETRIES);
+      client.requestContacts(0);
+    } else {
+      _contactSyncRetries = 0;
+      _contactSyncSeen = 0;
+      _contactSyncTotal = 0;
+    }
     LOG_DBG("MESH", "Contact list end (%d total)", savedContactCount);
     requestUpdate();
     return;
   }
-  // PKT_CONTACT_START sends an empty contact — skip it
+  // PKT_CONTACT_START sends an empty contact — reset the per-list counters.
   if (c.name[0] == '\0' && c.publicKey[0] == 0) {
-    LOG_DBG("MESH", "Contact list start (sentinel)");
+    _contactSyncSeen = 0;
+    _contactSyncTotal = client.getLastContactListTotal();
+    LOG_DBG("MESH", "Contact list start (sentinel, %d reported)", (int)_contactSyncTotal);
     return;
   }
+
+  // Count every contact frame — the companion's reported total includes all node
+  // types, so count repeaters too even though they are not saved.
+  _contactSyncSeen++;
 
   LOG_DBG("MESH", "Contact: %s type=%d saved=%d", c.name, (int)c.type, c.isSaved);
 
@@ -713,33 +920,42 @@ void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
 
   if (c.isSaved) {
     // Update or add saved contact with full data from companion
-    for (uint8_t i = 0; i < savedContactCount; ++i) {
+    for (uint16_t i = 0; i < savedContactCount; ++i) {
       if (memcmp(savedContacts[i].publicKey, c.publicKey, 32) == 0) {
         uint16_t prevUnread = savedContacts[i].unreadCount;
         savedContacts[i] = c;
         savedContacts[i].isSaved = true;            // Ensure flag
         savedContacts[i].unreadCount = prevUnread;  // Preserve local state
-        store.saveContacts(savedContacts, savedContactCount);
+        _contactsDirty = true;
+        rebuildContactSortIndex();  // flags (favourite) or name may have changed
         return;
       }
     }
-    // New contact from companion — add as saved
-    if (savedContactCount < MAX_VISIBLE_CONTACTS) {
+    // New contact from companion — add as saved (grow the buffer on demand;
+    // growth is bounded by the protocol cap and by free-heap headroom).
+    if (ensureContactsCapacity(savedContactCount + 1) && savedContactCount < MESHCORE_MAX_CONTACTS) {
+      if (contactLastActivity && contactSortIndex) {
+        contactLastActivity[savedContactCount] = 0;  // sweep will fill it
+        contactSortIndex[savedContactCount] = savedContactCount;
+      }
       savedContacts[savedContactCount] = c;
       savedContacts[savedContactCount].isSaved = true;
       savedContactCount++;
-      store.saveContacts(savedContacts, savedContactCount);
+      _contactsDirty = true;
+      rebuildContactSortIndex();
+    } else {
+      LOG_DBG("MESH", "Contact not saved (capacity/ram limit): %s", c.name);
     }
   } else {
     // Unsolicited new node discovery (PKT_NEW_ADVERT) — add to discovered nodes
-    for (uint8_t i = 0; i < discoveredNodeCount; ++i) {
+    for (uint16_t i = 0; i < discoveredNodeCount; ++i) {
       if (memcmp(discoveredNodes[i].publicKey, c.publicKey, 32) == 0) {
         discoveredNodes[i] = c;
         requestUpdate();
         return;
       }
     }
-    if (discoveredNodeCount < MAX_VISIBLE_CONTACTS) {
+    if (discoveredNodes && discoveredNodeCount < MESHCORE_DISCOVERED_NODES_MAX) {
       discoveredNodes[discoveredNodeCount] = c;
       discoveredNodeCount++;
       requestUpdate();
@@ -758,7 +974,7 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
 
   uint32_t now = static_cast<uint32_t>(time(nullptr));
 
-  for (uint8_t i = 0; i < discoveredNodeCount; ++i) {
+  for (uint16_t i = 0; i < discoveredNodeCount; ++i) {
     if (memcmp(discoveredNodes[i].publicKey, node.publicKey, 32) == 0) {
       // Update lastSeen only — preserve name/type/pathLength from previous
       // PKT_NEW_ADVERT (0x8A) which carried full data.
@@ -774,7 +990,7 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
   //   discoveredNodes[discoveredNodeCount] = node;
   //   discoveredNodes[discoveredNodeCount].lastSeen = now;
   //   // Look for a matching saved contact to fill in name/type/path
-  //   for (uint8_t i = 0; i < savedContactCount; ++i) {
+  //   for (uint16_t i = 0; i < savedContactCount; ++i) {
   //     if (memcmp(savedContacts[i].publicKey, node.publicKey, 32) == 0) {
   //       memcpy(discoveredNodes[discoveredNodeCount].name, savedContacts[i].name, sizeof(MeshCoreContact::name));
   //       discoveredNodes[discoveredNodeCount].type = savedContacts[i].type;
@@ -846,7 +1062,7 @@ void MeshCoreHubActivity::markChannelRead(uint8_t channelIdx) {
 }
 
 void MeshCoreHubActivity::markContactRead(const uint8_t* pubkey32) {
-  for (uint8_t i = 0; i < savedContactCount; ++i) {
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
     if (memcmp(savedContacts[i].publicKey, pubkey32, 32) == 0) {
       if (savedContacts[i].unreadCount > 0) {
         savedContacts[i].unreadCount = 0;
@@ -866,7 +1082,7 @@ void MeshCoreHubActivity::openChannelThread(uint8_t channelIdx) {
 
 void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
   // Clear unread count for this contact
-  for (uint8_t i = 0; i < savedContactCount; ++i) {
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
     if (memcmp(savedContacts[i].publicKey, contact.publicKey, 32) == 0) {
       savedContacts[i].unreadCount = 0;
       break;
@@ -876,17 +1092,17 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
                          [this](const ActivityResult& result) {
                            if (std::get_if<MeshCoreUnlistResult>(&result.data)) {
                              LOG_DBG("MESH", "Hub: contact deleted — reloading from store");
-                             savedContactCount = store.loadContacts(savedContacts, MAX_VISIBLE_CONTACTS);
+                             reloadContactsFromStore();
                            }
                            requestUpdate();
                          });
 }
 
 void MeshCoreHubActivity::openDiscover() {
-  startActivityForResult(
-      std::make_unique<MeshCoreDiscoverActivity>(renderer, mappedInput, client, store, discoveredNodes,
-                                                 discoveredNodeCount, savedContacts, savedContactCount),
-      [this](const ActivityResult&) { requestUpdate(); });
+  startActivityForResult(std::make_unique<MeshCoreDiscoverActivity>(
+                             renderer, mappedInput, client, store, discoveredNodes.get(), discoveredNodeCount,
+                             savedContacts.get(), savedContactCount, savedContactsCapacity),
+                         [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void MeshCoreHubActivity::saveAdvertToFile() {
@@ -993,7 +1209,7 @@ void MeshCoreHubActivity::loadContactsFromFile() {
 
           // Skip duplicates (check both savedContacts and already-pending)
           if (!skip) {
-            for (uint8_t i = 0; i < savedContactCount; ++i) {
+            for (uint16_t i = 0; i < savedContactCount; ++i) {
               if (memcmp(savedContacts[i].publicKey, contact.publicKey, 32) == 0) {
                 LOG_DBG("MESH", "loadContactsFromFile: duplicate in savedContacts[%d]", i);
                 skip = true;
@@ -1002,7 +1218,7 @@ void MeshCoreHubActivity::loadContactsFromFile() {
             }
           }
           if (!skip) {
-            for (uint8_t i = 0; i < _pendingFileContactCount; ++i) {
+            for (uint16_t i = 0; i < _pendingFileContactCount; ++i) {
               if (memcmp(_pendingFileContacts[i].publicKey, contact.publicKey, 32) == 0) {
                 LOG_DBG("MESH", "loadContactsFromFile: duplicate in pending[%d]", i);
                 skip = true;
@@ -1011,9 +1227,10 @@ void MeshCoreHubActivity::loadContactsFromFile() {
             }
           }
 
-          if (!skip && _pendingFileContactCount < MAX_VISIBLE_CONTACTS) {
+          if (!skip && _pendingFileContacts && _pendingFileContactCount < MESHCORE_FILE_IMPORT_MAX) {
             _pendingFileContacts[_pendingFileContactCount++] = contact;
-            LOG_DBG("MESH", "loadContactsFromFile: accepted [%d/%d]", _pendingFileContactCount, MAX_VISIBLE_CONTACTS);
+            LOG_DBG("MESH", "loadContactsFromFile: accepted [%d/%d]", _pendingFileContactCount,
+                    MESHCORE_FILE_IMPORT_MAX);
           }
         } else {
           LOG_DBG("MESH", "loadContactsFromFile: skip non-chat type=%d", (int)contact.type);
@@ -1059,12 +1276,14 @@ void MeshCoreHubActivity::advanceFileContactLoad(bool success) {
     contact.getPublicKeyLabel(keyLabel);
     LOG_INF("MESH", "advanceFileContactLoad: added '%s' key=%s at top", contact.name, keyLabel);
 
-    if (savedContactCount < MAX_VISIBLE_CONTACTS) {
+    if (ensureContactsCapacity(savedContactCount + 1)) {
       for (int i = static_cast<int>(savedContactCount); i > 0; --i) {
         savedContacts[i] = savedContacts[i - 1];
       }
       savedContacts[0] = contact;
       savedContactCount++;
+    } else {
+      LOG_ERR("MESH", "advanceFileContactLoad: cannot grow saved list");
     }
   } else {
     LOG_ERR("MESH", "advanceFileContactLoad: BLE command failed for contact idx=%d", _pendingFileContactIndex);
@@ -1080,7 +1299,9 @@ void MeshCoreHubActivity::advanceFileContactLoad(bool success) {
     LOG_INF("MESH", "advanceFileContactLoad: batch complete, success=%d/%d", _pendingFileContactSuccessCount,
             _pendingFileContactCount);
     _contactsFileLoadPending = false;
-    store.saveContacts(savedContacts, savedContactCount);
+    if (savedContacts) {
+      store.saveContacts(savedContacts.get(), savedContactCount);
+    }
 
     if (_pendingFileContactSuccessCount > 0) {
       _toast.show(tr(STR_MESHCORE_CONTACTS_IMPORTED), 5000);
