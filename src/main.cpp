@@ -203,6 +203,7 @@ static bool loadSleepFrameBuffer() {
 void enterDeepSleep(bool fromTimeout = false) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  APP_STATE.lastSleepFromMeshCore = activityManager.isMeshCoreActivity();
 
   const bool isQuickResumeSleep =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -446,6 +447,13 @@ void setup() {
     // through to the sleep-wake "resume reader" logic, which fires on stale
     // openEpubPath + lastSleepFromReader from a prior session.
     activityManager.goHome();
+  } else if (APP_STATE.lastSleepFromMeshCore && !mappedInputManager.isPressed(MappedInputManager::Button::Back)) {
+    // Sleep-wake from MeshCore: land back in the hub (it auto-reconnects to the
+    // saved companion via stored bonding). Clear the flag so a crash-restart
+    // can't re-enter MeshCore in a loop; it is re-armed by the next deep sleep.
+    APP_STATE.lastSleepFromMeshCore = false;
+    APP_STATE.saveToFile();
+    activityManager.goToMeshCore();
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity

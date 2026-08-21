@@ -259,13 +259,17 @@ void MeshCoreThreadActivity::_loopDetectNewMessages() {
   ConvMeta currentMeta;
   bool hasMeta =
       isChannel ? store.getChannelMeta(channelIdx, currentMeta) : store.getDirectMeta(contactPubkey, currentMeta);
+  if (!hasMeta) return;
 
-  if (hasMeta && currentMeta.count > _meta.count) {
+  // Compare endId (monotonically increasing), NOT count: in a conversation at
+  // MAX_MSGS_PER_THREAD capacity, appending drops the oldest message first so
+  // count stays constant and a count-based comparison would miss new messages.
+  if (currentMeta.endId > _meta.endId) {
     // New messages arrived
     bool wasAtEnd =
         (_meta.positionPx + static_cast<uint32_t>(_contentAreaHeight) >= _meta.totalPx || _meta.totalPx == 0);
-    LOG_DBG("MESH", "New msgs detected: old.count=%u new.count=%u old.fontId=%d new.fontId=%d wasAtEnd=%d", _meta.count,
-            currentMeta.count, _meta.fontId, currentMeta.fontId, wasAtEnd);
+    LOG_DBG("MESH", "New msgs detected: old.endId=%u new.endId=%u wasAtEnd=%d", _meta.endId, currentMeta.endId,
+            wasAtEnd);
     _meta = currentMeta;
     if (wasAtEnd) {
       loadMessages(_meta.endId, /*up=*/true);
@@ -273,11 +277,20 @@ void MeshCoreThreadActivity::_loopDetectNewMessages() {
                              ? _meta.totalPx - static_cast<uint32_t>(_contentAreaHeight)
                              : 0;
       _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
+      // The user is at the end of the conversation and will see the new
+      // message — it must not be counted as unread.
+      if (_hub) {
+        if (isChannel) {
+          _hub->markChannelRead(channelIdx);
+        } else {
+          _hub->markContactRead(contactPubkey);
+        }
+      }
     } else {
       loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
     }
     requestUpdate();
-  } else if (hasMeta && currentMeta.count < _meta.count) {
+  } else if (currentMeta.startId > _meta.startId) {
     // Truncation happened (oldest messages dropped)
     _meta = currentMeta;
     loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);

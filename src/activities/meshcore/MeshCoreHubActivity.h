@@ -42,6 +42,7 @@ class MeshCoreHubActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return true; }
+  bool isMeshCoreActivity() const override { return true; }
 
  private:
   enum class Tab : uint8_t { CONTACTS = 0, CHANNELS, MENU, TAB_COUNT };
@@ -125,6 +126,14 @@ class MeshCoreHubActivity final : public Activity {
   void clearActiveThread(const MeshCoreThreadActivity* t) {
     if (_activeThread == t) _activeThread = nullptr;
   }
+
+  /// Zeroes the unread counter of a channel conversation (called by the
+  /// Thread when new messages arrive while the user is viewing the end of
+  /// the conversation, so they are not "unread").
+  void markChannelRead(uint8_t channelIdx);
+  /// Zeroes the unread counter of a direct-message conversation, matching
+  /// the contact by public key.
+  void markContactRead(const uint8_t* pubkey32);
 
  public:
   /// File path for saving/loading contacts (shared constant).

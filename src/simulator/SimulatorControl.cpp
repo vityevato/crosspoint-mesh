@@ -104,6 +104,7 @@ void printHelp() {
   printf("  PRESS <btn>          press and hold until RELEASE\n");
   printf("  RELEASE <btn>        release a held button\n");
   printf("  HOLD <btn> <ms>      press, hold <ms>, release (long-press)\n");
+  printf("  KEY <1..9>           short press of a digit key (mock hotkeys)\n");
   printf("  SCREENSHOT           save framebuffer BMP to fs_/screenshots/\n");
   printf("                       (BMP->PNG: ./src/simulator/convert_screenshot.sh)\n");
   printf("  QUIT                 exit the simulator\n");
@@ -177,6 +178,27 @@ void handleLine(char* line) {
       releaseButton(btn);
       reply("OK HOLD %s %ld", BUTTON_NAME[btn], ms);
     }
+    return;
+  }
+
+  if (strcasecmp(cmd, "KEY") == 0) {
+    // Synthesize a short press of a digit key (1..9) so MeshCore mock
+    // hotkeys (MeshCoreMockHotkeys.h) work from stdin automation. Digit
+    // keys are not mapped to buttons, so they need their own path.
+    const char* keyArg = strtok_r(nullptr, " \t\r\n", &save);
+    if (!keyArg || keyArg[0] < '1' || keyArg[0] > '9' || keyArg[1] != '\0') {
+      reply("ERR USAGE KEY <1..9>");
+      return;
+    }
+    // SDL2 scancodes: digits 1..9 are SDL_SCANCODE_1(30)..SDL_SCANCODE_9(38)
+    // — they do NOT run consecutively from SDL_SCANCODE_0 (39).
+    const SDL_Scancode sc = static_cast<SDL_Scancode>(SDL_SCANCODE_1 + (keyArg[0] - '1'));
+    setVirtualKeyState(sc, true);
+    pushKeyEvent(SDL_KEYDOWN, sc);
+    SDL_Delay(3000);  // span several sim frames (e-ink refresh) for reliable edge detection
+    pushKeyEvent(SDL_KEYUP, sc);
+    setVirtualKeyState(sc, false);
+    reply("OK KEY %s", keyArg);
     return;
   }
 

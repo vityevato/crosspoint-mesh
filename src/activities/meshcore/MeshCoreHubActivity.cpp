@@ -824,6 +824,25 @@ void MeshCoreHubActivity::handleDelivery(uint32_t msgId, const uint8_t* pubkey32
 
 // --- Navigation ---
 
+void MeshCoreHubActivity::markChannelRead(uint8_t channelIdx) {
+  if (channelIdx < 8 && channels[channelIdx].unreadCount > 0) {
+    channels[channelIdx].unreadCount = 0;
+    requestUpdate();
+  }
+}
+
+void MeshCoreHubActivity::markContactRead(const uint8_t* pubkey32) {
+  for (uint8_t i = 0; i < savedContactCount; ++i) {
+    if (memcmp(savedContacts[i].publicKey, pubkey32, 32) == 0) {
+      if (savedContacts[i].unreadCount > 0) {
+        savedContacts[i].unreadCount = 0;
+        requestUpdate();
+      }
+      return;
+    }
+  }
+}
+
 void MeshCoreHubActivity::openChannelThread(uint8_t channelIdx) {
   channels[channelIdx].unreadCount = 0;
   startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, channelIdx,
