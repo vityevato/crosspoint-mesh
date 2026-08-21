@@ -10,24 +10,26 @@
 
 /**
  * Renders the Menu tab content within MeshCoreHubActivity.
- * Displays 7 secondary actions. Items that require a connected
+ * Displays 8 secondary actions. Items that require a connected
  * companion (Send Advert, Send Flood Advert, Save Advert to File,
- * Disconnect) are dimmed when the companion is disconnected.
+ * Share Contact, Import Contacts, Disconnect) are dimmed when the
+ * companion is disconnected.
  *
- * Item indices (0-based, relative to menu list):
+ *  Item indices (0-based, relative to menu list):
  *   0 = Discovery Nodes           (navigation)
  *   1 = Send Advert               (action, requires connected)
  *   2 = Send Flood Advert         (action, requires connected)
  *   3 = Save Advert to File       (action, requires connected)
- *   4 = Import Contacts from File (action, requires connected)
- *   5 = Status                    (navigation)
- *   6 = Disconnect                (action, requires connected)
+ *   4 = Share Contact (QR)        (action, requires connected)
+ *   5 = Import Contacts from File (action, requires connected)
+ *   6 = Status                    (navigation)
+ *   7 = Disconnect                (action, requires connected)
  */
 class MeshCoreMenuView {
  public:
   static void render(const GfxRenderer& renderer, const Rect& contentRect, int selectedIndex, bool isConnected) {
-    // All 7 items are always present — no empty state needed.
-    constexpr int kItemCount = 7;
+    // All 8 items are always present — no empty state needed.
+    constexpr int kItemCount = 8;
 
     GUI.drawList(
         renderer, contentRect, kItemCount, selectedIndex - 1,
@@ -43,10 +45,12 @@ class MeshCoreMenuView {
             case 3:
               return tr(STR_MESHCORE_SAVE_ADVERT_TO_FILE);
             case 4:
-              return tr(STR_MESHCORE_IMPORT_CONTACTS);
+              return tr(STR_MESHCORE_SHARE_CONTACT);
             case 5:
-              return tr(STR_MESHCORE_STATUS);
+              return tr(STR_MESHCORE_IMPORT_CONTACTS);
             case 6:
+              return tr(STR_MESHCORE_STATUS);
+            case 7:
               return tr(STR_MESHCORE_DISCONNECT);
             default:
               return {};
@@ -58,9 +62,9 @@ class MeshCoreMenuView {
         /*highlightValue*/ false,
         /*rowDimmed*/
         [isConnected](int index) -> bool {
-          // Items 1, 2, 3, 4, 6 require a connected companion
+          // Items 1, 2, 3, 4, 5, 7 require a connected companion
           if (isConnected) return false;
-          return (index == 1 || index == 2 || index == 3 || index == 4 || index == 6);
+          return (index == 1 || index == 2 || index == 3 || index == 4 || index == 5 || index == 7);
         });
   }
 };

@@ -150,6 +150,8 @@ class MeshCoreThreadActivity final : public Activity {
   void scrollToEnd();
   /** Menu action: clear all messages in this conversation. */
   void clearConversation();
+  /** Menu action: show this contact's share QR (DM threads only). */
+  void shareContactQr();
 
   void savePosition();
   void sendMessage();

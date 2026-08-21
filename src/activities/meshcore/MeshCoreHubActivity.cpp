@@ -21,12 +21,14 @@
 #include "MeshCoreStatusView.h"
 #include "MeshCoreSubtitle.h"
 #include "SilentRestart.h"
+#include "activities/reader/QrDisplayActivity.h"
 #include "components/UITheme.h"
 #include "thread/MeshCoreThreadActivity.h"
 #include "utils/MeshCoreContactUrlParser.h"
 #include "utils/MeshCoreDisplayUtils.h"
 #include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreMessageHeight.h"
+#include "utils/MeshCoreShareUrl.h"
 
 #ifdef SIMULATOR
 #include <MeshCoreMockHotkeys.h>
@@ -332,7 +334,7 @@ void MeshCoreHubActivity::loop() {
           }
           break;
         case Tab::MENU: {
-          if (itemIdx >= 0 && itemIdx < 7) {
+          if (itemIdx >= 0 && itemIdx < 8) {
             bool connected = (client.getState() == BleConnectionState::CONNECTED);
             switch (itemIdx) {
               case 0:  // Discovery Nodes
@@ -367,17 +369,20 @@ void MeshCoreHubActivity::loop() {
               case 3:  // Save Advert to File
                 saveAdvertToFile();
                 return;
-              case 4:  // Load Contacts from File
+              case 4:  // Share Contact (QR)
+                shareContactQr();
+                return;
+              case 5:  // Load Contacts from File
                 loadContactsFromFile();
                 return;
-              case 5:  // Status
+              case 6:  // Status
                 if (client.getState() == BleConnectionState::CONNECTED) {
                   lastCompanion = client.getCompanion();
                 }
                 showingStatus = true;
                 requestUpdate();
                 return;
-              case 6:  // Disconnect
+              case 7:  // Disconnect
                 if (connected) {
                   showingDisconnectPopup = true;
                   requestUpdate();
@@ -445,7 +450,7 @@ int MeshCoreHubActivity::getListCountForCurrentTab() const {
     case Tab::CONTACTS:
       return savedContactCount;
     case Tab::MENU:
-      return 7;  // Always 7 menu items
+      return 8;  // Always 8 menu items
     default:
       return 0;
   }
@@ -887,31 +892,13 @@ void MeshCoreHubActivity::saveAdvertToFile() {
   }
   const auto& comp = client.getCompanion();
   // Build meshcore://contact/add?name=<name>&public_key=<64 hex>&type=1
-  // URL-encode name: replace spaces with '+'
-  char nameEncoded[128] = {};
-  size_t ni = 0;
-  for (size_t si = 0; comp.name[si] != '\0' && ni < sizeof(nameEncoded) - 4; ++si) {
-    char c = comp.name[si];
-    if (c == ' ') {
-      nameEncoded[ni++] = '+';
-    } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
-               c == '.') {
-      nameEncoded[ni++] = c;
-    } else {
-      // Percent-encode other chars
-      snprintf(nameEncoded + ni, 4, "%%%02X", static_cast<uint8_t>(c));
-      ni += 3;
-    }
+  char url[384] = {};
+  if (meshcore::buildMeshCoreContactShareUrl(comp.name, comp.publicKey, MeshNodeType::COMPANION, url, sizeof(url)) ==
+      0) {
+    _toast.show(tr(STR_MESHCORE_ADVERT_SAVE_FAILED), 5000);
+    requestUpdate();
+    return;
   }
-  nameEncoded[ni] = '\0';
-  // Build public_key hex string (64 hex chars)
-  char pubkeyHex[65] = {};
-  for (int i = 0; i < 32; ++i) {
-    snprintf(pubkeyHex + i * 2, 3, "%02x", comp.publicKey[i]);
-  }
-  // Assemble the full URL
-  char url[384];
-  snprintf(url, sizeof(url), "meshcore://contact/add?name=%s&public_key=%s&type=1", nameEncoded, pubkeyHex);
   // Write to SD card root
   HalFile file;
   if (Storage.openFileForWrite("MESH", MESHCORE_CONTACTS_FILE, file)) {
@@ -922,6 +909,26 @@ void MeshCoreHubActivity::saveAdvertToFile() {
     _toast.show(tr(STR_MESHCORE_ADVERT_SAVE_FAILED), 5000);
   }
   requestUpdate();
+}
+
+void MeshCoreHubActivity::shareContactQr() {
+  if (client.getState() != BleConnectionState::CONNECTED) {
+    _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
+    requestUpdate();
+    return;
+  }
+  const auto& comp = client.getCompanion();
+  char url[384] = {};
+  if (meshcore::buildMeshCoreContactShareUrl(comp.name, comp.publicKey, MeshNodeType::COMPANION, url, sizeof(url)) ==
+      0) {
+    _toast.show(tr(STR_MESHCORE_SHARE_FAILED), 5000);
+    requestUpdate();
+    return;
+  }
+  LOG_DBG("MESH", "Share QR URL: %s", url);
+  startActivityForResult(
+      std::make_unique<QrDisplayActivity>(renderer, mappedInput, std::string(url), tr(STR_MESHCORE_SHARE_CONTACT)),
+      [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void MeshCoreHubActivity::loadContactsFromFile() {

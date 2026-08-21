@@ -148,6 +148,7 @@ class MeshCoreHubActivity final : public Activity {
   void saveAdvertToFile();
   void loadContactsFromFile();
   void advanceFileContactLoad(bool success);
+  void shareContactQr();
 
   int getListCountForCurrentTab() const;
 

@@ -59,7 +59,7 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
   bool connected = (act.client.getState() == BleConnectionState::CONNECTED);
 
   constexpr int kChannelActionCount = 2;
-  constexpr int kDmActionCount = 4;
+  constexpr int kDmActionCount = 5;
   int kActionCount = act.isChannel ? kChannelActionCount : kDmActionCount;
   bool hasSettings = act._menuSettings != nullptr;
 
@@ -74,6 +74,7 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
       StrId::STR_PATH_RESET,
       StrId::STR_MESHCORE_SCROLL_TO_END,
       StrId::STR_MESHCORE_CLEAR_CONVERSATION,
+      StrId::STR_MESHCORE_SHARE_CONTACT,
       StrId::STR_MESHCORE_REMOVE_CONTACT,
   };
   const auto& titles = act.isChannel ? kChannelTitles : kDmTitles;
@@ -103,7 +104,7 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
           }
           return true;
         }
-        if (!connected) return (index == 3);
+        if (!connected) return (index == 4);  // Unlist requires a connected companion
         return false;
       });
 

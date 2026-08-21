@@ -12,7 +12,7 @@
 
 /**
  * Renders companion status info within MeshCoreHubActivity.
- * Shows 6 info fields: Name, Model, Firmware, Battery, Storage, Radio
+ * Shows 5 info fields: Name, Model, Firmware, Battery, Radio
  * as a centered popup overlay (renderAsPopup).
  * When no companion data is available, shows a "No data" help message.
  */
@@ -33,19 +33,16 @@ class MeshCoreStatusView {
     // Prepare info field values (same formatting as render())
     char battBuf[16];
     snprintf(battBuf, sizeof(battBuf), "%d.%02d V", comp.batteryMv / 1000, (comp.batteryMv % 1000) / 10);
-    char storageBuf[32];
-    snprintf(storageBuf, sizeof(storageBuf), "%lu / %lu KB", static_cast<unsigned long>(comp.storageUsedKb),
-             static_cast<unsigned long>(comp.storageTotalKb));
     char radioBuf[48];
     snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw, comp.radioSf,
              comp.radioCr);
 
-    const char* labels[] = {"Name", "Model", "Firmware", "Battery", "Storage", "Radio"};
-    const char* values[] = {comp.name, comp.model, comp.version, battBuf, storageBuf, radioBuf};
-    constexpr int fieldCount = 6;
+    const char* labels[] = {"Name", "Model", "Firmware", "Battery", "Radio"};
+    const char* values[] = {comp.name, comp.model, comp.version, battBuf, radioBuf};
+    constexpr int fieldCount = 5;
 
     // Build display lines: "label: value"
-    char lines[6][128];
+    char lines[5][128];
     for (int i = 0; i < fieldCount; i++) {
       snprintf(lines[i], sizeof(lines[i]), "%s: %s", labels[i], values[i]);
     }

@@ -14,6 +14,7 @@
 #include "../MeshCoreSubtitle.h"
 #include "../utils/MeshCoreHeapLog.h"
 #include "../utils/MeshCoreMessageHeight.h"
+#include "../utils/MeshCoreShareUrl.h"
 #include "CrossPointSettings.h"
 #include "FontCacheManager.h"
 #include "Memory.h"
@@ -21,6 +22,7 @@
 #include "ThreadMenuRenderer.h"
 #include "ThreadMessenger.h"
 #include "ThreadScroller.h"
+#include "activities/reader/QrDisplayActivity.h"
 #include "activities/util/TextEntryHelpers.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -210,6 +212,38 @@ void MeshCoreThreadActivity::clearConversation() {
   requestUpdate();
 }
 
+void MeshCoreThreadActivity::shareContactQr() {
+  // Pull the full contact record from the store to get the node name and type.
+  constexpr uint8_t kMaxContacts = 20;
+  MeshCoreContact contacts[kMaxContacts] = {};
+  uint8_t count = store.loadContacts(contacts, kMaxContacts);
+  const MeshCoreContact* found = nullptr;
+  for (uint8_t i = 0; i < count; ++i) {
+    if (memcmp(contacts[i].publicKey, contactPubkey, 32) == 0) {
+      found = &contacts[i];
+      break;
+    }
+  }
+
+  MeshNodeType nodeType = MeshNodeType::COMPANION;
+  const char* name = threadName;  // already resolved (contact name or "Unknown")
+  if (found != nullptr) {
+    nodeType = found->type;
+    if (found->name[0] != '\0') name = found->name;
+  }
+
+  char url[384] = {};
+  if (meshcore::buildMeshCoreContactShareUrl(name, contactPubkey, nodeType, url, sizeof(url)) == 0) {
+    _toast.show(tr(STR_MESHCORE_SHARE_FAILED), 3000);
+    requestUpdate();
+    return;
+  }
+  LOG_DBG("MESH", "Thread share QR URL: %s", url);
+  startActivityForResult(
+      std::make_unique<QrDisplayActivity>(renderer, mappedInput, std::string(url), tr(STR_MESHCORE_SHARE_CONTACT)),
+      [this](const ActivityResult&) { requestUpdate(); });
+}
+
 void MeshCoreThreadActivity::scrollDownByMessage() {
   _scroller->scrollDownByMessage();
   requestUpdate();
@@ -378,7 +412,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
 
   if (currentTab == Tab::MENU) {
     // Action indices: 0..(actionCount-1) = menu actions, actionCount = settings toggle
-    int actionCount = isChannel ? 2 : 4;
+    int actionCount = isChannel ? 2 : 5;
     if (itemIdx >= actionCount) {
       // Settings toggle
       if (_menuSettings) {
@@ -405,7 +439,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           break;
       }
     } else {
-      // DM menu: 0=Reset Path, 1=Scroll to End, 2=Clear, 3=Unlist
+      // DM menu: 0=Reset Path, 1=Scroll to End, 2=Clear, 3=Share QR, 4=Unlist
       bool connected = (client.getState() == BleConnectionState::CONNECTED);
       switch (itemIdx) {
         case 0: {  // Reset Path
@@ -446,7 +480,10 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
-        case 3: {  // Unlist Contact (async, waits for BLE)
+        case 3:  // Share Contact (QR)
+          shareContactQr();
+          return true;
+        case 4: {  // Unlist Contact (async, waits for BLE)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -556,7 +593,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU: {
-      int count = isChannel ? 2 : 4;  // Channel: 2 actions; DM: 4 actions (+Reset Path)
+      int count = isChannel ? 2 : 5;  // Channel: 2 actions; DM: 5 actions (+Reset Path, +Share QR)
       if (_menuSettings) count += 1;  // +1 for the settings toggle
       return count;
     }
@@ -693,7 +730,7 @@ void MeshCoreThreadActivity::_renderNormal() {
   } else if (currentTab == Tab::MESSAGES) {
     btn2 = tr(STR_MESHCORE_SEND);
   } else if (currentTab == Tab::MENU) {
-    int actionCount = isChannel ? 2 : 4;
+    int actionCount = isChannel ? 2 : 5;
     btn2 = (selectedIndex > 0 && selectedIndex - 1 >= actionCount) ? tr(STR_TOGGLE) : tr(STR_SELECT);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
