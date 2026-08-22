@@ -1102,7 +1102,15 @@ void MeshCoreHubActivity::openDiscover() {
   startActivityForResult(std::make_unique<MeshCoreDiscoverActivity>(
                              renderer, mappedInput, client, store, discoveredNodes.get(), discoveredNodeCount,
                              savedContacts.get(), savedContactCount, savedContactsCapacity),
-                         [this](const ActivityResult&) { requestUpdate(); });
+                         [this](const ActivityResult&) {
+                           // Discover adds/removes contacts in place (append / shift) and
+                           // persists them, but it does not own contactSortIndex. Reload from
+                           // the store so the Contacts tab re-derives the activity/name sort
+                           // index — otherwise the stale index maps rows to the wrong contact
+                           // (the newly added contact shows a previously-existing name).
+                           reloadContactsFromStore();
+                           requestUpdate();
+                         });
 }
 
 void MeshCoreHubActivity::saveAdvertToFile() {
@@ -1302,6 +1310,9 @@ void MeshCoreHubActivity::advanceFileContactLoad(bool success) {
     if (savedContacts) {
       store.saveContacts(savedContacts.get(), savedContactCount);
     }
+    // Reload so contactSortIndex tracks the newly inserted contacts — the insert
+    // above shifts savedContacts[] in place without updating the sort index.
+    reloadContactsFromStore();
 
     if (_pendingFileContactSuccessCount > 0) {
       _toast.show(tr(STR_MESHCORE_CONTACTS_IMPORTED), 5000);
