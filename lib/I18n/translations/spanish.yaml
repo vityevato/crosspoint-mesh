@@ -447,7 +447,7 @@ STR_ENTER_WIFI_SSID: "Introduce el nombre de la red (SSID)"
 STR_MESHCORE: "MeshCore"
 
 STR_MESHCORE_ADD: "Añadir"
-STR_MESHCORE_UNLIST: "Quitar de la lista"
+STR_MESHCORE_UNLIST: "Quitar"
 STR_MESHCORE_CHANNEL_LIST: "Canales"
 
 
@@ -471,7 +471,7 @@ STR_MESHCORE_NO_CONTACTS: "No hay contactos guardados"
 STR_MESHCORE_NO_DEVICES: "No se encontraron dispositivos"
 STR_MESHCORE_NO_MESSAGES: "No hay mensajes"
 STR_MESHCORE_REMOVE_CONTACT: "Quitar de contactos"
-STR_MESHCORE_RETRY: "Reintentar"
+STR_MESHCORE_RETRY: "Repetir"
 STR_MESHCORE_SCANNING: "Escaneando..."
 STR_MESHCORE_SEND: "Enviar"
 

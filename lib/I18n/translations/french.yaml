@@ -448,7 +448,7 @@ STR_RECOVERY_MODE_HINT: "Placez firmware.bin à la racine de la carte SD et sél
 STR_MESHCORE: "MeshCore"
 
 STR_MESHCORE_ADD: "Ajouter"
-STR_MESHCORE_UNLIST: "Retirer de la liste"
+STR_MESHCORE_UNLIST: "Retirer"
 STR_MESHCORE_CHANNEL_LIST: "Canaux"
 
 
@@ -472,7 +472,7 @@ STR_MESHCORE_NO_CONTACTS: "Aucun contact enregistré"
 STR_MESHCORE_NO_DEVICES: "Aucun appareil trouvé"
 STR_MESHCORE_NO_MESSAGES: "Aucun message"
 STR_MESHCORE_REMOVE_CONTACT: "Retirer des contacts"
-STR_MESHCORE_RETRY: "Réessayer"
+STR_MESHCORE_RETRY: "Réessa."
 STR_MESHCORE_SCANNING: "Recherche..."
 STR_MESHCORE_SEND: "Envoyer"
 

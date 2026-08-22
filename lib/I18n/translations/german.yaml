@@ -446,8 +446,8 @@ STR_DICT_READ_FAILED: "Konnte Definition nicht lesen"
 
 STR_MESHCORE: "MeshCore"
 
-STR_MESHCORE_ADD: "Hinzufügen"
-STR_MESHCORE_UNLIST: "Aus Liste entfernen"
+STR_MESHCORE_ADD: "Hinzuf."
+STR_MESHCORE_UNLIST: "Entf."
 STR_MESHCORE_CHANNEL_LIST: "Kanäle"
 
 
@@ -471,7 +471,7 @@ STR_MESHCORE_NO_CONTACTS: "Keine gespeicherten Kontakte"
 STR_MESHCORE_NO_DEVICES: "Keine Geräte gefunden"
 STR_MESHCORE_NO_MESSAGES: "Keine Nachrichten"
 STR_MESHCORE_REMOVE_CONTACT: "Aus Kontakten entfernen"
-STR_MESHCORE_RETRY: "Erneut versuchen"
+STR_MESHCORE_RETRY: "Nochmal"
 STR_MESHCORE_SCANNING: "Suche..."
 STR_MESHCORE_SEND: "Senden"
 

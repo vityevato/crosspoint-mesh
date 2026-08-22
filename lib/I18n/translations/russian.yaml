@@ -512,7 +512,7 @@ STR_MESHCORE_NO_MESSAGES: "Нет сообщений"
 STR_MESHCORE_REMOVE_CONTACT: "Удалить из контактов"
 STR_MESHCORE_RETRY: "Повтор"
 STR_MESHCORE_SCANNING: "Сканирование..."
-STR_MESHCORE_SEND: "Отправить"
+STR_MESHCORE_SEND: "Написать"
 
 STR_MESHCORE_STATUS: "Статус"
 STR_MESHCORE_STATUS_NAME: "Имя"
@@ -537,5 +537,5 @@ STR_MESHCORE_CLEAR_CONFIRM: "Очистить все сообщения в эт�
 STR_MESHCORE_REMOVE_CONTACT_CONFIRM: "Удалить этот контакт?"
 STR_MESHCORE_UNKNOWN: "Неизвестный"
 STR_MESHCORE_CONVERSATION_CLEARED: "Переписка очищена"
-STR_MESHCORE_USE_READER_FONT: "Использовать шрифт читалки в переписках"
+STR_MESHCORE_USE_READER_FONT: "Шрифт читалки в переписках"
 
