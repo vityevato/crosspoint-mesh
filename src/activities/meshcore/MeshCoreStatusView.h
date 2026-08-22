@@ -37,7 +37,8 @@ class MeshCoreStatusView {
     snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw, comp.radioSf,
              comp.radioCr);
 
-    const char* labels[] = {"Name", "Model", "Firmware", "Battery", "Radio"};
+    const char* labels[] = {tr(STR_MESHCORE_STATUS_NAME), tr(STR_MESHCORE_STATUS_MODEL),
+                            tr(STR_MESHCORE_STATUS_FIRMWARE), tr(STR_BATTERY), tr(STR_MESHCORE_STATUS_RADIO)};
     const char* values[] = {comp.name, comp.model, comp.version, battBuf, radioBuf};
     constexpr int fieldCount = 5;
 
