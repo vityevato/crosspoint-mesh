@@ -17,3 +17,9 @@ class HWCDC {
 };
 
 extern HWCDC Serial;
+
+// Logging.h binds `static HardwareSerial& logSerial = Serial;` unless
+// ARDUINO_USB_CDC_ON_BOOT is defined (which the host build never sets).
+// Alias the esp-idf CDC type so that binding typechecks without a real
+// Arduino HardwareSerial implementation.
+using HardwareSerial = HWCDC;

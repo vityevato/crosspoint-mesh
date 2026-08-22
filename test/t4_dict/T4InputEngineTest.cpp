@@ -303,6 +303,63 @@ TEST_F(T4InputEngineTest, MultiTapNoTimeoutWithinWindow) {
   EXPECT_EQ(predictor.getConfirmedTextLength(), 0u);  // not fixed yet
 }
 
+// ── Multi-tap: soft byte limit (UTF-8 / Cyrillic) ───────────────────────
+
+TEST_F(T4InputEngineTest, MultiTapSoftLimitDefaultsToEngineMax) {
+  EXPECT_EQ(predictor.getMaxTextLen(), T4InputEngine<MockDictionary>::kMaxTextLen);
+}
+
+TEST_F(T4InputEngineTest, MultiTapCyrillicLimitRefusesOverageCommit) {
+  // Regression: a pending multi-tap Cyrillic letter (2-byte UTF-8) committed
+  // by the tap timeout must not push the confirmed text past the field limit.
+  // Previously fixMultiTapLetter() only checked kMaxTextLen (300) and ignored
+  // the field's shorter soft cap, letting "ас" grow to "аса" (6 bytes > 4).
+  predictor.setMode(T4Mode::MULTI_TAP);
+  predictor.setLanguage(T4Language::ADDITIONAL);  // Russian — letters are 2 bytes
+  predictor.setMaxTextLen(4);                     // 4 bytes = two Cyrillic letters
+
+  // Type "ас" (btn1 'а', btn3 'с') — lands exactly on the 4-byte cap.
+  predictor.pressButton(1);  // 'а'
+  predictor.pressButton(3);  // fix 'а', start 'п'
+  predictor.pressButton(3);  // 'р'
+  predictor.pressButton(3);  // 'с'
+  predictor.pressButton(1);  // fix 'с' → "ас" (4 bytes), pending 'а'
+
+  ASSERT_STREQ(predictor.getConfirmedText(), "ас");
+  EXPECT_EQ(predictor.getConfirmedTextLength(), 4u);
+  ASSERT_NE(predictor.getActiveButton(), 0u);  // 'а' still pending
+
+  // Force the multi-tap timeout: committing 'а' would reach 6 bytes. The
+  // engine must refuse and stay exactly at the cap instead.
+  predictor.poll(100);   // arm the tap timer
+  predictor.poll(1100);  // 1000 ms elapsed → fixMultiTapLetter()
+
+  EXPECT_EQ(predictor.getConfirmedTextLength(), 4u);
+  EXPECT_STREQ(predictor.getConfirmedText(), "ас");
+  EXPECT_EQ(predictor.getActiveButton(), 0u);  // pending letter dropped
+}
+
+TEST_F(T4InputEngineTest, MultiTapCyrillicLimitAllowsExactFit) {
+  // A commit that lands exactly on the cap is allowed ("ап" = 4 bytes), but
+  // any further pending letter at the cap is refused.
+  predictor.setMode(T4Mode::MULTI_TAP);
+  predictor.setLanguage(T4Language::ADDITIONAL);
+  predictor.setMaxTextLen(4);
+
+  predictor.pressButton(1);  // 'а'
+  predictor.pressButton(3);  // fix 'а' → "а" (2 bytes), pending 'п'
+  predictor.pressButton(4);  // fix 'п' → "ап" (4 bytes = cap), pending 'ч'
+
+  EXPECT_EQ(predictor.getConfirmedTextLength(), 4u);
+  EXPECT_STREQ(predictor.getConfirmedText(), "ап");
+
+  predictor.poll(100);   // arm the tap timer
+  predictor.poll(1100);  // would commit 'ч' (2 bytes) → must refuse
+
+  EXPECT_EQ(predictor.getConfirmedTextLength(), 4u);
+  EXPECT_STREQ(predictor.getConfirmedText(), "ап");
+}
+
 // ── Multi-tap: confirm word adds space ──────────────────────────────────
 
 TEST_F(T4InputEngineTest, MultiTapConfirmWordAddsSpace) {

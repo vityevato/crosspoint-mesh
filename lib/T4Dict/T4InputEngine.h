@@ -147,7 +147,7 @@ class T4InputEngine {
 
   /// Replace confirmed text buffer with @p text.
   /// Used to sync confirmed text between activity and engine on mode switch.
-  /// Text is truncated to kMaxTextLen if needed.
+  /// Text is truncated to the soft cap (_maxTextLen) if needed.
   void setConfirmedText(const char* text);
 
   // ── Editing ───────────────────────────────────────────────────────
@@ -180,12 +180,22 @@ class T4InputEngine {
   /// Maximum confirmed text length in bytes (UTF-8).
   static constexpr uint16_t kMaxTextLen = 300;
 
+  /// Field-level soft cap on confirmed text, in bytes (UTF-8). All appends
+  /// (letters, digits, spaces, punctuation, confirmed words) refuse to grow
+  /// beyond it. Defaults to kMaxTextLen; a text-entry field with a shorter
+  /// limit sets it to its own byte limit. Clamped to [0, kMaxTextLen].
+  void setMaxTextLen(uint16_t maxLen) { _maxTextLen = (maxLen < kMaxTextLen) ? maxLen : kMaxTextLen; }
+
+  /// Current soft cap on confirmed text, in bytes.
+  uint16_t getMaxTextLen() const { return _maxTextLen; }
+
  private:
   static constexpr uint8_t kMaxSeqLen = 31;
 
   std::unique_ptr<Dict> _dict;
   T4Language _lang = T4Language::EN;
   T4Mode _mode = T4Mode::PREDICT;
+  uint16_t _maxTextLen = kMaxTextLen;
 
   // Predict state
   uint8_t _sequence[kMaxSeqLen + 1] = {};
@@ -411,7 +421,7 @@ void T4InputEngine<Dict>::setConfirmedText(const char* text) {
     return;
   }
   auto len = strlen(text);
-  if (len > kMaxTextLen) len = kMaxTextLen;
+  if (len > _maxTextLen) len = _maxTextLen;
   memcpy(_confirmedText, text, len);
   _confirmedText[len] = '\0';
   _textLen = static_cast<uint16_t>(len);
@@ -582,7 +592,7 @@ bool T4InputEngine<Dict>::pressButton(uint8_t btn) {
     if (_lang == T4Language::DIGIT) {
       uint8_t blen;
       const char* digit = getGroupLetter(T4Language::DIGIT, btn, 0, blen);
-      if (digit && blen > 0 && _textLen + blen <= kMaxTextLen) {
+      if (digit && blen > 0 && _textLen + blen <= _maxTextLen) {
         memcpy(_confirmedText + _textLen, digit, blen);
         _textLen += blen;
         _confirmedText[_textLen] = '\0';
@@ -737,7 +747,7 @@ void T4InputEngine<Dict>::confirmWord() {
     const char* cand = getCurrentCandidate();
     if (cand && cand[0] != '\0') {
       auto len = strlen(cand);
-      if (_textLen + len + 1 <= kMaxTextLen) {
+      if (_textLen + len + 1 <= _maxTextLen) {
         memcpy(_confirmedText + _textLen, cand, len);
         _textLen += len;
         _confirmedText[_textLen++] = ' ';
@@ -757,7 +767,7 @@ void T4InputEngine<Dict>::confirmWord() {
   if (_mode == T4Mode::MULTI_TAP) {
     // Fix any in-progress letter, then append space
     fixMultiTapLetter();
-    if (_textLen < kMaxTextLen) {
+    if (_textLen < _maxTextLen) {
       _confirmedText[_textLen++] = ' ';
       _confirmedText[_textLen] = '\0';
       if (_wordCount < kMaxWords) _wordLang[_wordCount++] = _lang;
@@ -949,11 +959,9 @@ void T4InputEngine<Dict>::backspace() {
   // Delete one UTF-8 character (may be 1–4 bytes)
   if (_textLen == 0) return;
   // Find start byte of last UTF-8 character
-  uint8_t blen = 1;
   uint16_t startPos = _textLen - 1;
   while (startPos > 0 && (_confirmedText[startPos] & 0xC0) == 0x80) {
     startPos--;
-    blen++;
   }
   _textLen = startPos;
   _confirmedText[startPos] = '\0';
@@ -999,7 +1007,7 @@ void T4InputEngine<Dict>::fixMultiTapLetter() {
   if (_activeButton == 0) return;
   uint8_t blen;
   const char* letter = getGroupLetter(_lang, _activeButton, _tapIndex, blen);
-  if (letter && blen > 0 && _textLen + blen <= kMaxTextLen) {
+  if (letter && blen > 0 && _textLen + blen <= _maxTextLen) {
     // SOH sentinel (\x01) = newline action
     if (blen == 1 && *letter == '\x01') {
       _confirmedText[_textLen++] = '\n';
@@ -1014,7 +1022,7 @@ void T4InputEngine<Dict>::fixMultiTapLetter() {
         writeLen = upperLetterUtf8(letter, blen, upper);
         src = upper;
       }
-      if (_textLen + writeLen <= kMaxTextLen) {
+      if (_textLen + writeLen <= _maxTextLen) {
         memcpy(_confirmedText + _textLen, src, writeLen);
         _textLen += writeLen;
         _confirmedText[_textLen] = '\0';

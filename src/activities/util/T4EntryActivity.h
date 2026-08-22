@@ -48,6 +48,13 @@ class T4EntryActivity : public Activity {
   void onCancel();
   void handlePunctuation();
   static bool isAutoCapPunct(const char* punct, const t4::SentenceConfig& cfg);
+  // Effective confirmed-text byte limit: _maxLength clamped to the input
+  // engine's buffer, with 0 meaning "no field limit" (engine-bounded).
+  size_t textLimitBytes() const;
+  // Bytes of punctuation @p punct appendable to text of length @p textLen
+  // within @p limit.  Drops a trailing space separator when it alone would
+  // overflow (". " → "."); returns 0 when the glyph itself doesn't fit.
+  static size_t punctBytesWithin(size_t textLen, const char* punct, size_t limit);
   bool isTextInputFull() const;
 
   // Mode transition helpers
@@ -166,6 +173,12 @@ class T4EntryActivity : public Activity {
   t4::T4Mode _userMode;     // User's preferred mode (changed only on manual toggle)
   int _punctIndex;          // 0 = space (just-confirmed), 1-7 = punct
   bool _wordJustConfirmed;  // true after confirmWord, false after next input
+  /// Byte length of the punctuation mark actually appended last.  At the
+  /// field limit the trailing space separator is dropped (". " → "."), so the
+  /// applied mark can be shorter than the minimal cycle entry.  The cycle
+  /// uses this to erase exactly the applied suffix instead of clobbering the
+  /// final character's trailing UTF-8 bytes.
+  size_t _lastPunctLen = 0;
   /// When true, one-shot Shift level 1 was auto-generated (sentence-start)
   /// and should NOT be consumed on the first letter press.  Manual shift
   /// sets this in pressLetterGroup after consuming the engine level.

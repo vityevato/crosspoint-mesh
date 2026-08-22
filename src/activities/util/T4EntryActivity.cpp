@@ -113,6 +113,11 @@ void T4EntryActivity::onEnter() {
   // preference is restored when switching back to a language with a dict.
   applyEffectiveMode();
 
+  // Enforce this field's byte limit inside the engine too, so engine-side
+  // appends — most importantly the in-flight multi-tap letter committed by
+  // poll()/fixMultiTapLetter() — can never push confirmed text past the cap.
+  _inputEngine.setMaxTextLen(static_cast<uint16_t>(textLimitBytes()));
+
   // Priming the engine with initial text (e.g., file rename)
   if (!_initialText.empty()) {
     _inputEngine.setConfirmedText(_initialText.c_str());
@@ -656,7 +661,9 @@ void T4EntryActivity::onComplete() {
   // In PREDICT: append the still-unconfirmed candidate to the engine text
   if (_mode == t4::T4Mode::PREDICT) {
     const char* candidate = _inputEngine.getCurrentCandidate();
-    if (candidate && candidate[0] != '\0') result += candidate;
+    if (candidate && candidate[0] != '\0' && result.length() + strlen(candidate) <= textLimitBytes()) {
+      result += candidate;
+    }
   }
   // When the last action was a word confirmation (space/punctuation via
   // handlePunctuation), a trailing space was appended as a word separator
@@ -684,10 +691,20 @@ void T4EntryActivity::onCancel() {
 
 // ── Text limit ───────────────────────────────────────────────────────────
 
-bool T4EntryActivity::isTextInputFull() const {
+bool T4EntryActivity::isTextInputFull() const { return _inputEngine.getConfirmedTextLength() >= textLimitBytes(); }
+
+size_t T4EntryActivity::textLimitBytes() const {
   constexpr auto kMax = decltype(_inputEngine)::kMaxTextLen;
-  const size_t limit = (_maxLength < kMax) ? _maxLength : kMax;
-  return _inputEngine.getConfirmedTextLength() >= limit;
+  if (_maxLength == 0) return kMax;
+  return (_maxLength < kMax) ? _maxLength : kMax;
+}
+
+size_t T4EntryActivity::punctBytesWithin(size_t textLen, const char* punct, size_t limit) {
+  const size_t len = strlen(punct);
+  const bool hasSpace = (len > 1 && punct[len - 1] == ' ');
+  const size_t noSpace = hasSpace ? len - 1 : len;
+  if (textLen + noSpace > limit) return 0;
+  return (textLen + len <= limit) ? len : noSpace;
 }
 
 // ── Punctuation Handling ─────────────────────────────────────────────────
@@ -731,41 +748,56 @@ void T4EntryActivity::handlePunctuation() {
 
     if (_wordJustConfirmed && millis() - _lastConfirmMs <= decltype(_inputEngine)::kMultiTapTimeoutMs) {
       // Within timeout: cycle punctuation
-      const char* prevPunct = punctCycle()[_punctIndex];
-      size_t prevLen = strlen(prevPunct);
-      if (text.length() >= prevLen) {
-        text.erase(text.length() - prevLen);
-      }
-      _punctIndex = (_punctIndex + 1) % PUNCT_COUNT;
-      text += punctCycle()[_punctIndex];
-      _lastConfirmMs = millis();
-      // Sentence-ending punctuation → auto-cap next word (Text only).
-      // Landing on a non-sentence-ending mark (e.g. ", " after cycling
-      // through ". ") must cancel a previously armed auto-cap: otherwise
-      // the next word would be capitalised after a comma.
-      if (_inputType == InputType::Text) {
-        if (isAutoCapPunct(punctCycle()[_punctIndex], *_sentenceCfg)) {
-          if (_inputEngine.getShiftLevel() == 0) {
-            _inputEngine.setShiftLevel(1);
-            _autoCap = true;
-            _autoCapFromSentence = true;
+      // Only cycle when the replacement fits within the field limit — the
+      // marks differ in width (" " vs "... "), and a trailing space
+      // separator is dropped when it alone would overflow (". " → ".").
+      // Erase exactly the mark actually applied (_lastPunctLen): a mark
+      // truncated to its glyph is shorter than the cycle entry, and erasing
+      // the full entry would clip the preceding character's UTF-8 tail.
+      uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
+      const char* nextPunct = punctCycle()[nextIdx];
+      const size_t strippedLen = (text.length() >= _lastPunctLen) ? text.length() - _lastPunctLen : text.length();
+      const size_t usable = punctBytesWithin(strippedLen, nextPunct, textLimitBytes());
+      if (usable > 0) {
+        if (text.length() >= _lastPunctLen) {
+          text.erase(text.length() - _lastPunctLen);
+        }
+        _punctIndex = nextIdx;
+        text.append(nextPunct, usable);
+        _lastPunctLen = usable;
+        // Sentence-ending punctuation → auto-cap next word (Text only).
+        // Landing on a non-sentence-ending mark (e.g. ", " after cycling
+        // through ". ") must cancel a previously armed auto-cap: otherwise
+        // the next word would be capitalised after a comma.
+        if (_inputType == InputType::Text) {
+          if (isAutoCapPunct(nextPunct, *_sentenceCfg)) {
+            if (_inputEngine.getShiftLevel() == 0) {
+              _inputEngine.setShiftLevel(1);
+              _autoCap = true;
+              _autoCapFromSentence = true;
+            }
+          } else if (_autoCapFromSentence) {
+            _autoCap = false;
+            _autoCapFromSentence = false;
+            if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
           }
-        } else if (_autoCapFromSentence) {
-          _autoCap = false;
-          _autoCapFromSentence = false;
-          if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
         }
       }
+      _lastConfirmMs = millis();
       LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
               text.c_str());
     } else {
-      // First confirm or timeout expired: add trailing space
-      text += ' ';
-      _punctIndex = 0;
-      _wordJustConfirmed = true;
-      _candidateScrollX = 0;
-      _lastConfirmMs = millis();
-      LOG_DBG("T4", "handlePunct: MULTI_TAP first confirm → text='%s'", text.c_str());
+      // First confirm or timeout expired: add trailing space.  Refuse when
+      // the field is at its limit so punctuation cannot exceed it.
+      if (text.length() < textLimitBytes()) {
+        text += ' ';
+        _punctIndex = 0;
+        _lastPunctLen = 1;
+        _wordJustConfirmed = true;
+        _candidateScrollX = 0;
+        _lastConfirmMs = millis();
+        LOG_DBG("T4", "handlePunct: MULTI_TAP first confirm → text='%s'", text.c_str());
+      }
     }
     _inputEngine.setConfirmedText(text.c_str());
     requestUpdate();
@@ -780,19 +812,24 @@ void T4EntryActivity::handlePunctuation() {
       _wordJustConfirmed = false;
       // Fall through to first-press logic below
     } else {
-      // Remove previous punctuation suffix, then append next in cycle
-      const char* prevPunct = punctCycle()[_punctIndex];
-      size_t prevLen = strlen(prevPunct);
-      if (text.length() >= prevLen) {
-        text.erase(text.length() - prevLen);
-      }
+      // Remove previous punctuation suffix, then append next in cycle —
+      // but only when the replacement fits within the field limit: the
+      // marks differ in width (" " vs "... "), and a trailing space
+      // separator is dropped when it alone would overflow (". " → ".").
+      // Erase exactly the mark actually applied (_lastPunctLen) so a mark
+      // truncated to its glyph cannot clip the preceding character.
       uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
       const char* nextPunct = punctCycle()[nextIdx];
-      size_t nextLen = strlen(nextPunct);
-      // Only apply if it won't overflow the engine buffer
-      if (text.length() + nextLen <= decltype(_inputEngine)::kMaxTextLen) {
+      const size_t strippedLen = (text.length() >= _lastPunctLen) ? text.length() - _lastPunctLen : text.length();
+      // Only apply if it won't overflow the field limit
+      const size_t usable = punctBytesWithin(strippedLen, nextPunct, textLimitBytes());
+      if (usable > 0) {
+        if (text.length() >= _lastPunctLen) {
+          text.erase(text.length() - _lastPunctLen);
+        }
         _punctIndex = nextIdx;
-        text += nextPunct;
+        text.append(nextPunct, usable);
+        _lastPunctLen = usable;
         // Sentence-ending punctuation → auto-cap next word (Text only).
         // Cycling onto a non-sentence-ending mark must cancel any pending
         // auto-cap (see comment above; matches the MULTI_TAP cycle).
@@ -830,20 +867,32 @@ void T4EntryActivity::handlePunctuation() {
     // first letter). Returns the raw candidate when neither is active.
     std::string cased = applyWordCase(word);
     if (!cased.empty()) word = cased.c_str();
+
+    // Confirm only if the word plus its separator fits within the field
+    // limit; otherwise leave the candidate unconfirmed (field at its cap).
+    std::string nextText = text;
+    if (!nextText.empty() && nextText.back() != ' ') nextText += ' ';
+    nextText += word;
+    if (nextText.length() > textLimitBytes()) {
+      return;
+    }
+
     // Consume the one-shot state: auto-cap and one-shot Shift last for a
     // single word; Caps Lock stays on until toggled off.
     _autoCap = false;
     _autoCapFromSentence = false;
     if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
 
-    if (!text.empty() && text.back() != ' ') {
-      text += ' ';
-    }
-    text += word;
+    text = std::move(nextText);
 
     // Reset predictor sequence for next word
     _inputEngine.confirmWord();
-    text += ' ';  // trailing space after confirmed word
+    if (text.length() < textLimitBytes()) {
+      text += ' ';  // trailing space after confirmed word
+      _lastPunctLen = 1;
+    } else {
+      _lastPunctLen = 0;
+    }
     _punctIndex = 0;
     _wordJustConfirmed = true;
     _candidateScrollX = 0;
@@ -853,6 +902,7 @@ void T4EntryActivity::handlePunctuation() {
     // No candidate: just append space
     text += ' ';
     _punctIndex = 0;
+    _lastPunctLen = 1;
     _wordJustConfirmed = true;
     _lastConfirmMs = millis();
     LOG_DBG("T4", "handlePunct: PREDICT no-candidate → text='%s'", text.c_str());
@@ -896,7 +946,9 @@ bool T4EntryActivity::togglePredictMultiTap() {
             _inputEngine.getSequenceLength());
     if (cand && cand[0] != '\0') {
       std::string t(_inputEngine.getConfirmedText());
-      t += cand;
+      if (t.length() + strlen(cand) <= textLimitBytes()) {
+        t += cand;
+      }
       _inputEngine.setConfirmedText(t.c_str());
     }
   }
