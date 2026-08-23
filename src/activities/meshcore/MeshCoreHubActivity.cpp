@@ -856,6 +856,23 @@ void MeshCoreHubActivity::startContactActivitySweep() {
 
 void MeshCoreHubActivity::rebuildContactSortIndex() {
   if (!contactSortIndex || savedContactCount == 0) return;
+
+  // Anchor the cursor to the highlighted contact *before* reordering and
+  // re-select it after, so a sort change (message activity while a thread is
+  // open, a favourite toggle, or the finishing activity sweep) keeps the same
+  // conversation highlighted and the list scrolled to it instead of leaving
+  // selectedIndex pointing at a different row.
+  uint8_t anchor[32] = {};
+  bool haveAnchor = false;
+  const int preSelected = selectedIndex - 1;
+  if (currentTab == Tab::CONTACTS && preSelected >= 0 && preSelected < savedContactCount) {
+    const uint16_t displayIdx = contactSortIndex[preSelected];
+    if (displayIdx < savedContactCount) {
+      memcpy(anchor, savedContacts[displayIdx].publicKey, sizeof(anchor));
+      haveAnchor = true;
+    }
+  }
+
   for (uint16_t i = 0; i < savedContactCount; ++i) contactSortIndex[i] = i;
 
   auto before = [this](uint16_t a, uint16_t b) -> bool {
@@ -880,6 +897,22 @@ void MeshCoreHubActivity::rebuildContactSortIndex() {
     }
     contactSortIndex[j] = key;
   }
+
+  if (haveAnchor) selectContactInList(anchor, selectedIndex);
+}
+
+void MeshCoreHubActivity::selectContactInList(const uint8_t* pubkey32, int fallbackSelected) {
+  if (currentTab != Tab::CONTACTS || savedContactCount == 0 || !pubkey32 || !contactSortIndex) {
+    return;
+  }
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
+    const uint16_t displayIdx = contactSortIndex[i];
+    if (displayIdx < savedContactCount && memcmp(savedContacts[displayIdx].publicKey, pubkey32, 32) == 0) {
+      selectedIndex = i + 1;  // 0 = tab bar, i+1 = sorted contact row
+      return;
+    }
+  }
+  selectedIndex = fallbackSelected;
 }
 
 void MeshCoreHubActivity::handleContact(const MeshCoreContact& c, bool isEnd) {
@@ -1095,22 +1128,12 @@ void MeshCoreHubActivity::handleContactFavouriteResult(const uint8_t* pubkey32, 
       } else {
         savedContacts[i].flags &= static_cast<uint8_t>(~MeshCoreContact::FLAG_FAVOURITE);
       }
-      rebuildContactSortIndex();
+      rebuildContactSortIndex();  // re-selects the cursor (anchored by pubkey)
       // Persist immediately — the flag was already committed to the companion
       // (ACKed addUpdateContact), so the local store must not lag behind until
       // the next contact-list sync or the hub's onExit.
       _contactsDirty = false;
       store.saveContacts(savedContacts.get(), savedContactCount);
-      break;
-    }
-  }
-
-  // Re-sort moved the contact — highlight it at its new position instead of
-  // leaving the stale row index pointing at a different contact.
-  for (uint16_t i = 0; i < savedContactCount; ++i) {
-    const uint16_t displayIdx = contactSortIndex ? contactSortIndex[i] : i;
-    if (memcmp(savedContacts[displayIdx].publicKey, pubkey32, 32) == 0) {
-      selectedIndex = i + 1;  // 0 = tab bar, i+1 = sorted contact row
       break;
     }
   }
@@ -1138,9 +1161,12 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
                            if (std::get_if<MeshCoreUnlistResult>(&result.data)) {
                              LOG_DBG("MESH", "Hub: contact deleted — reloading from store");
                              reloadContactsFromStore();
+                             selectedIndex = 0;  // list changed — drop to tab bar
                            }
-                           // Favourite toggles never finish the Thread — they
-                           // are committed in place via handleContactFavouriteResult.
+                           // Normal exit: the cursor already tracks the conversation
+                           // (rebuildContactSortIndex re-anchors on every re-sort
+                           // that happens while the thread is open), so the Contacts
+                           // list renders it selected and scrolled into view.
                            requestUpdate();
                          });
 }

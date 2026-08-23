@@ -200,8 +200,18 @@ class MeshCoreHubActivity final : public Activity {
   bool ensureContactsCapacity(uint16_t needed);
   /** Loads savedContacts from the store, growing the buffer as needed. */
   void reloadContactsFromStore();
-  /** Sorts contactSortIndex by (favourite, lastActivity desc, name asc). */
+  /** Sorts contactSortIndex by (favourite, lastActivity desc, name asc).
+   *  Before reordering, anchors the cursor to the highlighted contact (by
+   *  public key) and re-selects it afterwards, so a sort change that happens
+   *  while a conversation is open (message activity, favourite toggle, sweep
+   *  completion) keeps the cursor on the same contact and the list scrolls to
+   *  it — instead of leaving selectedIndex pointing at a different row. */
   void rebuildContactSortIndex();
+  /** Selects the contact identified by @p pubkey32 at its current sorted
+   *  position (0 = tab bar, i+1 = sorted contact row) so the list scrolls to
+   *  it. Falls back to @p fallbackSelected when the contact is absent (e.g.
+   *  removed). No-op unless the Contacts tab is active. */
+  void selectContactInList(const uint8_t* pubkey32, int fallbackSelected);
   /** Begins the background per-contact last-message sweep (runs in loop()). */
   void startContactActivitySweep();
 
