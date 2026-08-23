@@ -84,7 +84,7 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
       Pre‑built dictionaries are in
       `t4dicts/` (`en.trie`, `ru.trie`); source word lists can be obtained
       from <https://github.com/hermitdave/FrequencyWords>. Words the user
-      types are learned into `/.crosspoint/dicts/user_words.bin` (see
+      types are learned into `/t4dicts/user_words.bin` (see
       [docs/file-formats.md](docs/file-formats.md)).
 - **Storage**: SD card (SdFat via `HalStorage`). No database.
   Settings persist as `/settings.json`. EPUB caches persist as

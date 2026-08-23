@@ -37,12 +37,7 @@ struct AdditionalLayout {
 };
 
 static constexpr AdditionalLayout kAdditionalLayouts[] = {
-    {"ru",
-     "RU",
-     "/.crosspoint/dicts/ru.trie",
-     {"абвгдеёж-", "зийклмно", "прстуфхц", "чшщъыьэюя"},
-     {9, 8, 8, 9},
-     {true, ".!?"}},
+    {"ru", "RU", "/t4dicts/ru.trie", {"абвгдеёж-", "зийклмно", "прстуфхц", "чшщъыьэюя"}, {9, 8, 8, 9}, {true, ".!?"}},
 };
 static constexpr uint8_t kAdditionalLayoutCount = sizeof(kAdditionalLayouts) / sizeof(kAdditionalLayouts[0]);
 
@@ -327,7 +322,7 @@ T4Language cycleLanguage(T4Language current) {
 const char* getDictionaryPath(T4Language lang) {
   switch (lang) {
     case T4Language::EN:
-      return "/.crosspoint/dicts/en.trie";
+      return "/t4dicts/en.trie";
     case T4Language::ADDITIONAL:
       return hasActiveAdditionalLayout() ? activeAdditional().dictPath : nullptr;
     case T4Language::DIGIT:

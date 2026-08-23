@@ -5,6 +5,7 @@
 #include <MeshCore/MeshCoreTypes.h>
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 
 #include "../MeshCoreSettings.h"
@@ -64,6 +65,12 @@ class MeshCoreThreadActivity final : public Activity {
   /// Whether the DM contact is marked favourite (flags bit 0). Snapshot taken
   /// at construction from the contact record; the Hub is the reconciler.
   bool contactIsFavourite() const { return _isFavourite; }
+
+  /// True when this thread is the direct-message conversation with @p pubkey32.
+  bool matchesContact(const uint8_t* pubkey32) const { return !isChannel && memcmp(contactPubkey, pubkey32, 32) == 0; }
+
+  /// True when this thread is the channel conversation @p chIdx.
+  bool matchesChannel(uint8_t chIdx) const { return isChannel && channelIdx == chIdx; }
 
   friend struct ThreadMessenger;
   friend struct ThreadMenuRenderer;

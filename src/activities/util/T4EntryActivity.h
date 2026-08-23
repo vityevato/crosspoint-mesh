@@ -30,8 +30,8 @@ class T4EntryActivity : public Activity {
   static constexpr unsigned long BACKSPACE_REPEAT_MS = 150;
 
   // Learned-word store, shared by every Text field (see docs/file-formats.md).
-  static constexpr const char* USER_LEXICON_DIR = "/.crosspoint/dicts";
-  static constexpr const char* USER_LEXICON_PATH = "/.crosspoint/dicts/user_words.bin";
+  static constexpr const char* USER_LEXICON_DIR = "/t4dicts";
+  static constexpr const char* USER_LEXICON_PATH = "/t4dicts/user_words.bin";
 
   // Punctuation cycle
   static constexpr const char* PUNCT_CYCLE[] = {" ", ". ", ", ", "! ", "? ", ": ", "; ", "... "};

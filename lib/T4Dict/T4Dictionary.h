@@ -19,7 +19,7 @@ class T4Dictionary {
   T4Dictionary& operator=(T4Dictionary&&) noexcept;
 
   /// Load a .trie dictionary from SD card.
-  /// @param path  Full path, e.g. "/.crosspoint/dicts/en.trie"
+  /// @param path  Full path, e.g. "/t4dicts/en.trie"
   /// @return true on success, false on any error (missing file, bad format).
   bool loadFromSD(const char* path);
 

@@ -14,7 +14,7 @@
 using namespace t4;
 
 // When true, MockDictionary::loadFromSD() fails for the real English SD path
-// (/.crosspoint/dicts/en.trie), simulating an English dictionary absent from
+// (/t4dicts/en.trie), simulating an English dictionary absent from
 // the SD card. Unset for all other paths (including the mock "/mock/en.trie").
 static bool g_mockNoEnDict = false;
 
@@ -34,7 +34,7 @@ class MockDictionary {
   MockDictionary() = default;
 
   bool loadFromSD(const char* path) {
-    if (g_mockNoEnDict && path && strstr(path, "crosspoint/dicts/en.trie")) return false;
+    if (g_mockNoEnDict && path && strstr(path, "t4dicts/en.trie")) return false;
     // Build a minimal trie with CORRECT button mappings based on
     // T4Layout English groups:
     //   btn1 (idx 0): abcdef    btn2 (idx 1): ghijkl

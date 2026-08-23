@@ -752,7 +752,11 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
       LOG_ERR("MESH", "Failed to store ch%d msg", msg.channelIdx);
     }
     if (msg.channelIdx < MESHCORE_MAX_CHANNELS) {
-      channels[msg.channelIdx].unreadCount++;
+      // Messages that arrive while the user is actively viewing this channel's
+      // thread are displayed immediately — they must not count as unread.
+      if (!(_activeThread && _activeThread->matchesChannel(msg.channelIdx))) {
+        channels[msg.channelIdx].unreadCount++;
+      }
       // Ranking: most recently active channel climbs to the top of the list.
       channelLastActivity[msg.channelIdx] = msgWithHeight.timestamp;
     }
@@ -761,7 +765,12 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
     for (uint16_t i = 0; i < savedContactCount; ++i) {
       if (memcmp(savedContacts[i].publicKey, msg.pubkeyPrefix, 6) == 0) {
         store.appendDirectMessage(savedContacts[i].publicKey, msgWithHeight);
-        savedContacts[i].unreadCount++;
+        // Messages that arrive while the user is actively viewing this
+        // contact's thread are displayed immediately — they must not count
+        // as unread.
+        if (!(_activeThread && _activeThread->matchesContact(savedContacts[i].publicKey))) {
+          savedContacts[i].unreadCount++;
+        }
         if (contactLastActivity) {
           contactLastActivity[i] = msgWithHeight.timestamp;
           rebuildContactSortIndex();  // sender rises to the top (after favourites)

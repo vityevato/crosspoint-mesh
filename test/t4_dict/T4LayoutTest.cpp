@@ -211,6 +211,13 @@ TEST(T4Layout, LanguageNames) {
   EXPECT_STREQ(getLanguageName(T4Language::DIGIT), "123");
 }
 
+TEST(T4Layout, DictionaryPaths) {
+  // Fixed English dictionary lives at the root t4dicts directory.
+  EXPECT_STREQ(getDictionaryPath(T4Language::EN), "/t4dicts/en.trie");
+  // DIGIT has no dictionary.
+  EXPECT_EQ(getDictionaryPath(T4Language::DIGIT), nullptr);
+}
+
 TEST(T4Layout, AdditionalLayoutRegistry) {
   ASSERT_GE(getAdditionalLayoutCount(), 1u);
   // Default additional layout (index 0) is Russian.
@@ -232,7 +239,7 @@ TEST(T4Layout, AdditionalLayoutRegistry) {
   EXPECT_TRUE(hasActiveAdditionalLayout());
   EXPECT_STREQ(getLanguageCode(T4Language::ADDITIONAL), "ru");
   EXPECT_STREQ(getLanguageName(T4Language::ADDITIONAL), "RU");
-  EXPECT_STREQ(getDictionaryPath(T4Language::ADDITIONAL), "/.crosspoint/dicts/ru.trie");
+  EXPECT_STREQ(getDictionaryPath(T4Language::ADDITIONAL), "/t4dicts/ru.trie");
 
   // Out-of-range (non-sentinel) selection is ignored (stays on previous index).
   setActiveAdditionalLayout(200);
