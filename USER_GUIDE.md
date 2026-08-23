@@ -623,9 +623,9 @@ Groups secondary actions that are used less frequently:
 | **Discovery Nodes** | Opens the list of nearby mesh nodes discovered via network adverts (see [3.9.5](#395-discovery-nodes)). |
 | **Send Advert** | Sends a single-hop mesh advertisement via the companion. Nearby nodes can discover your presence. |
 | **Send Flood Advert** | Sends a mesh-wide flood advertisement that propagates through the entire mesh network. |
-| **Save Advert to File** | Writes the companion's contact link to a file on the SD card so it can be shared or re-imported. |
+| **Save Advert to File** | Writes the companion's contact link to `/meshcore_contacts.txt` on the SD card so it can be shared or re-imported. |
 | **Share Contact (QR)** | Displays a QR code of the companion's contact link so another device can add it. |
-| **Import Contacts from File** | Reads contact links from a file on the SD card and adds them to the companion. |
+| **Import Contacts from File** | Reads contact links from `/meshcore_contacts.txt` on the SD card and adds them to the companion. |
 | **Status** | Shows companion device info (see [3.9.6](#396-companion-status)). |
 | **Disconnect** | Shows a confirmation prompt, then disconnects from the companion. |
 
@@ -637,6 +637,30 @@ Groups secondary actions that are used less frequently:
 >
 > After sending an advert, the subtitle area shows a brief status message
 > ("Advert sent" or "Advert failed") that auto-clears after 5 seconds.
+
+**Contacts file.** Both **Save Advert to File** and **Import Contacts from
+File** use `/meshcore_contacts.txt` in the SD card root directory.
+
+**Save Advert to File** overwrites that file with a single line: the
+companion's contact link in the QR format:
+
+```
+meshcore://contact/add?name=<node name>&public_key=<64 hex chars>&type=1
+```
+
+Copy this file to another device (or transfer it over at the same time as
+your books) to share the contact; the receiving device can import it the
+same way.
+
+**Import Contacts from File** reads the file one URL per line and adds each
+contact to the companion. Two formats are accepted on each line:
+
+- the URL format above (`meshcore://contact/add?name=...&public_key=...&type=...`);
+- a *biz card* — `meshcore://` followed by the hex-encoded raw ADVERT
+  packet of a node.
+
+Lines that fail to parse, the device's own public key, and contacts that are
+already saved are skipped without error.
 
 #### 3.9.4 Conversation Thread
 

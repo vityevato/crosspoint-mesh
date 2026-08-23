@@ -42,23 +42,22 @@ single device. Community-built, fully hackable, free forever.
 
 - **Localization**: 24 UI languages and counting. RTL support.
 
-- **T4 text input**: button-only devices (Xteink X3/X4) type through a
-  T9-style button keyboard instead of a touchscreen keyboard. Predictive word
-  suggestions currently support **English** and **Russian** only — copy the
-  `.trie` dictionaries from the [`t4dicts/`](t4dicts/) directory in this repo
-  to `/t4dicts/` on the SD card to enable them, or build your own (see
-  [docs/t4-dictionary.md](docs/t4-dictionary.md)).
-
 - **MeshCore Client**: Built-in BLE client for the [MeshCore](https://meshcore.co.uk/) decentralized
-  mesh network — communicate without internet access, even in remote areas.
+  mesh network — communicate without internet access, even in remote areas. This
+  is not a full MeshCore client: the companion node must be configured beforehand
+  with a full-featured client, such as the MeshCore smartphone app. CrossPoint
+  connects to that already-configured companion over BLE and focuses on
+  messaging.
+
+  Included messaging features:
 
   - **Three-tab hub**: **Contacts**, **Channels**, and **Menu** — primary functions
     are front and centre; secondary actions are grouped under Menu.
   - **BLE companion connection** — scan for and pair with MeshCore companion devices (T-Beam,
     etc.) via encrypted BLE with PIN authentication
   - **Auto-reconnect** — automatically reconnects to the last paired companion when in range
-  - **Channels** — join and send messages on public channels, hashtag channels, and encrypted
-    private channels (up to 8)
+  - **Channels** — join and send messages on public channels, hashtag channels, and
+    encrypted private channels (up to 8)
   - **Contacts & direct messages** — view saved contacts with unread counts,
     send private messages with paginated conversation history, per-message delivery
     status (Sent / Delivered / Failed), bounded retry escalation (direct → flood),
@@ -66,16 +65,31 @@ single device. Community-built, fully hackable, free forever.
   - **Menu tab** — Discovery Nodes (browse nearby mesh nodes and add as contacts),
     Send Advert / Send Flood Advert (broadcast presence on the mesh),
     Status (companion device info), Disconnect
+  - **QR contact sharing** — display your node as a `meshcore://contact/add` QR
+    code on the e-ink screen so another MeshCore client can add your node
+  - **Contact file exchange** — save your node's contact link to an SD file
+    (`/meshcore_contacts.txt`) and import contacts from it
   - **SD persistence** — messages, contacts, and unread counts survive reboots via SD card
     storage
-  - **Desktop simulator** — test all MeshCore UI without hardware using mock data
-    (`fs_/meshcore_mock.json`) and hotkeys 1-9
 
-### Coming soon:
+  Not included (compared with the full-featured smartphone client — set these
+  up with the app beforehand):
 
-- More themes.
+  - Initial node setup and configuration: node name, BLE PIN, and radio
+    parameters (frequency, bandwidth, spreading factor, TX power, GPS), as well
+    as provisioning a new node's identity.
+  - QR channel sharing/joining (`meshcore://channel/add`) and QR *scanning* — the
+    device has no camera, so it can only emit the contact QR code, not import
+    channels or contacts by scanning them.
+  - Configuring a node as a repeater or range extender, and other advanced node
+    administration that only the full app exposes.
 
-- Much more! stay tuned.
+- **T4 text input**: button-only devices (Xteink X3/X4) type through a
+  T9-style button keyboard instead of a touchscreen keyboard. Predictive word
+  suggestions currently support **English** and **Russian** only — copy the
+  `.trie` dictionaries from the [`t4dicts/`](t4dicts/) directory in this repo
+  to `/t4dicts/` on the SD card to enable them, or build your own (see
+  [docs/t4-dictionary.md](docs/t4-dictionary.md)).
 
 ---
 
