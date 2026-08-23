@@ -108,7 +108,6 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 ├── partitions.csv           # ESP32 flash partition layout
 ├── CLAUDE.md                # Detailed AI agent development guide
 ├── SCOPE.md                 # Feature scope boundaries
-├── GOVERNANCE.md            # Project governance
 ├── README.md                # User-facing project overview and install guide
 ├── USER_GUIDE.md            # End-user operating instructions
 ├── bin/                     # Developer scripts (clang-format-fix)

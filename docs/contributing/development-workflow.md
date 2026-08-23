@@ -40,5 +40,3 @@ If `clang-format` is missing or too old locally, see [Getting Started](./getting
 - Be explicit and concise in responses
 - Keep discussions technical and respectful
 - Assume good intent and focus on code-level feedback
-
-For community expectations, see [GOVERNANCE.md](../../GOVERNANCE.md).

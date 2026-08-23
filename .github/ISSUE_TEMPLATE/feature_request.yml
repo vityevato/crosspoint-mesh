@@ -1,17 +1,24 @@
 name: Feature Request
-description: Propose a new feature, enhancement, or change to CrossPoint
+description: Propose a new feature or enhancement to the CrossPoint Mesh (MeshCore) client
 title: "Short, descriptive title of the request"
 labels: ["enhancement", "needs-scope-review"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to propose a change to CrossPoint!
+        Thanks for taking the time to propose a change to CrossPoint Mesh!
 
-        **Before you continue, please read [SCOPE.md](../blob/master/SCOPE.md) and [ROADMAP.md](../blob/master/ROADMAP.md).**
+        **This repository accepts MeshCore-related requests only.** CrossPoint
+        Mesh is a fork focused on the built-in MeshCore client (BLE connection,
+        contacts, channels, direct messages, node discovery, adverts, and
+        status). For anything about the reader itself — rendering, formats,
+        typography, library, settings, themes, sync, etc. — please file against
+        the upstream project instead:
+        https://github.com/crosspoint-reader/crosspoint-reader/issues/new/choose
 
-        CrossPoint is intentionally narrow. Most rejected proposals are rejected for scope reasons that are already
-        documented. The checklist below exists to save both of us time.
+        **Before you continue, please read [SCOPE.md](../blob/master/SCOPE.md).**
+
+        The checklist below exists to save both of us time.
 
         If you are not sure whether your idea fits, open a [Discussion](../../discussions) first instead of filing
         this issue.
@@ -22,7 +29,9 @@ body:
       label: Scope Self-Check (required)
       description: Please confirm each of the following. If any are unchecked, your issue will likely be closed.
       options:
-        - label: I have read SCOPE.md and ROADMAP.md.
+        - label: This request is about the MeshCore client (BLE connection, contacts, channels, direct messages, node discovery, adverts, or status). Reader and formatting features belong in the upstream CrossPoint Reader repo.
+          required: true
+        - label: I have read SCOPE.md.
           required: true
         - label: This is **not** a new theme or theming change (themes are temporarily closed pending the move to SD-loaded themes).
           required: true
@@ -39,8 +48,8 @@ body:
     id: problem
     attributes:
       label: Problem this solves
-      description: What user-facing problem or reading-experience gap does this address? Be concrete.
-      placeholder: e.g., "When reading in landscape, paragraph breaks are inconsistent because..."
+      description: What user-facing problem or MeshCore-experience gap does this address? Be concrete.
+      placeholder: e.g., "After a reconnect, channel unread counts are reset before the sync completes."
     validations:
       required: true
 

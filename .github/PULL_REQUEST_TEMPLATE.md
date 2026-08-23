@@ -5,10 +5,10 @@
 
 ## Scope Check
 
-CrossPoint is intentionally narrow. See [SCOPE.md](../blob/master/SCOPE.md) and [ROADMAP.md](../blob/master/ROADMAP.md).
+CrossPoint is intentionally narrow. See [SCOPE.md](../blob/master/SCOPE.md).
 Please confirm:
 
-- [ ] I have read SCOPE.md and ROADMAP.md.
+- [ ] I have read SCOPE.md.
 - [ ] This PR is **not** a new built-in theme (themes are temporarily closed pending the move to SD-loaded themes).
 - [ ] This PR is **not** a new external network connector (sync engine, cloud storage, remote file access, etc.).
 - [ ] This PR is **not** an interactive app, writing tool, RSS/news/browser, media playback, or PDF feature.

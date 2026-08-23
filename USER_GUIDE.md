@@ -37,9 +37,13 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
       - [Custom images](#custom-images)
     - [3.8 Custom Fonts (SD Card)](#38-custom-fonts-sd-card)
     - [3.9 MeshCore Hub](#39-meshcore-hub)
+      - [Connecting to a Companion](#connecting-to-a-companion)
       - [3.9.1 Contacts Tab](#391-contacts-tab)
       - [3.9.2 Channels Tab](#392-channels-tab)
       - [3.9.3 Menu Tab](#393-menu-tab)
+      - [3.9.4 Conversation Thread](#394-conversation-thread)
+      - [3.9.5 Discovery Nodes](#395-discovery-nodes)
+      - [3.9.6 Companion Status](#396-companion-status)
   - [4. Reading Mode](#4-reading-mode)
     - [Page Turning](#page-turning)
     - [Chapter Navigation](#chapter-navigation)
@@ -551,28 +555,61 @@ See [docs/sd-card-fonts.md](./docs/sd-card-fonts.md) for full installation detai
 
 The MeshCore Hub provides access to the [MeshCore](https://meshcore.co.uk/)
 decentralised mesh network. It uses BLE to connect to a MeshCore companion
-device (T-Beam, etc.) and presents a three-tab interface:
+device (T-Beam, etc.) and presents a three-tab interface: **Contacts**,
+**Channels**, and **Menu**. Open it from the Home screen menu.
 
-**Navigation**:
-- **Confirm** (when tab bar is highlighted) — cycle to the next tab (Contacts → Channels → Menu → Contacts…).
-- **Up/Down** — move the selection up and down between the tab bar and list items.
-- **Confirm** (on a list item) — open the selected contact, channel, or menu action.
-- **Back** — return to Home (or move focus back to the tab bar if a list item is selected).
+> [!NOTE]
+> MeshCore uses Bluetooth Low Energy. The device disconnects Wi-Fi while
+> the Hub is open, because the ESP32-C3 shares its radio between Wi-Fi and
+> BLE.
+
+#### Connecting to a Companion
+
+The first time you open the Hub there is no saved companion, so the device
+starts scanning automatically. After that it remembers the last companion
+and reconnects automatically.
+
+1. From the Home screen, open **MeshCore**. The device scans for nearby
+   MeshCore companions and shows each one with its signal strength (RSSI).
+2. Highlight a device with **Up/Down** and press **Confirm** to connect.
+3. On first connection you are asked for the **BLE PIN** (6 digits). The
+   MeshCore factory default is `123456`. The PIN is remembered for future
+   reconnects.
+4. If a connection fails, the PIN prompt reopens so you can retry. Press
+   **Left** to rescan, or **Back** to cancel and return to the Home screen.
+
+After the first successful connection, opening the Hub reconnects to the
+last companion automatically (using the saved PIN). Press **Back** during
+the reconnect to cancel. If the companion drops the connection, the device
+scans for companions again automatically.
+
+**Hub navigation**:
+
+- **Confirm** (when the tab bar is highlighted) — cycle to the next tab
+  (Contacts → Channels → Menu → Contacts…).
+- **Long-press** Right/Down or Left/Up — cycle tabs from anywhere.
+- **Up/Down** — move the selection between the tab bar and list items.
+- **Confirm** (on a list item) — open the selected contact, channel, or
+  menu action.
+- **Back** — return to the tab bar if a list item is selected, otherwise
+  return to Home.
 
 #### 3.9.1 Contacts Tab
 
-Lists saved peer contacts with their names and unread message counts.
+Lists saved peer contacts. Favourite contacts are pinned to the top
+(marked with `*`); the rest are sorted by most recent activity.
 
+- A leading dot marks contacts with unread messages; the subtitle shows the
+  contact's key, last message time, and hop count.
 - **Confirm** on a contact opens the direct message thread.
-- Unread counts are shown next to contacts with new messages.
 
 #### 3.9.2 Channels Tab
 
-Lists LoRa channels configured on the companion (up to 8).
+Lists the LoRa channels configured on the companion (up to 8), sorted by
+most recent activity. A leading dot marks channels with unread messages;
+the subtitle shows the last message time.
 
 - **Confirm** on a channel opens the channel thread.
-- **Page Forward** (Volume Down) adds a new channel (name + secret).
-- **Page Back** (Volume Up) deletes the selected channel.
 
 #### 3.9.3 Menu Tab
 
@@ -580,19 +617,70 @@ Groups secondary actions that are used less frequently:
 
 | Item | Action |
 | --- | --- |
-| **Discovery Nodes** | Opens the list of nearby mesh nodes discovered via network adverts. Confirm on a node adds it to saved contacts. |
+| **Discovery Nodes** | Opens the list of nearby mesh nodes discovered via network adverts (see [3.9.5](#395-discovery-nodes)). |
 | **Send Advert** | Sends a single-hop mesh advertisement via the companion. Nearby nodes can discover your presence. |
-| **Send Flood Advert** | Sends a mesh-wide flood advertisement. Propagates through the entire mesh network. |
-| **Status** | Shows companion device info: battery level, storage, firmware version, radio configuration. |
+| **Send Flood Advert** | Sends a mesh-wide flood advertisement that propagates through the entire mesh network. |
+| **Save Advert to File** | Writes the companion's contact link to a file on the SD card so it can be shared or re-imported. |
+| **Share Contact (QR)** | Displays a QR code of the companion's contact link so another device can add it. |
+| **Import Contacts from File** | Reads contact links from a file on the SD card and adds them to the companion. |
+| **Status** | Shows companion device info (see [3.9.6](#396-companion-status)). |
 | **Disconnect** | Shows a confirmation prompt, then disconnects from the companion. |
 
 > [!NOTE]
-> **Send Advert**, **Send Flood Advert**, and **Disconnect** require the
-> companion to be connected. When disconnected, these items appear dimmed
-> and pressing Confirm shows "Not connected".
+> **Send Advert**, **Send Flood Advert**, **Save Advert to File**,
+> **Share Contact (QR)**, **Import Contacts from File**, and **Disconnect**
+> require the companion to be connected. When disconnected, these items
+> appear dimmed and pressing Confirm shows "Not connected".
 >
 > After sending an advert, the subtitle area shows a brief status message
 > ("Advert sent" or "Advert failed") that auto-clears after 5 seconds.
+
+#### 3.9.4 Conversation Thread
+
+Opening a contact or channel shows the conversation in a two-tab view:
+**Messages** and **Menu**.
+
+- **Messages** — the conversation history. Press **Confirm** to open the
+  keyboard and send a message. The side **Up/Down** buttons scroll one
+  message at a time; the front **Left/Right** buttons scroll a full screen.
+  Sent messages show their delivery status (**Sent**, **Delivered**, or
+  **Failed**) along with the hop count.
+- **Menu** — context-sensitive actions.
+
+For a **direct message**, the Menu offers:
+
+- **Toggle Favourite** — pin or unpin the contact at the top of the
+  Contacts tab.
+- **Reset Path** — clear the stale route to a contact so messages re-route.
+- **Scroll to End** — jump to the newest messages.
+- **Clear Conversation** — erase the local message history.
+- **Share Contact (QR)** — display the contact's link as a QR code.
+- **Unlist Contact** — remove the contact from the saved list.
+- **Use Reader Font in Conversations** — toggle using the reader font for
+  message text instead of the default UI font.
+
+For a **channel**, the Menu offers **Scroll to End**, **Clear
+Conversation**, and the **Use Reader Font in Conversations** toggle.
+
+> [!NOTE]
+> Long-press **Right/Down** or **Left/Up** cycles between the Messages and
+> Menu tabs, matching the Hub.
+
+#### 3.9.5 Discovery Nodes
+
+Shows nearby mesh nodes discovered via network adverts. Each row lists the
+node's name (or its key if unnamed), short key, last-seen time, and hop
+count.
+
+- **Confirm** on a node adds it to saved contacts (or removes it if it is
+  already saved). Already-saved nodes are dimmed.
+- **Back** returns to the Hub.
+
+#### 3.9.6 Companion Status
+
+Shows the connected companion's details as a popup: **Name**, **Model**,
+**Firmware**, **Battery** voltage, and **Radio** configuration (frequency,
+bandwidth, spreading factor, coding rate). Press **Back** to close it.
 
 ---
 
