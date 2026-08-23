@@ -326,6 +326,15 @@ class MeshCoreClient {
   static constexpr uint32_t MESSAGE_POLL_INTERVAL_MS = 30000;  // 30s
   uint32_t lastMessagePollTime = 0;
 
+  // Bounded message-queue drain. CMD_GET_MESSAGE pops one queued message per
+  // request; the drain re-requests after each message and terminates on
+  // PKT_NO_MORE_MSGS. This cap bounds a single drain session if a companion
+  // never returns PKT_NO_MORE_MSGS (buggy firmware) — the periodic poll then
+  // opens a fresh drain window. Sized well above the companion's 16-slot
+  // offline queue.
+  static constexpr uint8_t MAX_MSG_DRAIN = 32;
+  uint8_t msgDrainCount = 0;
+
   // Worker task for blocking BLE operations (scan, connect)
   enum class WorkType : uint8_t { SCAN, CONNECT, SHUTDOWN };
   struct WorkItem {
@@ -353,6 +362,8 @@ class MeshCoreClient {
   void handleCompanionErrorResponse(const uint8_t* data, size_t len);
   void processResponse(const uint8_t* data, size_t len);
   bool runInitSequence();
+  // Re-request the next queued message after one arrived, bounded by MAX_MSG_DRAIN.
+  void drainNextMessage();
 
   static void notifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
 

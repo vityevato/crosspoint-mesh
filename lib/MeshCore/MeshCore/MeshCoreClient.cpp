@@ -384,6 +384,7 @@ void MeshCoreClient::disconnect() {
   rxTail = 0;
   _pendingDm = {};
   initialRequestsPending = false;
+  msgDrainCount = 0;
 
   if (state != BleConnectionState::DISCONNECTED) {
     setState(BleConnectionState::DISCONNECTED);
@@ -445,6 +446,16 @@ bool MeshCoreClient::requestMessages() {
   uint8_t buf[1];
   size_t len = MeshProto::buildGetMessage(buf, sizeof(buf));
   return len > 0 && enqueueCmd(buf, len, 0);  // Accept any response type
+}
+
+void MeshCoreClient::drainNextMessage() {
+  if (msgDrainCount >= MAX_MSG_DRAIN) {
+    LOG_DBG("MESH", "Msg drain cap %d reached; deferring remainder to periodic poll", (int)MAX_MSG_DRAIN);
+    msgDrainCount = 0;  // let the periodic poll open a fresh drain window
+    return;
+  }
+  ++msgDrainCount;
+  requestMessages();
 }
 
 bool MeshCoreClient::sendSelfAdvert(bool flood) {
@@ -963,6 +974,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
 
     case MeshProto::PKT_MSGS_WAITING:
       LOG_DBG("MESH", "Messages waiting, polling");
+      msgDrainCount = 0;  // fresh message(s) — open a new drain window
       requestMessages();
       break;
 
@@ -974,6 +986,11 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
         msg.direction = MsgDirection::RECEIVED;
         msg.type = MsgType::CHANNEL;
         if (msgCb) msgCb(msg, msgCbCtx);
+        // Drain the companion's offline queue: CMD_GET_MESSAGE pops one message
+        // per request, and the companion only sends PUSH_CODE_MSG_WAITING for
+        // messages received *while connected*. Messages queued while we were
+        // disconnected produce no tickle, so re-request until PKT_NO_MORE_MSGS.
+        drainNextMessage();
       } else {
         LOG_ERR("MESH", "Failed to parse channel msg (len=%d)", (int)len);
       }
@@ -989,6 +1006,8 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
         msg.direction = MsgDirection::RECEIVED;
         msg.type = MsgType::DIRECT;
         if (msgCb) msgCb(msg, msgCbCtx);
+        // Drain the companion's offline queue (see channel-msg comment above).
+        drainNextMessage();
       } else {
         LOG_ERR("MESH", "Failed to parse contact msg (len=%d)", (int)len);
       }
@@ -1083,6 +1102,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
 
     case MeshProto::PKT_NO_MORE_MSGS:
       LOG_DBG("MESH", "No more messages");
+      msgDrainCount = 0;  // queue drained — reset the drain window
       break;
 
     case MeshProto::PKT_OK:
