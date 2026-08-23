@@ -44,6 +44,7 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
       - [3.9.4 Conversation Thread](#394-conversation-thread)
       - [3.9.5 Discovery Nodes](#395-discovery-nodes)
       - [3.9.6 Companion Status](#396-companion-status)
+    - [3.10 Text Entry (T4 Keyboard)](#310-text-entry-t4-keyboard)
   - [4. Reading Mode](#4-reading-mode)
     - [Page Turning](#page-turning)
     - [Chapter Navigation](#chapter-navigation)
@@ -321,6 +322,8 @@ The Settings screen allows you to configure the device's behavior. There are a f
 - **Language**: Set the UI language. CrossPoint supports 24 languages: English, Spanish, French, German, Czech, Brazilian Portuguese, Russian, Swedish, Romanian, Catalan, Ukrainian, Belarusian, Italian, Polish, Finnish, Danish, Dutch, Turkish, Kazakh, Hungarian, Lithuanian, Slovenian, Valencian, and Hebrew.
 
 - **Manage Fonts**: Browse, download, and manage custom font families installed from the SD card. See [Custom Fonts (SD Card)](#38-custom-fonts-sd-card) for more information.
+
+- **Additional Keyboard Layout**: Choose the third (configurable) language slot for the on-device T4 text-entry keyboard (default Russian). See [Text Entry (T4 Keyboard)](#310-text-entry-t4-keyboard).
 
 #### 3.6.5 OPDS Servers (Multiple Libraries)
 
@@ -681,6 +684,59 @@ count.
 Shows the connected companion's details as a popup: **Name**, **Model**,
 **Firmware**, **Battery** voltage, and **Radio** configuration (frequency,
 bandwidth, spreading factor, coding rate). Press **Back** to close it.
+
+---
+
+### 3.10 Text Entry (T4 Keyboard)
+
+Text fields on button-only devices (Xteink X3/X4) use the **T4 keyboard**, a
+button-driven, T9-style input method. It appears automatically wherever text
+is entered: Wi-Fi passwords, OPDS and KOReader credentials, book search, and
+MeshCore messages and PINs. Touch devices use an on-screen keyboard instead.
+
+**Typing** — each of the four front buttons covers a group of letters:
+
+| Button | English letters |
+| --- | --- |
+| **Back** | `abcdef'` |
+| **Confirm** | `ghijkl-` |
+| **Left** | `mnopqrs` |
+| **Right** | `tuvwxyz` |
+
+The side **Up** button deletes (backspace; hold to repeat), and the side
+**Down** button types space and punctuation.
+
+**Modes**:
+
+- **Predict (T9)** — press each group once per word and the keyboard
+  suggests words; press **Up + Right** together to enter candidate selection
+  (then **Left/Right** cycle the suggestions).
+- **Multi-tap** — press a group repeatedly to cycle through its letters.
+
+Long-press **Right** toggles Predict ↔ Multi-tap (in password fields it
+toggles show/hide instead).
+
+**Long-press actions**:
+
+- **Back** — cancel
+- **Confirm** — done / accept
+- **Left** — switch language (English → additional → digits)
+- **Right** — toggle Predict ↔ Multi-tap (or show/hide in password fields)
+- **Down** — toggle Shift / Caps
+
+**Languages**: English and digits are fixed; a third, configurable language
+(default Russian) is set under **Settings → System → Additional Keyboard
+Layout**.
+
+> [!NOTE]
+> Predictive word suggestions need a dictionary on the SD card. Place the
+> `.trie` file for a language under `/t4dicts/` (e.g. `/t4dicts/en.trie`)
+> and Predictive mode becomes available for that language. Without a
+> dictionary the language falls back to Multi-tap. Words you type are
+> remembered in `/t4dicts/user_words.bin`.
+>
+> For the dictionary format and how to build your own, see
+> [docs/t4-dictionary.md](./docs/t4-dictionary.md).
 
 ---
 

@@ -42,6 +42,13 @@ single device. Community-built, fully hackable, free forever.
 
 - **Localization**: 24 UI languages and counting. RTL support.
 
+- **T4 text input**: button-only devices (Xteink X3/X4) type through a
+  T9-style button keyboard instead of a touchscreen keyboard. Predictive word
+  suggestions currently support **English** and **Russian** only — copy the
+  `.trie` dictionaries from the [`t4dicts/`](t4dicts/) directory in this repo
+  to `/t4dicts/` on the SD card to enable them, or build your own (see
+  [docs/t4-dictionary.md](docs/t4-dictionary.md)).
+
 - **MeshCore Client**: Built-in BLE client for the [MeshCore](https://meshcore.co.uk/) decentralized
   mesh network — communicate without internet access, even in remote areas.
 
@@ -160,6 +167,7 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 ## Documentation
 
 - [User Guide](./USER_GUIDE.md)
+- [T4 predictive text input](./docs/t4-dictionary.md) - the button-driven keyboard and predictive dictionary format
 - [Web server usage](./docs/webserver.md)
 - [Web server endpoints](./docs/webserver-endpoints.md)
 - [Project scope](./SCOPE.md)
