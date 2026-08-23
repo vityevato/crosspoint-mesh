@@ -35,6 +35,10 @@
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
+#ifdef SIMULATOR
+#include "simulator/SimulatorControl.h"
+#endif
+
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
@@ -145,6 +149,9 @@ void silentRestart() {
   // Without an overlay, users don't see the reboot and fire input through to
   // Home. Select on the default selectorIndex=0 then opens the most-recent
   // book, looking like a trampoline back to the reader they just exited.
+  // Clear first so a leftover overlay (e.g. MeshCore's "Connecting" popup)
+  // doesn't remain visible around the Loading popup after the reboot.
+  renderer.clearScreen();
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -155,6 +162,7 @@ void silentRestartToReader() {
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader)");
+  renderer.clearScreen();
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -195,6 +203,7 @@ static bool loadSleepFrameBuffer() {
 void enterDeepSleep(bool fromTimeout = false) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  APP_STATE.lastSleepFromMeshCore = activityManager.isMeshCoreActivity();
 
   const bool isQuickResumeSleep =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -305,6 +314,24 @@ void setup() {
   }
 
   HalSystem::checkPanic();
+
+#if LOG_LEVEL >= 2
+  // Global SD card log (DEBUG LOG_LEVEL builds only) — routes all
+  // LOG_ERR/LOG_INF/LOG_DBG to /system.log so errors are preserved even when
+  // serial is not accessible. File is appended across boots (not truncated)
+  // so crash/error logs survive silent restarts and panic reboots.
+  {
+    static constexpr const char* LOG_PATH = "/system.log";
+    static HalFile systemLogFile;
+    systemLogFile = Storage.open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND);
+    if (systemLogFile) {
+      setLogFileSink(&systemLogFile);
+      // Start each boot session with a visible marker
+      LOG_INF("MAIN", "=== Boot session ===");
+      LOG_INF("MAIN", "SD log sink enabled: %s", LOG_PATH);
+    }
+  }
+#endif
 
   SETTINGS.loadFromFile();
   APP_STATE.loadFromFile();
@@ -420,6 +447,13 @@ void setup() {
     // through to the sleep-wake "resume reader" logic, which fires on stale
     // openEpubPath + lastSleepFromReader from a prior session.
     activityManager.goHome();
+  } else if (APP_STATE.lastSleepFromMeshCore && !mappedInputManager.isPressed(MappedInputManager::Button::Back)) {
+    // Sleep-wake from MeshCore: land back in the hub (it auto-reconnects to the
+    // saved companion via stored bonding). Clear the flag so a crash-restart
+    // can't re-enter MeshCore in a loop; it is re-armed by the next deep sleep.
+    APP_STATE.lastSleepFromMeshCore = false;
+    APP_STATE.saveToFile();
+    activityManager.goToMeshCore();
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
@@ -463,6 +497,10 @@ void loop() {
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   gpio.update();
+  if (gpio.consumeSimulatorSleepRequest()) {
+    enterDeepSleep();
+    return;
+  }
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);
@@ -489,6 +527,17 @@ void loop() {
       }
     }
   }
+
+#ifdef SIMULATOR
+  // stdin automation channel — protocol in src/simulator/SimulatorControl.h.
+  // begin() is idempotent and safe here: the first loop() iteration only
+  // runs after setup() initialized SDL.
+  SimulatorControl::begin();
+  if (SimulatorControl::consumeScreenshotRequest()) {
+    RenderLock lock;
+    ScreenshotUtil::takeScreenshot(renderer);
+  }
+#endif
 
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();

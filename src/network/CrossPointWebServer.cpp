@@ -237,6 +237,8 @@ void CrossPointWebServer::abortWsUpload(const char* tag) {
   wsUploadInProgress = false;
   wsUploadClientNum = 255;
   wsLastProgressSent = 0;
+  // Upload finished (aborted): let the SD log sink resume writing.
+  resumeLogFileSink();
 }
 
 void CrossPointWebServer::stop() {
@@ -725,6 +727,10 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     resetTaskWatchdogIfSubscribed();
 
     LOG_DBG("WEB", "[UPLOAD] File created successfully: %s", filePath.c_str());
+    // Silence the SD log sink for the duration of the transfer: it holds a
+    // second SD write handle and flushing it per log line thrashes SdFat's
+    // single shared sector cache, truncating the file being uploaded.
+    suspendLogFileSink();
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
@@ -787,7 +793,14 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         clearBookCache(filePath.c_str());
       }
     }
+    // Transfer done: allow the SD log sink to resume writing.
+    // Must be AFTER close() — SdFat uses a single shared sector cache,
+    // and a log line written between close and resume can thrash it,
+    // truncating the uploaded file.
+    resumeLogFileSink();
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    // Transfer aborted: allow the SD log sink to resume writing.
+    resumeLogFileSink();
     state.bufferPos = 0;  // Discard buffered data
     if (state.file) {
       state.file.close();
@@ -1707,6 +1720,10 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
           wsUploadClientNum = num;
           wsUploadInProgress = true;
+          // Silence the SD log sink for the duration of the transfer: it holds a
+          // second SD write handle and flushing it per log line thrashes SdFat's
+          // single shared sector cache, truncating the file being uploaded.
+          suspendLogFileSink();
           wsServer->sendTXT(num, "READY");
         } else {
           wsServer->sendTXT(num, "ERROR:Invalid START format");
@@ -1753,6 +1770,8 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         wsUploadFile.close();
         wsUploadInProgress = false;
         wsUploadClientNum = 255;
+        // Transfer done: allow the SD log sink to resume writing.
+        resumeLogFileSink();
 
         wsLastCompleteName = wsUploadFileName;
         wsLastCompleteSize = wsUploadSize;
@@ -1879,6 +1898,10 @@ void CrossPointWebServer::handleFontUploadData() {
       }
 
       fontUpload.valid = true;
+      // Silence the SD log sink for the duration of the transfer: it holds a
+      // second SD write handle and flushing it per log line thrashes SdFat's
+      // single shared sector cache, truncating the file being uploaded.
+      suspendLogFileSink();
       LOG_DBG("WEB", "Font upload started: %s -> %s", filename.c_str(), path);
       break;
     }
@@ -1919,6 +1942,8 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_END: {
+      // Transfer done: allow the SD log sink to resume writing.
+      resumeLogFileSink();
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
         fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
@@ -1938,6 +1963,8 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_ABORTED: {
+      // Transfer aborted: allow the SD log sink to resume writing.
+      resumeLogFileSink();
       if (fontUpload.file) {
         fontUpload.file.close();
       }

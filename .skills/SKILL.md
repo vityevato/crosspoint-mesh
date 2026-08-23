@@ -93,6 +93,7 @@ find src -name "*.cpp" -o -name "*.h" | xargs clang-format -i
   * `gh_release`: Production (LOG_LEVEL=0)
   * `gh_release_rc`: Release candidate (LOG_LEVEL=1)
   * `slim`: Minimal build (no serial logging)
+  * `simulator`: Desktop simulator (native build, SDL2, no device required)
 
 ### Critical Build Flags
 These flags in `platformio.ini` fundamentally affect firmware behavior:
@@ -129,6 +130,108 @@ These flags in `platformio.ini` fundamentally affect firmware behavior:
 * src/activities/: UI logic using the Activity Lifecycle (onEnter, loop, onExit)
 * freeink-sdk/: Low-level SDK (EInkDisplay, InputManager, BatteryMonitor, SDCardManager)
 * .crosspoint/: SD-based binary cache for EPUB metadata and pre-rendered layout sections
+
+### Desktop Simulator
+
+A desktop simulator allows testing firmware UI without flashing a device. It compiles
+the firmware natively (macOS/Linux) and renders the e-ink display in an SDL2 window.
+
+**Prerequisites**:
+- macOS: `brew install sdl2`
+- Linux (Debian/Ubuntu): `sudo apt install libsdl2-dev libssl-dev`
+
+**Build and run**:
+```bash
+# Build + launch in one command
+#   - `simulator`  : X3 panel (792x528, tilt/RTC active)
+#   - `simulator_4`: X4 target panel (800x480, no tilt/RTC)
+pio run -e simulator -t run_simulator
+
+# Or build only, then run
+pio run -e simulator
+.pio/build/simulator/program
+# X4 variant:
+pio run -e simulator_4
+.pio/build/simulator_4/program
+```
+
+**Setup**: Place EPUB books in `./fs_/books/` (maps to SD card `/books/`).
+
+**Keyboard controls**:
+
+| Key    | Action                             |
+| ------ | ---------------------------------- |
+| ↑ / ↓  | Page back / forward (side buttons) |
+| ← / →  | Left / right front buttons         |
+| Return | Confirm / Select                   |
+| Escape | Back                               |
+| P      | Power                              |
+| S      | Simulate sleep                     |
+
+**Headless automation (stdin)**: the simulator accepts control
+commands on stdin (`TAP`, `PRESS`, `RELEASE`, `HOLD`, `SCREENSHOT`,
+`QUIT`, `HELP`) — see `src/simulator/SimulatorControl.h` for the
+protocol and AGENTS.md "Simulator Visual Debugging" for the full
+agent workflow (control FIFO in `fs_/tmp/`, BMP→PNG conversion via
+`src/simulator/convert_screenshot.sh`).
+
+**Architecture**:
+- `platform = native` — compiles firmware as a host binary, not ESP32 firmware
+- `lib_ignore = hal, WebSockets` — simulator provides its own HAL layer
+  (SDL2-based display, POSIX file I/O, keyboard input)
+- The simulator library (`crosspoint-simulator`) is a PlatformIO `lib_deps`
+  fetched from `https://github.com/uxjulia/crosspoint-simulator`
+- `src/simulator/freertos/queue.h` — project-local FreeRTOS queue stub for MeshCore
+- `src/simulator/NimBLEDevice.h` — project-local NimBLE stub (no-op BLE for simulator)
+- `src/simulator/MockSession.h` / `.cpp` — mock JSON loading and session management
+- `src/simulator/MeshCoreMockHotkeys.h` — mock hotkey handler (keys 0-9)
+- `src/simulator/SimulatorControl.{h,cpp}` — stdin automation: injects button
+  events and screenshot requests for headless/agent-driven sessions
+- `src/simulator/convert_screenshot.sh` — converts the newest screenshot BMP
+  to PNG in `fs_/tmp/` (no arguments)
+- `-Isrc/simulator` before `-Isrc` in simulator `build_flags` — project stubs take priority over
+  real libraries when both provide the same header
+- `build_src_filter` excludes ESP32-only files (networking, OTA, efuse check)
+  that cannot compile on the host
+- File I/O sandboxed under `./fs_/` relative to the binary's working directory
+- Clear stale caches after layout changes: `rm -rf ./fs_/.crosspoint/`
+
+**MeshCore on simulator**: MeshCore activities (hub, discover, scan, thread)
+compile and render on the simulator. The hub's Menu tab provides access to
+Discovery Nodes, Status, and Disconnect as subscreens within the hub.
+When `fs_/meshcore_mock.json`
+is present, the mock layer (see `src/simulator/`) activates — BLE operations
+return data from JSON instead of no-ops. Without the JSON file, all BLE
+operations remain no-ops (simulator has no real BLE hardware). All UI
+screens are interactive regardless.
+
+Reference client for MeshCore BLE protocol exchange and companion app
+behaviour: <https://github.com/dz0ny/meshcore-sar>
+
+**Companion BLE firmware** (runs on the MeshCore device, e.g. RAK WisMesh Tag):
+<https://github.com/meshcore-dev/MeshCore/tree/main/examples/companion_radio>
+Key file: `MyMesh.cpp` — `onDiscoveredContact()`, `handleCmdFrame()`, and the
+`PUSH_CODE_ADVERT` / `PUSH_CODE_NEW_ADVERT` push logic.
+
+Key companion_radio files for understanding the protocol:
+- `MyMesh.cpp`/`MyMesh.h` — core framework: `handleCmdFrame()` dispatches
+  incoming commands from the client (CMD_*), `writeContactRespFrame()`
+  serialises responses. `onDiscoveredContact()` sends `PUSH_CODE_ADVERT`
+  (known contact) or `PUSH_CODE_NEW_ADVERT` (new contact).
+  `processAck()` parses delivery acknowledgements, `queueMessage()`
+  enqueues incoming messages.
+- `NodePrefs.h` — persisted node config structure (BLE PIN, node name,
+  radio parameters, auto-add contact settings).
+- `DataStore.h`/`DataStore.cpp` — persistence: load/save contacts,
+  channels, prefs file, identity key.
+- `main.cpp` — initialisation: transport selection (BLE via
+  `SerialBLEInterface`, WiFi via `SerialWifiInterface`, or direct UART
+  via `ArduinoSerialInterface`).
+- `src/helpers/BaseSerialInterface.h` — base transport class:
+  `writeFrame()` / `checkRecvFrame()` — all BLE exchange goes through
+  this interface over a serial stream.
+- `src/helpers/esp32/SerialBLEInterface.h` — BLE transport for ESP32:
+  implements GATT server with TX/RX characteristics.
 
 ### Hardware Abstraction Layer (HAL)
 
@@ -705,9 +808,9 @@ Tested in all 4 orientations with 5MB+ files.
 
 1. **HTML Headers** (generated by `scripts/build_html.py`):
    - `src/network/html/*.generated.h`
-   - **Source**: HTML templates in `data/html/` directory
+   - **Source**: HTML templates in `src/network/html/` directory
    - **Triggered**: During PlatformIO `pre:` build step
-   - **To modify**: Edit source HTML in `data/html/`, not generated headers
+   - **To modify**: Edit source HTML in `src/network/html/`, not generated headers
 
 2. **I18n Headers** (generated by `scripts/gen_i18n.py`):
    - `lib/I18n/I18nKeys.h`, `lib/I18n/I18nStrings.h`, `lib/I18n/I18nStrings.cpp`
@@ -724,7 +827,7 @@ Tested in all 4 orientations with 5MB+ files.
 ### Modifying Generated Content Workflow
 
 **To change HTML pages**:
-1. Edit source: `data/html/<pagename>.html`
+1. Edit source: `src/network/html/<pagename>.html`
 2. Build: `pio run` (auto-triggers `scripts/build_html.py`)
 3. Generated headers update: `src/network/html/<pagename>Html.generated.h`
 4. **Commit ONLY** source HTML, NOT generated `.generated.h` files

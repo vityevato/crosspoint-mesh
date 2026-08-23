@@ -1,0 +1,10 @@
+{
+  "name": "MeshCore",
+  "version": "1.0.0",
+  "description": "MeshCore companion protocol library",
+  "dependencies": {
+    "Logging": "*",
+    "Serialization": "*",
+    "hal": "*"
+  }
+}

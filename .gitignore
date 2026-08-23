@@ -1,6 +1,10 @@
+/temp
+.sdd
 .pio
 .idea
 .DS_Store
+# Simulator virtual SD card filesystem
+/fs_/
 .vscode
 open-x4-sdk
 fs_
@@ -12,7 +16,7 @@ lib/I18n/I18nStrings.cpp
 .vs
 build
 **/__pycache__/
-/compile_commands.json
+/compile_commands*.json
 /.cache
 .history/
 /.venv
@@ -25,6 +29,7 @@ lib/EpdFont/scripts/output/
 # (worktrees, scheduled-task locks, settings.local, scout CLEANUP.md) out.
 .claude/*
 !.claude/skills/
+opencode.json
 /managed_components
 /.dummy
 /CMakeLists.txt

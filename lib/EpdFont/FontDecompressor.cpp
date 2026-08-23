@@ -38,6 +38,8 @@ void FontDecompressor::freeHotGroup() {
   hotGroupCapacity = 0;
   hotGroupFont = nullptr;
   hotGroupIndex = UINT16_MAX;
+  hotGroupFailedFont = nullptr;
+  hotGroupFailedIndex = UINT16_MAX;
   free(hotGlyphBuf);
   hotGlyphBuf = nullptr;
   hotGlyphBufCapacity = 0;
@@ -181,6 +183,13 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     return nullptr;
   }
 
+  // Skip groups already known to be unallocatable on the current heap. Avoids a malloc +
+  // error-log storm on every glyph of an oversized group; reset on prewarm / cache free.
+  if (hotGroupFailedFont == fontData && hotGroupFailedIndex == groupIndex) {
+    stats.getBitmapTimeUs += micros() - tStart;
+    return nullptr;
+  }
+
   // Check if hot group already has this group decompressed — if not, decompress it
   if (!(hotGroup != nullptr && hotGroupFont == fontData && hotGroupIndex == groupIndex)) {
     stats.cacheMisses++;
@@ -191,6 +200,9 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     hotGroupIndex = UINT16_MAX;
     if (!ensureCapacity(hotGroup, hotGroupCapacity, group.uncompressedSize)) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
+      // Memoize the failure so the next glyph in this group skips the malloc + error-log storm.
+      hotGroupFailedFont = fontData;
+      hotGroupFailedIndex = groupIndex;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -250,6 +262,11 @@ int32_t FontDecompressor::findGlyphIndex(const EpdFontData* fontData, uint32_t c
 
 int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8Text) {
   if (!fontData || !fontData->groups || !utf8Text) return 0;
+
+  // Give the hot-group fallback one fresh allocation attempt for this page, clearing any
+  // failure memoized during a previous (possibly more fragmented) render.
+  hotGroupFailedFont = nullptr;
+  hotGroupFailedIndex = UINT16_MAX;
 
   // Allocate the next available slot (caller must call freePageBuffer/clearCache to reset)
   if (pageSlotCount >= MAX_PAGE_SLOTS) {
@@ -356,6 +373,22 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
   }
 
   stats.uniqueGroupsAccessed = groupCount;
+
+  // Sort needed groups by uncompressedSize descending so the largest group
+  // (typically the Cyrillic block, ~16 KB) is decompressed FIRST, while the
+  // heap is least fragmented. Under BLE heap fragmentation (~14-18 KB largest),
+  // decompressing a small group first can malloc/free and split the only
+  // contiguous block that fits the big group, causing it to fail silently.
+  for (uint8_t i = 1; i < groupCount; i++) {
+    uint16_t key = neededGroups[i];
+    uint32_t keySize = fontData->groups[key].uncompressedSize;
+    int8_t j = static_cast<int8_t>(i) - 1;
+    while (j >= 0 && fontData->groups[neededGroups[j]].uncompressedSize < keySize) {
+      neededGroups[j + 1] = neededGroups[j];
+      j--;
+    }
+    neededGroups[j + 1] = key;
+  }
 
   // Step 3: Allocate page buffer and lookup table for this slot
   slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));

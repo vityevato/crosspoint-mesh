@@ -103,6 +103,17 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
+
+  // Additional T4 keyboard layout -- managed by T4LayoutSelectActivity.
+  // Stored as T4 layout code ("ru", ...) for stability across registry reorders.
+  doc["t4AdditionalLayout"] = t4::getAdditionalLayoutCode(t4AdditionalLayout);
+
+  // T4 input mode preference -- changed by Right long-press in T4 keyboard.
+  doc["t4UserMode"] = t4UserMode;
+
+  // T4 last-used language -- persisted so the keyboard reopens with the
+  // same language the user was on when they last closed it.
+  doc["t4LastLanguage"] = t4LastLanguage;
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
@@ -220,6 +231,19 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   if (doc["language"].is<const char*>()) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
   }
+
+  // Additional T4 keyboard layout -- stored as T4 layout code for stability.
+  if (doc["t4AdditionalLayout"].is<const char*>()) {
+    t4AdditionalLayout = t4::additionalLayoutIndexForCode(doc["t4AdditionalLayout"].as<const char*>());
+  }
+
+  // T4 input mode preference -- clamp to valid range (0 = Predict, 1 = Multi-tap).
+  t4UserMode = doc["t4UserMode"] | 0;
+  if (t4UserMode > 1) t4UserMode = 0;
+
+  // T4 last-used language -- clamp to valid range (0 = EN, 1 = Additional, 2 = Digit).
+  t4LastLanguage = doc["t4LastLanguage"] | 0;
+  if (t4LastLanguage > 2) t4LastLanguage = 0;
 
   if (needsResave) {
     LOG_DBG("CPS", "Resaving settings to update format");

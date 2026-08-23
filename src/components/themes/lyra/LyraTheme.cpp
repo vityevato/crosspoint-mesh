@@ -249,24 +249,12 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       (rowSubtitle != nullptr) ? LyraMetrics::values.listWithSubtitleRowHeight : LyraMetrics::values.listRowHeight;
   int pageItems = rowHeight > 0 ? std::max(1, rect.height / rowHeight) : 1;
 
-  const int totalPages = (itemCount + pageItems - 1) / pageItems;
-  if (totalPages > 1) {
-    const int scrollAreaHeight = rect.height;
-
-    // Draw scroll bar
-    const int scrollBarHeight = (scrollAreaHeight * pageItems) / itemCount;
-    const int currentPage = selectedIndex / pageItems;
-    const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * currentPage) / (totalPages - 1);
-    const int scrollBarX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
-    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
-    renderer.fillRect(scrollBarX - LyraMetrics::values.scrollBarWidth, scrollBarY, LyraMetrics::values.scrollBarWidth,
-                      scrollBarHeight, true);
-  }
+  drawScrollBar(renderer, rect, itemCount * rowHeight, (selectedIndex / pageItems * pageItems) * rowHeight);
 
   // Draw selection
+  const bool hasScrollBar = (itemCount > pageItems);
   int contentWidth =
-      rect.width -
-      (totalPages > 1 ? (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset) : 1);
+      rect.width - (hasScrollBar ? (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset) : 1);
   if (selectedIndex >= 0) {
     renderer.fillRoundedRect(
         rect.x + LyraMetrics::values.contentSidePadding, rect.y + selectedIndex % pageItems * rowHeight,
@@ -346,6 +334,73 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 }
 
+void LyraTheme::drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                              uint32_t scrollOffsetPx) const {
+  if (totalPixels <= rect.height) return;
+
+  const int barW = LyraMetrics::values.scrollBarWidth;
+  const int barX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
+  const int thumbH = std::max(10, static_cast<int>((rect.height * rect.height) / totalPixels));
+  const int maxTravel = std::max(1, static_cast<int>(totalPixels - rect.height));
+  const int clampedOffset = std::clamp(static_cast<int>(scrollOffsetPx), 0, static_cast<int>(maxTravel));
+  const int thumbY = rect.y + (clampedOffset * (rect.height - thumbH)) / maxTravel;
+
+  renderer.drawLine(barX, rect.y, barX, rect.y + rect.height, true);
+  renderer.fillRect(barX - barW, thumbY, barW, thumbH, true);
+}
+
+const int* LyraTheme::getButtonXPositions(bool isX3) const {
+  static constexpr int x4[] = {58, 146, 254, 342};
+  static constexpr int x3[] = {65, 157, 291, 383};
+  return isX3 ? x3 : x4;
+}
+
+void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                                const char* btn4, bool inactive1, bool inactive2, bool inactive3,
+                                bool inactive4) const {
+  const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+
+  const int pageHeight = renderer.getScreenHeight();
+  constexpr int buttonWidth = 80;
+  constexpr int smallButtonHeight = 15;
+  constexpr int buttonHeight = LyraMetrics::values.buttonHintsHeight;
+  constexpr int buttonY = LyraMetrics::values.buttonHintsHeight;  // Distance from bottom
+  constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
+  const int* buttonPositions = getButtonXPositions(gpio.deviceIsX3());
+  const char* labels[] = {btn1, btn2, btn3, btn4};
+  const bool inactive[] = {inactive1, inactive2, inactive3, inactive4};
+
+  for (int i = 0; i < 4; i++) {
+    const int x = buttonPositions[i];
+    if (labels[i] != nullptr && labels[i][0] != '\0') {
+      // Draw the filled background (dithered when inactive) and border for a FULL-sized button
+      if (inactive[i]) {
+        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                                 false, Color::LightGray);
+      } else {
+        renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                                 false, Color::White);
+      }
+      renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cornerRadius, true, true, false,
+                               false, true);
+      constexpr int maxLabelWidth = buttonWidth - 4;
+      auto label = renderer.truncatedText(SMALL_FONT_ID, labels[i], maxLabelWidth);
+      const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, label.c_str());
+      const int textX = x + (buttonWidth - 1 - textWidth) / 2;
+      renderer.drawText(SMALL_FONT_ID, textX, pageHeight - buttonY + textYOffset, label.c_str());
+    } else {
+      // Draw the filled background and border for a SMALL-sized button
+      renderer.fillRoundedRect(x, pageHeight - smallButtonHeight, buttonWidth, smallButtonHeight, cornerRadius,
+                               Color::White);
+      renderer.drawRoundedRect(x, pageHeight - smallButtonHeight, buttonWidth, smallButtonHeight, 1, cornerRadius, true,
+                               true, false, false, true);
+    }
+  }
+
+  renderer.setOrientation(orig_orientation);
+}
+
 void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                 const char* btn4) const {
   if (gpio.hasTouch()) {
@@ -361,22 +416,21 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   constexpr int buttonHeight = LyraMetrics::values.buttonHintsHeight;
   constexpr int buttonY = LyraMetrics::values.buttonHintsHeight;  // Distance from bottom
   constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
-  // X3 has wider screen in portrait (528 vs 480), use more spacing
-  constexpr int x4ButtonPositions[] = {58, 146, 254, 342};
-  constexpr int x3ButtonPositions[] = {65, 157, 291, 383};
-  const int* buttonPositions = gpio.deviceIsX3() ? x3ButtonPositions : x4ButtonPositions;
+  const int* buttonPositions = getButtonXPositions(gpio.deviceIsX3());
   const char* labels[] = {btn1, btn2, btn3, btn4};
 
   for (int i = 0; i < 4; i++) {
     const int x = buttonPositions[i];
     if (labels[i] != nullptr && labels[i][0] != '\0') {
-      // Draw the filled background and border for a FULL-sized button
-      renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, Color::White);
+      renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, true, true, false,
+                               false, Color::White);
       renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cornerRadius, true, true, false,
                                false, true);
-      const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, labels[i]);
+      constexpr int maxLabelWidth = buttonWidth - 4;
+      auto label = renderer.truncatedText(SMALL_FONT_ID, labels[i], maxLabelWidth);
+      const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, label.c_str());
       const int textX = x + (buttonWidth - 1 - textWidth) / 2;
-      renderer.drawText(SMALL_FONT_ID, textX, pageHeight - buttonY + textYOffset, labels[i]);
+      renderer.drawText(SMALL_FONT_ID, textX, pageHeight - buttonY + textYOffset, label.c_str());
     } else {
       // Draw the filled background and border for a SMALL-sized button
       renderer.fillRoundedRect(x, pageHeight - smallButtonHeight, buttonWidth, smallButtonHeight, cornerRadius,
@@ -389,7 +443,8 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   renderer.setOrientation(orig_orientation);
 }
 
-void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                                    const char* topBtnLong, const char* bottomBtnLong) const {
   if (gpio.hasTouch()) {
     return;
   }
@@ -398,48 +453,136 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
   constexpr int buttonWidth = LyraMetrics::values.sideButtonHintsWidth;  // Width on screen (height when rotated)
   constexpr int buttonHeight = 78;                                       // Height on screen (width when rotated)
   constexpr int buttonMargin = 0;
+  constexpr int buttonGap = LyraMetrics::values.sideButtonHintsGap;
+  const bool hasTopLong = topBtnLong != nullptr && topBtnLong[0] != '\0';
+  const bool hasBottomLong = bottomBtnLong != nullptr && bottomBtnLong[0] != '\0';
 
   if (gpio.deviceIsX3()) {
-    // X3 layout: Up on left side, Down on right side, positioned higher
+    // X3 layout: Up on left side, Down on right side, positioned higher.
+    // For both buttons the gray long-press capsule takes the screen edge and
+    // the white short-press capsule moves inwards next to it.
     constexpr int x3ButtonY = 155;
 
     if (topBtn != nullptr && topBtn[0] != '\0') {
-      renderer.drawRoundedRect(buttonMargin, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, false, true, false,
-                               true, true);
+      // Up long-press at the left screen edge; short-press moves inwards.
+      const int leftX = hasTopLong ? buttonMargin + buttonWidth + buttonGap : buttonMargin;
+      if (hasTopLong) {
+        // Inset capsule: round all corners.
+        renderer.drawRoundedRect(leftX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true);
+      } else {
+        // Edge capsule: square corners on the screen-edge side.
+        renderer.drawRoundedRect(leftX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, false, true, false, true,
+                                 true);
+      }
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtn);
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, buttonMargin, x3ButtonY + (buttonHeight + textWidth) / 2, topBtn);
+      const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, topBtn, leftX, buttonWidth);
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, x3ButtonY + (buttonHeight + textWidth) / 2, topBtn);
+      if (hasTopLong) {
+        renderer.fillRoundedRect(buttonMargin, x3ButtonY, buttonWidth, buttonHeight, cornerRadius, false, true, false,
+                                 true, Color::LightGray);
+        renderer.drawRoundedRect(buttonMargin, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, false, true,
+                                 false, true, true);
+        const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtnLong);
+        const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, topBtnLong, buttonMargin, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, x3ButtonY + (buttonHeight + longTextWidth) / 2,
+                                     topBtnLong);
+      }
     }
 
     if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      const int rightX = screenWidth - buttonWidth;
-      renderer.drawRoundedRect(rightX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true, false,
-                               true);
+      // Down long-press at the right screen edge; short-press moves inwards.
+      const int edgeX = screenWidth - buttonWidth;
+      const int rightX = hasBottomLong ? edgeX - buttonGap - buttonWidth : edgeX;
+      if (hasBottomLong) {
+        // Inset capsule: round all corners.
+        renderer.drawRoundedRect(rightX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true);
+      } else {
+        renderer.drawRoundedRect(rightX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true,
+                                 false, true);
+      }
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtn);
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, rightX, x3ButtonY + (buttonHeight + textWidth) / 2, bottomBtn);
+      const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtn, rightX, buttonWidth);
+      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, x3ButtonY + (buttonHeight + textWidth) / 2, bottomBtn);
+      if (hasBottomLong) {
+        renderer.fillRoundedRect(edgeX, x3ButtonY, buttonWidth, buttonHeight, cornerRadius, true, false, true, false,
+                                 Color::LightGray);
+        renderer.drawRoundedRect(edgeX, x3ButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true, false,
+                                 true);
+        const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtnLong);
+        const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, bottomBtnLong, edgeX, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, x3ButtonY + (buttonHeight + longTextWidth) / 2,
+                                     bottomBtnLong);
+      }
     }
   } else {
-    // X4 layout: Both buttons stacked on right side
-    const char* labels[] = {topBtn, bottomBtn};
-    const int x = screenWidth - buttonWidth;
+    // X4 layout: both buttons stacked on the right side. As on X3, the gray
+    // long-press capsule hugs the screen edge and the white short-press
+    // capsule moves inwards next to it.
+    const int edgeX = screenWidth - buttonWidth;      // Gray long-press at the screen edge.
+    const int inX = edgeX - buttonGap - buttonWidth;  // White short-press moved inwards.
+    const char* shortLabels[] = {topBtn, bottomBtn};
+    const char* longLabels[] = {topBtnLong, bottomBtnLong};
+    const bool hasBtnLong[] = {hasTopLong, hasBottomLong};
+    constexpr int buttonY[] = {topHintButtonY, topHintButtonY + buttonHeight + 5};
 
-    if (topBtn != nullptr && topBtn[0] != '\0') {
-      renderer.drawRoundedRect(x, topHintButtonY, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true, false,
-                               true);
-    }
-
-    if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      renderer.drawRoundedRect(x, topHintButtonY + buttonHeight + 5, buttonWidth, buttonHeight, 1, cornerRadius, true,
-                               false, true, false, true);
+    for (int i = 0; i < 2; i++) {
+      if (shortLabels[i] == nullptr || shortLabels[i][0] == '\0') {
+        continue;
+      }
+      const int y = buttonY[i];
+      const int shortX = hasBtnLong[i] ? inX : edgeX;
+      // White short-press capsule: fully rounded when inset, square on the
+      // screen-edge side when it hugs the edge.
+      if (hasBtnLong[i]) {
+        renderer.drawRoundedRect(shortX, y, buttonWidth, buttonHeight, 1, cornerRadius, true);
+      } else {
+        renderer.drawRoundedRect(shortX, y, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true, false, true);
+      }
+      if (hasBtnLong[i]) {
+        // Gray long-press capsule at the screen edge.
+        renderer.fillRoundedRect(edgeX, y, buttonWidth, buttonHeight, cornerRadius, true, false, true, false,
+                                 Color::LightGray);
+        renderer.drawRoundedRect(edgeX, y, buttonWidth, buttonHeight, 1, cornerRadius, true, false, true, false, true);
+      }
     }
 
     for (int i = 0; i < 2; i++) {
-      if (labels[i] != nullptr && labels[i][0] != '\0') {
-        const int y = topHintButtonY + (i * buttonHeight) + 5;
-        const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, labels[i]);
-        renderer.drawTextRotated90CW(SMALL_FONT_ID, x, y + (buttonHeight + textWidth) / 2, labels[i]);
+      const int y = buttonY[i];
+      if (shortLabels[i] != nullptr && shortLabels[i][0] != '\0') {
+        const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, shortLabels[i]);
+        const int shortX = hasBtnLong[i] ? inX : edgeX;
+        const int textX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, shortLabels[i], shortX, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, y + (buttonHeight + textWidth) / 2, shortLabels[i]);
+      }
+      if (hasBtnLong[i]) {
+        const int longTextWidth = renderer.getTextWidth(SMALL_FONT_ID, longLabels[i]);
+        const int longTextX = renderer.getRotated90CWCenterX(SMALL_FONT_ID, longLabels[i], edgeX, buttonWidth);
+        renderer.drawTextRotated90CW(SMALL_FONT_ID, longTextX, y + (buttonHeight + longTextWidth) / 2, longLabels[i]);
       }
     }
   }
+}
+
+int LyraTheme::getSideButtonDownBottomY() const {
+  if (gpio.deviceIsX3()) return 155 + 78;  // x3ButtonY + buttonHeight
+  return 345 + 78 + 5 + 78;                // topHintButtonY + btnH + gap + btnH (X4)
+}
+
+Rect LyraTheme::getSideButtonUpRect(const GfxRenderer& renderer, bool hasLongPressHint) const {
+  constexpr int buttonWidth = LyraMetrics::values.sideButtonHintsWidth;
+  constexpr int buttonHeight = 78;  // mirrors drawSideButtonHints
+  constexpr int buttonGap = LyraMetrics::values.sideButtonHintsGap;
+  if (gpio.deviceIsX3()) {
+    // X3: short-press capsule hugs the screen edge unless a long-press
+    // companion capsule pushes it inwards (mirrors drawSideButtonHints).
+    const int leftX = hasLongPressHint ? buttonWidth + buttonGap : 0;
+    return Rect(leftX, 155, buttonWidth, buttonHeight);  // x3ButtonY
+  }
+  // X4: stacked on the right; same edge-vs-inset rule.
+  const int edgeX = renderer.getScreenWidth() - buttonWidth;
+  const int inX = edgeX - buttonGap - buttonWidth;
+  const int x = hasLongPressHint ? inX : edgeX;
+  return Rect(x, topHintButtonY, buttonWidth, buttonHeight);
 }
 
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,

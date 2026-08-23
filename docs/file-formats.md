@@ -339,3 +339,171 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## MeshCore storage
+
+MeshCore data is stored under `/.crosspoint/meshcore/`. The directory
+structure is companion-scoped: each paired companion device has its own
+subdirectory named after the BLE address with colons stripped
+(e.g. `c2:0e:d3:71:13:d9` → `c20ed37113d9`).
+
+```
+/.crosspoint/meshcore/
+├── companion.json            # Root-level: last-used BLE address + type
+├── <ble-addr-hex>/           # Per-companion data directory
+│   ├── contacts.bin          # Saved contacts
+│   ├── unread.bin            # Unread message counters
+│   ├── pin.bin               # BLE pairing PIN (4 bytes LE)
+│   ├── conv/                 # Conversation storage
+│   │   ├── ch_<N>/           # Channel message threads (N = 0–7)
+│   │   │   ├── meta.bin
+│   │   │   └── msgs/
+│   │   │       ├── 1         # MeshCoreMessage (268 bytes), filename = id
+│   │   │       ├── 2
+│   │   │       └── ...
+│   │   └── dm_<hexprefix>/   # Direct message threads (12-char hex)
+│   │       ├── meta.bin
+│   │       └── msgs/
+│   │           └── ...
+```
+
+### `companion.json`
+
+Plain text, format: `<BLE_address>:<address_type>`
+
+```
+c2:0e:d3:71:13:d9:0
+```
+
+The last colon separates the 17-char BLE address from the address type byte
+(0 = public, 1 = random). Legacy format (address only, no colon) is also
+accepted and treated as type 0.
+
+### `contacts.bin` — version 3
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`MESHCORE_CONTACT_FILE_VERSION = 3`) |
+| 1 | 2 | Count (`uint16_t`, little-endian) |
+| 3+ | 80× | `MeshCoreContact` records |
+
+Older versions (1, 2) are rejected (no migration — the format predates
+production; contacts are re-fetched from the node on the next full sync).
+
+**`MeshCoreContact`** (80 bytes, natural alignment):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 32 | `publicKey` — Ed25519 public key |
+| 32 | 33 | `name` — UTF-8 display name (protocol: max 32 + NUL) |
+| 65 | 1 | `type` — `MeshNodeType` enum |
+| 66 | 1 | `flags` — bit 0 = favourite |
+| 68 | 4 | `lastSeen` — Unix timestamp (`uint32_t`) |
+| 72 | 1 | `pathLength` — LoRa hop count |
+| 73 | 1 | `snr` — signal-to-noise ratio (`int8_t`) |
+| 74 | 1 | `isSaved` — bool |
+| 76 | 2 | `unreadCount` — `uint16_t` |
+
+### `unread.bin` — version 2
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (hardcoded `2`) |
+| 1 | 2 | Channel count (`uint16_t`) |
+| 3 | 2× | Per-channel unread counts (`uint16_t`) |
+| N+1 | 2 | Contact count (`uint16_t`) |
+| N+3 | 8× | Per-contact: 6-byte pubkey prefix + `uint16_t` unread |
+
+### `meta.bin` — version 1
+
+Per-conversation metadata file. Located at `conv/ch_<N>/meta.bin` and
+`conv/dm_<hexprefix>/meta.bin`.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`META_FILE_VERSION = 1`) |
+| 1 | 2 | `count` — number of messages (`uint16_t`) |
+| 3 | 4 | `startId` — id of the oldest message (`uint32_t`) |
+| 7 | 4 | `endId` — id of the newest message (`uint32_t`) |
+| 11 | 4 | `positionId` — id of last viewed message (scroll restore) |
+
+Total: 15 bytes.
+
+### `msgs/` — per-file message storage
+
+Each message is stored as a separate file named by its numeric id
+(e.g. `msgs/1`, `msgs/2`, ...). The id is a monotonically increasing
+`uint32_t`, starting at 1 for the first message of a conversation.
+Ids never reset — even after old messages are trimmed at
+`MAX_MSGS_PER_THREAD` (200), new messages continue incrementing
+from the last `endId`.
+
+Each file contains exactly one `MeshCoreMessage` struct (268 bytes):
+
+**`MeshCoreMessage`** (268 bytes):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | `direction` — `MsgDirection` (`RECEIVED=0`/`SENT=1`) |
+| 1 | 1 | `type` — `MsgType` (`CHANNEL=0`/`DIRECT=1`) |
+| 2 | 6 | `pubkeyPrefix` — first 6 bytes of sender pubkey |
+| 8 | 64 | `senderName` — sender display name |
+| 72 | 1 | `channelIdx` — channel index (for CHANNEL type) |
+| 73 | 4 | `timestamp` — Unix timestamp (`uint32_t`) |
+| 77 | 1 | `snr` — signal-to-noise ratio (`int8_t`) |
+| 78 | 1 | `pathLength` — LoRa hop count |
+| 79 | 1 | `deliveryStatus` — `DeliveryStatus` enum |
+| 80 | 4 | `globalId` — monotonic message id (`uint32_t`) |
+| 84 | 184 | `text` — message text (`MAX_MSG_TEXT_LEN`) |
+
+### Cache invalidation
+
+Version mismatch on any binary file causes a silent read failure (treated as
+empty). The caller is responsible for handling the resulting empty state.
+There is no automatic deletion of stale companion directories.
+
+## `user_words.bin`
+
+Learned-word store for T4 predictive input, at
+`/t4dicts/user_words.bin`. Written by `T4EntryActivity` on exit
+when it changed, and only for `InputType::Text` fields — password, URL, and
+digit entry never reads or writes it.
+
+The store serves both purposes of personalization: words missing from the
+shipped `.trie` (names, jargon typed in Multi-tap) become predictable, and
+words the user types often are ranked ahead of the static frequency order
+baked into the `.trie`.
+
+### Version 1
+
+**Header** (12 bytes):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | Magic `0x54345557` (`T4UW`) |
+| 4 | 2 | Version (`T4UserLexicon::kVersion = 1`) |
+| 6 | 2 | Entry count (`uint16_t`) |
+| 8 | 4 | Reserved (0) |
+
+**Entry** (3 + `wordLen` bytes, repeated `entryCount` times):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | `lang` — `T4Language` value (never `DIGIT`) |
+| 1 | 1 | `score` — usage count, 1…200 |
+| 2 | 1 | `wordLen` — word length in bytes, 1…27 |
+| 3 | `wordLen` | `word` — lowercase UTF-8, no terminator |
+
+Maximum file size is 12 + 128 × 30 = 3852 bytes (`kMaxEntries` entries).
+
+Notes:
+
+- Button sequences are not stored. They are recomputed at load time from
+  the letter groups of the entry's language, so the file survives layout
+  changes; entries whose letters no longer map are dropped.
+- Scores are aged by halving every entry when any score reaches 200, which
+  keeps long-lived favourites from freezing the ranking.
+- When the store is full, the entry with the lowest score is evicted.
+- A truncated or corrupt file is treated as empty — no version migration
+  and no automatic deletion.
+

@@ -67,6 +67,20 @@ void logPrintf(const char* level, const char* origin, const char* format, ...);
 
 std::string getLastLogs();
 void clearLastLogs();
+
+// SD card file logging sink. When set, every log line is also written to this
+// Print object (typically an open HalFile). Caller owns the Print lifetime.
+void setLogFileSink(Print* sink);
+void clearLogFileSink();
+// Temporarily pause/resume writing to the SD log sink without clearing it.
+// SdFat uses a single shared 512-byte sector cache for the whole volume, so a
+// second write handle (the log file) flushing on every line while another task
+// streams a large file to SD (e.g. a web-UI upload) thrashes that cache and can
+// truncate the file being uploaded. Bracket such SD-streaming writes with
+// suspend/resume so the log sink does not interfere. No-op in release builds
+// where no sink is set. Not reference-counted: callers must pair the calls.
+void suspendLogFileSink();
+void resumeLogFileSink();
 // Validates the RTC log state (magic word + logHead range). Returns true if
 // corruption was detected (magic mismatch or logHead out of range), meaning
 // logMessages is untrusted garbage. Callers should call clearLastLogs() when

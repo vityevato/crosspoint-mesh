@@ -150,6 +150,15 @@ Typical persisted areas on SD:
     cover.bmp
     sections/*.bin
     img_* cache files
+  meshcore/
+    companion.json
+    <ble-addr-hex>/
+      contacts.bin
+      unread.bin
+      pin.bin
+      conv/
+        ch_<N>/meta.bin, msgs/{1,2,...}
+        dm_<hexprefix>/meta.bin, msgs/{1,2,...}
   settings.json
   state.json
 ```
@@ -215,4 +224,3 @@ When editing related source assets, regenerate via normal build steps/scripts.
 Before implementing larger ideas, check:
 
 - [SCOPE.md](../../SCOPE.md)
-- [GOVERNANCE.md](../../GOVERNANCE.md)

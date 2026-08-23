@@ -1,8 +1,10 @@
-# CrossPoint Reader
+# CrossPoint Mesh
 
-[![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
-
-CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
+CrossPoint Mesh is a fork of CrossPoint Reader — open-source firmware
+that combines a full-featured e-reader with a MeshCore client.
+Read EPUBs, manage your library, and stay connected to the MeshCore
+decentralized mesh network for off-grid communication — all from a
+single device. Community-built, fully hackable, free forever.
 
 **Now running on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
 
@@ -12,7 +14,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 ## What can CrossPoint do?
 
-- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more. 
+- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
 
 - **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
 
@@ -25,7 +27,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 - **Library workflow**: folder browser, hidden-file toggle, long-press delete, recent books, SD-cache management.
 
 - **Wireless workflows**:
-  
+
   - File transfer web UI
   - EPUB Optimizer
   - Web settings UI/API (edit many device settings from browser)
@@ -40,11 +42,54 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 - **Localization**: 24 UI languages and counting. RTL support.
 
-### Coming soon:
+- **MeshCore Client**: Built-in BLE client for the [MeshCore](https://meshcore.co.uk/) decentralized
+  mesh network — communicate without internet access, even in remote areas. This
+  is not a full MeshCore client: the companion node must be configured beforehand
+  with a full-featured client, such as the MeshCore smartphone app. CrossPoint
+  connects to that already-configured companion over BLE and focuses on
+  messaging.
 
-- More themes.
+  Included messaging features:
 
-- Much more! stay tuned.
+  - **Three-tab hub**: **Contacts**, **Channels**, and **Menu** — primary functions
+    are front and centre; secondary actions are grouped under Menu.
+  - **BLE companion connection** — scan for and pair with MeshCore companion devices (T-Beam,
+    etc.) via encrypted BLE with PIN authentication
+  - **Auto-reconnect** — automatically reconnects to the last paired companion when in range
+  - **Channels** — join and send messages on public channels, hashtag channels, and
+    encrypted private channels (up to 8)
+  - **Contacts & direct messages** — view saved contacts with unread counts,
+    send private messages with paginated conversation history, per-message delivery
+    status (Sent / Delivered / Failed), bounded retry escalation (direct → flood),
+    and manual route reset for stale paths
+  - **Menu tab** — Discovery Nodes (browse nearby mesh nodes and add as contacts),
+    Send Advert / Send Flood Advert (broadcast presence on the mesh),
+    Status (companion device info), Disconnect
+  - **QR contact sharing** — display your node as a `meshcore://contact/add` QR
+    code on the e-ink screen so another MeshCore client can add your node
+  - **Contact file exchange** — save your node's contact link to an SD file
+    (`/meshcore_contacts.txt`) and import contacts from it
+  - **SD persistence** — messages, contacts, and unread counts survive reboots via SD card
+    storage
+
+  Not included (compared with the full-featured smartphone client — set these
+  up with the app beforehand):
+
+  - Initial node setup and configuration: node name, BLE PIN, and radio
+    parameters (frequency, bandwidth, spreading factor, TX power, GPS), as well
+    as provisioning a new node's identity.
+  - QR channel sharing/joining (`meshcore://channel/add`) and QR *scanning* — the
+    device has no camera, so it can only emit the contact QR code, not import
+    channels or contacts by scanning them.
+  - Configuring a node as a repeater or range extender, and other advanced node
+    administration that only the full app exposes.
+
+- **T4 text input**: button-only devices (Xteink X3/X4) type through a
+  T9-style button keyboard instead of a touchscreen keyboard. Predictive word
+  suggestions currently support **English** and **Russian** only — copy the
+  `.trie` dictionaries from the [`t4dicts/`](t4dicts/) directory in this repo
+  to `/t4dicts/` on the SD card to enable them, or build your own (see
+  [docs/t4-dictionary.md](docs/t4-dictionary.md)).
 
 ---
 
@@ -61,12 +106,16 @@ https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
 USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
 
 > ### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
-> 
+>
 > **The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
-> 
+>
 > Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
 > stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
 > the firmware you flashed doesn't support OTA, **there is no way out**.
+>
+> **The Papyrix fork has removed OTA update support from its code.** If you flash Papyrix onto a
+> USB-locked unit, you will have **zero update or recovery path** and will be stuck on it forever. **Do not flash
+> Papyrix (or any other unsupported firmware) on a locked device.**
 
 ## Install firmware
 
@@ -132,11 +181,76 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 ## Documentation
 
 - [User Guide](./USER_GUIDE.md)
+- [T4 predictive text input](./docs/t4-dictionary.md) - the button-driven keyboard and predictive dictionary format
 - [Web server usage](./docs/webserver.md)
 - [Web server endpoints](./docs/webserver-endpoints.md)
 - [Project scope](./SCOPE.md)
 - [Contributing docs](./docs/contributing/README.md)
 - [Touch and UI development](./docs/contributing/touch-and-ui.md) - FreeInkUI components for new screens, the touch bridge for existing ones, and build envs for the non-Xteink touch devices
+
+---
+
+## Desktop Simulator
+
+A desktop simulator lets you test firmware UI without a device. It
+compiles natively (macOS/Linux) and renders the e-ink display in an
+SDL2 window.
+
+**Prerequisites**:
+- macOS: `brew install sdl2`
+- Linux (Debian/Ubuntu): `sudo apt install libsdl2-dev libssl-dev`
+
+**Build and run**:
+```bash
+# Build + launch in one command
+pio run -e simulator -t run_simulator
+
+# Or build only, then run
+pio run -e simulator
+.pio/build/simulator/program
+```
+
+**Setup**: Place EPUB books in `./fs_/books/` (maps to SD card
+`/books/`).
+
+**Keyboard controls**:
+
+| Key | Action |
+| --- | --- |
+| ↑ / ↓ | Page back / forward (side buttons) |
+| ← / → | Left / right front buttons |
+| Return | Confirm / Select |
+| Escape | Back |
+| P | Power |
+| S | Simulate sleep |
+
+For architecture details, stub descriptions, and cache management
+under the simulator, see the [Desktop Simulator](./CLAUDE.md) section
+in CLAUDE.md.
+
+**MeshCore simulation**: MeshCore activities (hub, discover, scan,
+status, thread) compile and render in the simulator. Place a
+`meshcore_mock.json` file in `fs_/` to activate the mock BLE layer —
+BLE operations return data from JSON instead of no-ops. Without the
+JSON file, all BLE operations are no-ops (the simulator has no real
+BLE hardware). All UI screens remain interactive regardless.
+
+Mock hotkeys for injecting BLE events:
+
+| Key | Action |
+| --- | --- |
+| 1 | Inject BLE disconnect |
+| 2 | Inject new node (PKT_NEW_ADVERT)   |
+| 3 | Inject channel created |
+| 4 | Inject channel message |
+| 5 | Inject direct message |
+| 6 | Inject companion status update |
+| 7 | Inject advert success (PKT_OK) |
+| 8 | Inject flood advert success (PKT_OK) |
+| 9 | Inject DM delivery ACK (PKT_ACK) |
+
+See [CLAUDE.md](./CLAUDE.md) for detailed simulator architecture
+and the mock session lifecycle.
 
 ---
 
@@ -218,7 +332,7 @@ Minor adjustments may be required for Windows.
 
 ## Internals
 
-CrossPoint Reader is pretty aggressive about caching data down to the SD card to minimise RAM usage. The ESP32-C3 only has ~380KB of usable RAM, so we have to be careful. A lot of the decisions made in the design of the firmware were based on this constraint.
+CrossPoint Mesh is pretty aggressive about caching data down to the SD card to minimise RAM usage. The ESP32-C3 only has ~380KB of usable RAM, so we have to be careful. A lot of the decisions made in the design of the firmware were based on this constraint.
 
 ### Data caching
 
@@ -252,7 +366,7 @@ For more details on the internal file structures, see the [file formats document
 
 Contributions are welcome. If you're new to the codebase, start with the [contributing docs](./docs/contributing/README.md). For things to work on, check the [ideas discussion board](https://github.com/crosspoint-reader/crosspoint-reader/discussions/categories/ideas) — leave a comment before starting so we don't duplicate effort.
 
-Everyone here is a volunteer, so please be respectful and patient. For governance and community expectations, see [GOVERNANCE.md](./GOVERNANCE.md).
+Everyone here is a volunteer, so please be respectful and patient.
 
 ---
 
@@ -272,7 +386,7 @@ One of the best things about open source is that anyone can take the code in a d
 
 - ~~[PlusPoint](https://github.com/ngxson/pluspoint-reader) — custom JS apps support.~~ (Unmaintained)
 
-- [crosspoint-reader-papers3](https://github.com/juicecultus/crosspoint-reader-papers3) — Crosspoint port for M5Stack Paper S3. 
+- [crosspoint-reader-papers3](https://github.com/juicecultus/crosspoint-reader-papers3) — Crosspoint port for M5Stack Paper S3.
 
 - [t5s3-reader](https://github.com/ShallowGreen123/t5s3-reader) — Crosspoint port for LilyGo T5 ePaper S3 / T5S3 4.7-inch e-paper device.
 
@@ -282,6 +396,6 @@ Want to build your own device? Be sure to check out the [de-link](https://github
 
 ---
 
-CrossPoint Reader is **not affiliated with Xteink or any device manufacturer**.
+CrossPoint Mesh is **not affiliated with Xteink or any device manufacturer**.
 
 Huge shoutout to [diy-esp32-epub-reader](https://github.com/atomic14/diy-esp32-epub-reader), which inspired this project.

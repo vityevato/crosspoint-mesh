@@ -17,7 +17,7 @@
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
 
-enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, OPDS_BROWSER, FILE_TRANSFER, SETTINGS_MENU };
+enum class HomeMenuItem { NONE, FILE_BROWSER, MESHCORE, RECENTS, OPDS_BROWSER, FILE_TRANSFER, SETTINGS_MENU };
 
 /**
  * ActivityManager
@@ -58,6 +58,11 @@ class ActivityManager {
   // Note: only one waiting task is supported at a time
   TaskHandle_t waitingTaskHandle = nullptr;
 
+  // Spinlock for atomically reading/writing waitingTaskHandle.
+  // Must be a real portMUX_TYPE (not nullptr) — the simulator's taskENTER_CRITICAL
+  // dereferences the pointer unconditionally.
+  portMUX_TYPE waitingTaskMux = portMUX_INITIALIZER_UNLOCKED;
+
   // Mutex to protect rendering operations from race conditions
   // Must only be used via RenderLock
   SemaphoreHandle_t renderingMutex = nullptr;
@@ -90,6 +95,7 @@ class ActivityManager {
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
+  void goToMeshCore();
   void goToCrashReport();
   void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE);
 
@@ -102,6 +108,7 @@ class ActivityManager {
 
   bool preventAutoSleep() const;
   bool isReaderActivity() const;
+  bool isMeshCoreActivity() const;
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

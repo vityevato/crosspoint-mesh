@@ -72,6 +72,11 @@ class HalGPIO {
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
   unsigned long getPowerButtonHeldTime() const;
+
+  // Returns true on the simulator when the 'S' key was pressed since last call.
+  // On real hardware always returns false.
+  bool consumeSimulatorSleepRequest();
+
   bool hasTouch() const;
   bool wasTouchTap(float& nx, float& ny) const;
   bool wasTouchDown(float& nx, float& ny) const;

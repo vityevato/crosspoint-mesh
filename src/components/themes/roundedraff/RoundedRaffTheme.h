@@ -31,6 +31,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .homeMenuTopOffset = 20,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
+                                 .sideButtonHintsMargin = 4,
+                                 .sideButtonHintsGap = 4,
+                                 .buttonHintCornerRadius = 10,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
                                  .statusBarHorizontalMargin = 5,
@@ -40,6 +43,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .keyboardCenteredText = false,
                                  .keyboardVerticalOffset = 0,
                                  .keyboardTextFieldWidthPercent = 85,
+                                 .keyboardKeyCornerRadius = 10,
                                  .keyboardWidthPercent = 94,
                                  .popupTopOffsetRatio = 0.12f,
                                  .popupMarginX = 20,
@@ -69,7 +73,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .textFieldHorizontalPadding = 8,
                                  .textFieldNormalThickness = 2,
                                  .textFieldCursorThickness = 3,
-                                 .textFieldLineEndOffset = -1};
+                                 .textFieldLineEndOffset = -1,
+                                 .subtitleBottomMargin = 4,
+                                 .bottomSubtitleHeight = 0};
 }
 
 class RoundedRaffTheme : public BaseTheme {
@@ -96,7 +102,15 @@ class RoundedRaffTheme : public BaseTheme {
                 const std::function<UIIcon(int index)>& rowIcon = nullptr,
                 const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
                 const std::function<bool(int index)>& rowDimmed = nullptr) const override;
+  void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                     uint32_t scrollOffsetPx) const override;
+  void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
+                       bool inactive1, bool inactive2, bool inactive3, bool inactive4) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                        const char* btn4) const override;
+  void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                           const char* topBtnLong = nullptr, const char* bottomBtnLong = nullptr) const override;
+  int getButtonHintWidth() const override { return 106; }
+  const int* getButtonXPositions(bool isX3) const override;
   bool homeMenuShowsContinueReading() const { return true; }
 };

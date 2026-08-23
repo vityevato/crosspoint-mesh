@@ -36,6 +36,15 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
       - [Cover settings](#cover-settings)
       - [Custom images](#custom-images)
     - [3.8 Custom Fonts (SD Card)](#38-custom-fonts-sd-card)
+    - [3.9 MeshCore Hub](#39-meshcore-hub)
+      - [Connecting to a Companion](#connecting-to-a-companion)
+      - [3.9.1 Contacts Tab](#391-contacts-tab)
+      - [3.9.2 Channels Tab](#392-channels-tab)
+      - [3.9.3 Menu Tab](#393-menu-tab)
+      - [3.9.4 Conversation Thread](#394-conversation-thread)
+      - [3.9.5 Discovery Nodes](#395-discovery-nodes)
+      - [3.9.6 Companion Status](#396-companion-status)
+    - [3.10 Text Entry (T4 Keyboard)](#310-text-entry-t4-keyboard)
   - [4. Reading Mode](#4-reading-mode)
     - [Page Turning](#page-turning)
     - [Chapter Navigation](#chapter-navigation)
@@ -314,6 +323,8 @@ The Settings screen allows you to configure the device's behavior. There are a f
 
 - **Manage Fonts**: Browse, download, and manage custom font families installed from the SD card. See [Custom Fonts (SD Card)](#38-custom-fonts-sd-card) for more information.
 
+- **Additional Keyboard Layout**: Choose the third (configurable) language slot for the on-device T4 text-entry keyboard (default Russian). See [Text Entry (T4 Keyboard)](#310-text-entry-t4-keyboard).
+
 #### 3.6.5 OPDS Servers (Multiple Libraries)
 
 CrossPoint supports saving multiple OPDS servers and switching between them when browsing catalogs.
@@ -542,6 +553,214 @@ There are three ways to install fonts:
 Once installed, custom fonts appear in **Settings → Reader → Font Family** alongside the built-in fonts.
 
 See [docs/sd-card-fonts.md](./docs/sd-card-fonts.md) for full installation details and SD card folder structure.
+
+### 3.9 MeshCore Hub
+
+The MeshCore Hub provides access to the [MeshCore](https://meshcore.co.uk/)
+decentralised mesh network. It uses BLE to connect to a MeshCore companion
+device (T-Beam, etc.) and presents a three-tab interface: **Contacts**,
+**Channels**, and **Menu**. Open it from the Home screen menu.
+
+> [!NOTE]
+> MeshCore uses Bluetooth Low Energy. The device disconnects Wi-Fi while
+> the Hub is open, because the ESP32-C3 shares its radio between Wi-Fi and
+> BLE.
+
+#### Connecting to a Companion
+
+The first time you open the Hub there is no saved companion, so the device
+starts scanning automatically. After that it remembers the last companion
+and reconnects automatically.
+
+1. From the Home screen, open **MeshCore**. The device scans for nearby
+   MeshCore companions and shows each one with its signal strength (RSSI).
+2. Highlight a device with **Up/Down** and press **Confirm** to connect.
+3. On first connection you are asked for the **BLE PIN** (6 digits). The
+   MeshCore factory default is `123456`. The PIN is remembered for future
+   reconnects.
+4. If a connection fails, the PIN prompt reopens so you can retry. Press
+   **Left** to rescan, or **Back** to cancel and return to the Home screen.
+
+After the first successful connection, opening the Hub reconnects to the
+last companion automatically (using the saved PIN). Press **Back** during
+the reconnect to cancel. If the companion drops the connection, the device
+scans for companions again automatically.
+
+**Hub navigation**:
+
+- **Confirm** (when the tab bar is highlighted) — cycle to the next tab
+  (Contacts → Channels → Menu → Contacts…).
+- **Long-press** Right/Down or Left/Up — cycle tabs from anywhere.
+- **Up/Down** — move the selection between the tab bar and list items.
+- **Confirm** (on a list item) — open the selected contact, channel, or
+  menu action.
+- **Back** — return to the tab bar if a list item is selected, otherwise
+  return to Home.
+
+#### 3.9.1 Contacts Tab
+
+Lists saved peer contacts. Favourite contacts are pinned to the top
+(marked with `*`); the rest are sorted by most recent activity.
+
+- A leading dot marks contacts with unread messages; the subtitle shows the
+  contact's key, last message time, and hop count.
+- **Confirm** on a contact opens the direct message thread.
+
+#### 3.9.2 Channels Tab
+
+Lists the LoRa channels configured on the companion (up to 8), sorted by
+most recent activity. A leading dot marks channels with unread messages;
+the subtitle shows the last message time.
+
+- **Confirm** on a channel opens the channel thread.
+
+#### 3.9.3 Menu Tab
+
+Groups secondary actions that are used less frequently:
+
+| Item | Action |
+| --- | --- |
+| **Discovery Nodes** | Opens the list of nearby mesh nodes discovered via network adverts (see [3.9.5](#395-discovery-nodes)). |
+| **Send Advert** | Sends a single-hop mesh advertisement via the companion. Nearby nodes can discover your presence. |
+| **Send Flood Advert** | Sends a mesh-wide flood advertisement that propagates through the entire mesh network. |
+| **Save Advert to File** | Writes the companion's contact link to `/meshcore_contacts.txt` on the SD card so it can be shared or re-imported. |
+| **Share Contact (QR)** | Displays a QR code of the companion's contact link so another device can add it. |
+| **Import Contacts from File** | Reads contact links from `/meshcore_contacts.txt` on the SD card and adds them to the companion. |
+| **Status** | Shows companion device info (see [3.9.6](#396-companion-status)). |
+| **Disconnect** | Shows a confirmation prompt, then disconnects from the companion. |
+
+> [!NOTE]
+> **Send Advert**, **Send Flood Advert**, **Save Advert to File**,
+> **Share Contact (QR)**, **Import Contacts from File**, and **Disconnect**
+> require the companion to be connected. When disconnected, these items
+> appear dimmed and pressing Confirm shows "Not connected".
+>
+> After sending an advert, the subtitle area shows a brief status message
+> ("Advert sent" or "Advert failed") that auto-clears after 5 seconds.
+
+**Contacts file.** Both **Save Advert to File** and **Import Contacts from
+File** use `/meshcore_contacts.txt` in the SD card root directory.
+
+**Save Advert to File** overwrites that file with a single line: the
+companion's contact link in the QR format:
+
+```
+meshcore://contact/add?name=<node name>&public_key=<64 hex chars>&type=1
+```
+
+Copy this file to another device (or transfer it over at the same time as
+your books) to share the contact; the receiving device can import it the
+same way.
+
+**Import Contacts from File** reads the file one URL per line and adds each
+contact to the companion. Two formats are accepted on each line:
+
+- the URL format above (`meshcore://contact/add?name=...&public_key=...&type=...`);
+- a *biz card* — `meshcore://` followed by the hex-encoded raw ADVERT
+  packet of a node.
+
+Lines that fail to parse, the device's own public key, and contacts that are
+already saved are skipped without error.
+
+#### 3.9.4 Conversation Thread
+
+Opening a contact or channel shows the conversation in a two-tab view:
+**Messages** and **Menu**.
+
+- **Messages** — the conversation history. Press **Confirm** to open the
+  keyboard and send a message. The side **Up/Down** buttons scroll one
+  message at a time; the front **Left/Right** buttons scroll a full screen.
+  Sent messages show their delivery status (**Sent**, **Delivered**, or
+  **Failed**) along with the hop count.
+- **Menu** — context-sensitive actions.
+
+For a **direct message**, the Menu offers:
+
+- **Toggle Favourite** — pin or unpin the contact at the top of the
+  Contacts tab.
+- **Reset Path** — clear the stale route to a contact so messages re-route.
+- **Scroll to End** — jump to the newest messages.
+- **Clear Conversation** — erase the local message history.
+- **Share Contact (QR)** — display the contact's link as a QR code.
+- **Unlist Contact** — remove the contact from the saved list.
+- **Use Reader Font in Conversations** — toggle using the reader font for
+  message text instead of the default UI font.
+
+For a **channel**, the Menu offers **Scroll to End**, **Clear
+Conversation**, and the **Use Reader Font in Conversations** toggle.
+
+> [!NOTE]
+> Long-press **Right/Down** or **Left/Up** cycles between the Messages and
+> Menu tabs, matching the Hub.
+
+#### 3.9.5 Discovery Nodes
+
+Shows nearby mesh nodes discovered via network adverts. Each row lists the
+node's name (or its key if unnamed), short key, last-seen time, and hop
+count.
+
+- **Confirm** on a node adds it to saved contacts (or removes it if it is
+  already saved). Already-saved nodes are dimmed.
+- **Back** returns to the Hub.
+
+#### 3.9.6 Companion Status
+
+Shows the connected companion's details as a popup: **Name**, **Model**,
+**Firmware**, **Battery** voltage, and **Radio** configuration (frequency,
+bandwidth, spreading factor, coding rate). Press **Back** to close it.
+
+---
+
+### 3.10 Text Entry (T4 Keyboard)
+
+Text fields on button-only devices (Xteink X3/X4) use the **T4 keyboard**, a
+button-driven, T9-style input method. It appears automatically wherever text
+is entered: Wi-Fi passwords, OPDS and KOReader credentials, book search, and
+MeshCore messages and PINs. Touch devices use an on-screen keyboard instead.
+
+**Typing** — each of the four front buttons covers a group of letters:
+
+| Button | English letters |
+| --- | --- |
+| **Back** | `abcdef'` |
+| **Confirm** | `ghijkl-` |
+| **Left** | `mnopqrs` |
+| **Right** | `tuvwxyz` |
+
+The side **Up** button deletes (backspace; hold to repeat), and the side
+**Down** button types space and punctuation.
+
+**Modes**:
+
+- **Predict (T9)** — press each group once per word and the keyboard
+  suggests words; press **Up + Right** together to enter candidate selection
+  (then **Left/Right** cycle the suggestions).
+- **Multi-tap** — press a group repeatedly to cycle through its letters.
+
+Long-press **Right** toggles Predict ↔ Multi-tap (in password fields it
+toggles show/hide instead).
+
+**Long-press actions**:
+
+- **Back** — cancel
+- **Confirm** — done / accept
+- **Left** — switch language (English → additional → digits)
+- **Right** — toggle Predict ↔ Multi-tap (or show/hide in password fields)
+- **Down** — toggle Shift / Caps
+
+**Languages**: English and digits are fixed; a third, configurable language
+(default Russian) is set under **Settings → System → Additional Keyboard
+Layout**.
+
+> [!NOTE]
+> Predictive word suggestions need a dictionary on the SD card. Place the
+> `.trie` file for a language under `/t4dicts/` (e.g. `/t4dicts/en.trie`)
+> and Predictive mode becomes available for that language. Without a
+> dictionary the language falls back to Multi-tap. Words you type are
+> remembered in `/t4dicts/user_words.bin`.
+>
+> For the dictionary format and how to build your own, see
+> [docs/t4-dictionary.md](./docs/t4-dictionary.md).
 
 ---
 

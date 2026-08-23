@@ -3,13 +3,49 @@
 #include <Logging.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
+#include <sys/time.h>
 #include <time.h>
 
+#include <cstdint>
+
 HalClock halClock;  // Singleton instance
+
+namespace {
+
+// Days from a civil date to the Unix epoch (1970-01-01) using the Howard
+// Hinnant civil-days algorithm. Pure arithmetic — independent of the process
+// timezone, so it is safe even before SNTP configures the TZ to UTC.
+int64_t daysFromCivil(int64_t y, unsigned m, unsigned d) {
+  y -= m <= 2;
+  const int64_t era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = static_cast<unsigned>(y - era * 400);            // [0, 399]
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;  // [0, 365]
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;           // [0, 146096]
+  return era * 146097 + static_cast<int64_t>(doe) - 719468;
+}
+
+}  // namespace
 
 void HalClock::begin() {
   _available = _sdkRtc.begin();
   LOG_INF("CLK", _available ? "SDK RTC found" : "RTC not found");
+  if (_available) {
+    // Seed the ESP32 system clock (`time()`) from the RTC so wall-clock
+    // consumers (MeshCore message timestamps, logs, …) see real UTC right
+    // away instead of the epoch (1970). `time()` is otherwise only set by
+    // SNTP, which requires WiFi. The RTC is kept in UTC (NTP writes UTC0).
+    // A sanity floor rejects running-but-never-set RTCs (they typically sit
+    // near 2000-01-01) so we don't seed an obviously bogus time.
+    uint32_t epoch = 0;
+    if (getEpochUtc(epoch) && epoch >= 1420070400) {  // >= 2015-01-01 UTC
+      struct timeval tv = {};
+      tv.tv_sec = static_cast<time_t>(epoch);
+      settimeofday(&tv, nullptr);
+      LOG_INF("CLK", "System clock seeded from RTC: epoch=%u", epoch);
+    } else {
+      LOG_INF("CLK", "RTC time not valid (%u) — keep SNTP as the clock source", epoch);
+    }
+  }
 }
 
 bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
@@ -36,6 +72,18 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
   _hasCachedTime = true;
   hour = _cachedHour;
   minute = _cachedMinute;
+  return true;
+}
+
+bool HalClock::getEpochUtc(uint32_t& out) const {
+  if (!_available) return false;
+  Rtc::DateTime dt;
+  if (!_sdkRtc.now(dt)) return false;
+
+  const int64_t days = daysFromCivil(dt.year, dt.month, dt.day);
+  const int64_t secs = days * 86400 + dt.hour * 3600 + dt.minute * 60 + dt.second;
+  if (secs < 0 || secs > static_cast<int64_t>(UINT32_MAX)) return false;
+  out = static_cast<uint32_t>(secs);
   return true;
 }
 

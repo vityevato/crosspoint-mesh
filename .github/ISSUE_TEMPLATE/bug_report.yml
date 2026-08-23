@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report an issue or unexpected behavior
+description: Report a bug in the CrossPoint Mesh (MeshCore) client
 title: "Short, descriptive title of the issue"
 labels: ["bug", "triage"]
 body:
@@ -7,6 +7,11 @@ body:
     attributes:
       value: |
         Thanks for taking the time to report this bug! Please fill out the details below.
+
+        **This repository accepts MeshCore-related bugs only.** For anything about
+        the reader itself (rendering, formats, library, settings, themes, sync,
+        etc.), file against the upstream CrossPoint Reader project instead:
+        https://github.com/crosspoint-reader/crosspoint-reader/issues/new/choose
 
   - type: input
     id: version

@@ -74,6 +74,15 @@ class FontDecompressor {
   uint8_t* hotGroup = nullptr;  // owned; freed in freeHotGroup()/dtor
   uint32_t hotGroupCapacity = 0;
 
+  // Memoizes a hot-group allocation failure. Without it, a single group that cannot be
+  // allocated on the current (e.g. BLE-fragmented) heap makes every glyph in that group
+  // re-attempt the large (~34 KB) malloc and re-emit an error log — hundreds of failing
+  // mallocs + SD-backed writes per frame, stalling the loop ~800 ms and starving BLE
+  // polling. When set, the fallback returns nullptr (missing glyph) immediately. Reset on
+  // every prewarm and on any cache free, so a later, less fragmented heap is retried once.
+  const EpdFontData* hotGroupFailedFont = nullptr;
+  uint16_t hotGroupFailedIndex = UINT16_MAX;
+
   // Scratch buffer for compacting a single glyph from the hot group.
   // Valid until the next getBitmap() call. Same ownership/OOM contract as hotGroup.
   uint8_t* hotGlyphBuf = nullptr;

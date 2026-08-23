@@ -28,6 +28,7 @@ add_library(crosspoint_test_common INTERFACE)
 target_include_directories(crosspoint_test_common INTERFACE
   ${REPO_ROOT}
   ${REPO_ROOT}/lib
+  ${CMAKE_CURRENT_SOURCE_DIR}/stubs
 )
 target_compile_options(crosspoint_test_common INTERFACE
   -Wall
@@ -43,6 +44,9 @@ add_subdirectory(release_json_parser)
 add_subdirectory(differential_rounding)
 add_subdirectory(hyphenation_eval)
 add_subdirectory(utf8_compose)
+add_subdirectory(t4_dict)
+add_subdirectory(meshcore_mock)
+add_subdirectory(meshcore_contact_url)
 add_subdirectory(opds_filename)
 add_subdirectory(minibidi_arabic)
 add_subdirectory(combining_marks)

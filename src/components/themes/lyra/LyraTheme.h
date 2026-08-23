@@ -31,6 +31,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .homeMenuTopOffset = 16,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
+                                 .sideButtonHintsMargin = 0,
+                                 .sideButtonHintsGap = 4,
+                                 .buttonHintCornerRadius = 6,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
                                  .statusBarHorizontalMargin = 5,
@@ -40,6 +43,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .keyboardCenteredText = false,
                                  .keyboardVerticalOffset = -7,
                                  .keyboardTextFieldWidthPercent = 85,
+                                 .keyboardKeyCornerRadius = 6,
                                  .keyboardWidthPercent = 94,
                                  .popupTopOffsetRatio = 0.165f,
                                  .popupMarginX = 16,
@@ -69,7 +73,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .textFieldHorizontalPadding = 6,
                                  .textFieldNormalThickness = 1,
                                  .textFieldCursorThickness = 3,
-                                 .textFieldLineEndOffset = 0};
+                                 .textFieldLineEndOffset = 0,
+                                 .subtitleBottomMargin = 4,
+                                 .bottomSubtitleHeight = 0};
 }
 
 class LyraTheme : public BaseTheme {
@@ -90,15 +96,24 @@ class LyraTheme : public BaseTheme {
                 const std::function<std::string(int index)>& rowSubtitle,
                 const std::function<UIIcon(int index)>& rowIcon, const std::function<std::string(int index)>& rowValue,
                 bool highlightValue, const std::function<bool(int index)>& rowDimmed = nullptr) const override;
+  void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3, const char* btn4,
+                       bool inactive1, bool inactive2, bool inactive3, bool inactive4) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                        const char* btn4) const override;
-  void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const override;
+  void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                           const char* topBtnLong = nullptr, const char* bottomBtnLong = nullptr) const override;
+  int getSideButtonDownBottomY() const override;
+  Rect getSideButtonUpRect(const GfxRenderer& renderer, bool hasLongPressHint = false) const override;
+  int getButtonHintWidth() const override { return 80; }
+  const int* getButtonXPositions(bool isX3) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;
+  void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                     uint32_t scrollOffsetPx) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   bool showsFileIcons() const override { return true; }
 };

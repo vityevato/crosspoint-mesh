@@ -12,7 +12,7 @@
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
-#include "activities/util/KeyboardEntryActivity.h"
+#include "activities/util/TextEntryHelpers.h"
 #include "components/UITheme.h"
 #include "components/icons/search24.h"
 #include "fontIds.h"
@@ -407,7 +407,7 @@ void OpdsBookBrowserActivity::launchSearch() {
   state = BrowserState::SEARCH_INPUT;
   requestUpdate();
 
-  auto keyboard = std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH));
+  auto keyboard = textentry::makeEntryActivity(renderer, mappedInput, tr(STR_SEARCH), "", 0, InputType::Text);
   startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
     state = BrowserState::BROWSING;
     if (!result.isCancelled) {

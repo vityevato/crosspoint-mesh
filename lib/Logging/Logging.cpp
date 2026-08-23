@@ -36,6 +36,17 @@ void addToLogRingBuffer(const char* message) {
 // Since logging can take a large amount of flash, we want to make the format string as short as possible.
 // This logPrintf prepend the timestamp, level and origin to the user-provided message, so that the user only needs to
 // provide the format string for the message itself.
+static Print* sdLogSink = nullptr;
+// When true, log lines are not written to the SD sink even though sdLogSink is
+// set. Used to keep a second SD write handle idle while another task streams a
+// large file to SD (see suspendLogFileSink in Logging.h).
+static bool sdLogSinkPaused = false;
+
+void setLogFileSink(Print* sink) { sdLogSink = sink; }
+void clearLogFileSink() { sdLogSink = nullptr; }
+void suspendLogFileSink() { sdLogSinkPaused = true; }
+void resumeLogFileSink() { sdLogSinkPaused = false; }
+
 void logPrintf(const char* level, const char* origin, const char* format, ...) {
   va_list args;
   va_start(args, format);
@@ -70,6 +81,11 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
 #else
   if (logSerial) {
     logSerial.print(buf);
+  }
+  if (sdLogSink && !sdLogSinkPaused) {
+    size_t msgLen = strnlen(buf, MAX_ENTRY_LEN);
+    sdLogSink->write(reinterpret_cast<const uint8_t*>(buf), msgLen);
+    sdLogSink->flush();
   }
 #endif
   addToLogRingBuffer(buf);

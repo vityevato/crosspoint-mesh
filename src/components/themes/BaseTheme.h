@@ -56,6 +56,9 @@ struct ThemeMetrics {
 
   int buttonHintsHeight;
   int sideButtonHintsWidth;
+  int sideButtonHintsMargin;
+  int sideButtonHintsGap;
+  int buttonHintCornerRadius;
 
   int progressBarHeight;
   int progressBarMarginTop;
@@ -66,6 +69,7 @@ struct ThemeMetrics {
   bool keyboardCenteredText;
   int keyboardVerticalOffset;
   int keyboardTextFieldWidthPercent;
+  int keyboardKeyCornerRadius;
   int keyboardWidthPercent;
 
   float popupTopOffsetRatio;
@@ -99,6 +103,8 @@ struct ThemeMetrics {
   int textFieldNormalThickness;
   int textFieldCursorThickness;
   int textFieldLineEndOffset;
+  int subtitleBottomMargin;
+  int bottomSubtitleHeight;
 };
 
 enum UIIcon { None = 0, Folder, Text, Image, Book, File, Recent, Settings, Transfer, Library, Wifi, Hotspot, Bookmark };
@@ -132,6 +138,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .homeMenuTopOffset = 10,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
+                                 .sideButtonHintsMargin = 4,
+                                 .sideButtonHintsGap = 4,
+                                 .buttonHintCornerRadius = 0,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
                                  .statusBarHorizontalMargin = 5,
@@ -141,6 +150,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .keyboardCenteredText = false,
                                  .keyboardVerticalOffset = -13,
                                  .keyboardTextFieldWidthPercent = 85,
+                                 .keyboardKeyCornerRadius = 0,
                                  .keyboardWidthPercent = 94,
                                  .popupTopOffsetRatio = 0.075f,
                                  .popupMarginX = 15,
@@ -170,7 +180,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .textFieldHorizontalPadding = 6,
                                  .textFieldNormalThickness = 1,
                                  .textFieldCursorThickness = 3,
-                                 .textFieldLineEndOffset = 0};
+                                 .textFieldLineEndOffset = 0,
+                                 .subtitleBottomMargin = 4,
+                                 .bottomSubtitleHeight = 15};
 }
 
 class BaseTheme {
@@ -186,7 +198,29 @@ class BaseTheme {
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const;
   virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                const char* btn4) const;
-  virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
+  /// Per-button inactive variant.  Each bool controls one button independently,
+  /// so callers can mix active and inactive hints in a single call.
+  virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                               const char* btn4, bool inactive1, bool inactive2, bool inactive3, bool inactive4) const;
+  /// @p topBtnLong / @p bottomBtnLong, when non-empty, draw an extra gray
+  /// (dithered) capsule for the corresponding side button's long-press action
+  /// (same convention as inactive hints).
+  virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                                   const char* topBtnLong = nullptr, const char* bottomBtnLong = nullptr) const;
+  /// Width of a single button hint rectangle. Used to align overlaid elements with physical buttons.
+  virtual int getButtonHintWidth() const { return 106; }
+  /// Bottom Y of the Down side-button hint (right on X3, bottom-right on X4).
+  /// Used by T4 punctuation popup to anchor below the key that triggers it.
+  virtual int getSideButtonDownBottomY() const;
+  /// Rect of the Up side-button short-press hint capsule (left on X3,
+  /// top-right on X4). Used by the T4 Up+Right combo hint connector.
+  /// @p hasLongPressHint mirrors drawSideButtonHints: when true the capsule
+  /// is inset next to its gray long-press companion, otherwise it hugs the
+  /// screen edge.
+  virtual Rect getSideButtonUpRect(const GfxRenderer& renderer, bool hasLongPressHint = false) const;
+  /// X-positions of the 4 front-button hint rectangles. Returns pointer to static array of 4 ints.
+  /// Used internally by drawButtonHints() and externally to align overlaid elements (e.g. T4 letter blocks).
+  virtual const int* getButtonXPositions(bool isX3) const;
   virtual int getListRowStep(bool hasSubtitle) const;
   virtual int getListPageItems(int contentHeight, bool hasSubtitle) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
@@ -220,6 +254,8 @@ class BaseTheme {
   void drawHelpText(const GfxRenderer& renderer, Rect rect, const char* label) const;
   virtual void drawTextField(const GfxRenderer& renderer, Rect rect, const int textWidth, bool cursorMode = false,
                              int contentStartX = 0, int contentWidth = 0) const;
+  virtual void drawScrollBar(const GfxRenderer& renderer, Rect rect, uint32_t totalPixels,
+                             uint32_t scrollOffsetPx) const;
   virtual bool showsFileIcons() const { return false; }
 
   // Shared constants and helpers for battery drawing (used by all themes)
