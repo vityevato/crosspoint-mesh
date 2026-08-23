@@ -1,5 +1,6 @@
 #pragma once
 
+#include <MeshCore/MeshCoreProtocol.h>
 #include <MeshCore/MeshCoreTypes.h>
 
 #include <cstdint>
@@ -8,6 +9,11 @@
 
 /**
  * Parse a MeshCore contact URL into a MeshCoreContact.
+ *
+ * The node `type` uses the MeshCore wire convention in both formats:
+ * 1=Companion, 2=Repeater, 3=Room Server, 4=Sensor (see
+ * MeshCoreProtocol.h nodeTypeFromWire), and is converted to the internal
+ * 0-based MeshNodeType enum.
  *
  * Two formats are supported:
  *
@@ -23,6 +29,8 @@
  *       [pubkey 32B][timestamp 4B LE][signature 64B][appdata]
  *     Appdata:
  *       [flags 1B][lat 4B?][lon 4B?][feat1 2B?][feat2 2B?][name]
+ *       The flags low nibble is the numeric node type (1..4); the high nibble
+ *       gates the optional lat/lon/feat/name fields.
  *
  * @return true on success, false if the URL is invalid.
  */
@@ -63,7 +71,7 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
     nameBuf[ni] = '\0';
 
     // Extract public_key (64 hex chars)
-    keyStart += 10;
+    keyStart += 11;  // "public_key="
     const char* keyEnd = strchr(keyStart, '&');
     if (!keyEnd) keyEnd = keyStart + strlen(keyStart);
     size_t keyLen = keyEnd - keyStart;
@@ -75,14 +83,15 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
       pubkey[i] = static_cast<uint8_t>(strtoul(byte, nullptr, 16));
     }
 
-    // Determine type
+    // Determine type. `type` uses the wire convention (1=Companion, 2=Repeater,
+    // 3=Room Server, 4=Sensor); default to Companion when the parameter is absent.
     MeshNodeType nodeType = MeshNodeType::COMPANION;
     const char* typeStart = strstr(body, "type=");
     if (typeStart) {
       typeStart += 5;
       int typeVal = atoi(typeStart);
-      if (typeVal >= 0 && typeVal <= 3) {
-        nodeType = static_cast<MeshNodeType>(typeVal);
+      if (typeVal >= 1 && typeVal <= 4) {
+        nodeType = MeshProto::nodeTypeFromWire(static_cast<uint8_t>(typeVal));
       }
     }
 
@@ -147,16 +156,9 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
   if (off >= decodedLen) return false;
   uint8_t flags = pkt[off++];
 
-  // Determine MeshNodeType from flags
-  MeshNodeType nodeType = MeshNodeType::UNKNOWN;
-  if (flags & 0x01)
-    nodeType = MeshNodeType::COMPANION;
-  else if (flags & 0x02)
-    nodeType = MeshNodeType::REPEATER;
-  else if (flags & 0x04)
-    nodeType = MeshNodeType::ROOM_SERVER;
-  else if (flags & 0x08)
-    nodeType = MeshNodeType::SENSOR;
+  // Flags low nibble is the numeric node type (wire convention):
+  // 1=Companion, 2=Repeater, 3=Room Server, 4=Sensor — not individual bit flags.
+  MeshNodeType nodeType = MeshProto::nodeTypeFromWire(flags & 0x0F);
 
   // Skip optional fields
   if (flags & 0x10) {
