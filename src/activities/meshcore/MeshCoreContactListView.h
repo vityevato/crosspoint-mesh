@@ -25,6 +25,9 @@
  * message from the contact (read from the message store), not the
  * radio-level contact fields. Contacts with no received messages show
  * only their key label.
+ *
+ * Favourite contacts (flags bit 0) are marked with a trailing "*" value
+ * in the row's right-hand value slot.
  */
 class MeshCoreContactListView {
  public:
@@ -61,6 +64,10 @@ class MeshCoreContactListView {
             snprintf(buf, sizeof(buf), "%s", keyLabel);
           }
           return std::string(buf);
+        },
+        /*rowIcon*/ nullptr,
+        [c = contacts, mapIdx](int index) -> std::string {
+          return (c[mapIdx(index)].flags & MeshCoreContact::FLAG_FAVOURITE) != 0 ? "*" : "";
         });
   }
 };

@@ -59,7 +59,7 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
   bool connected = (act.client.getState() == BleConnectionState::CONNECTED);
 
   constexpr int kChannelActionCount = 2;
-  constexpr int kDmActionCount = 5;
+  constexpr int kDmActionCount = 6;
   int kActionCount = act.isChannel ? kChannelActionCount : kDmActionCount;
   bool hasSettings = act._menuSettings != nullptr;
 
@@ -70,6 +70,7 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
       StrId::STR_MESHCORE_SCROLL_TO_END,
       StrId::STR_MESHCORE_CLEAR_CONVERSATION,
   };
+  // DM actions after the first (dynamic favourite toggle) slot.
   static constexpr StrId kDmTitles[] = {
       StrId::STR_PATH_RESET,
       StrId::STR_MESHCORE_SCROLL_TO_END,
@@ -77,7 +78,6 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
       StrId::STR_MESHCORE_SHARE_CONTACT,
       StrId::STR_MESHCORE_REMOVE_CONTACT,
   };
-  const auto& titles = act.isChannel ? kChannelTitles : kDmTitles;
 
   int listSel = act.selectedIndex - 1;
   int actionSel = (listSel >= 0 && listSel < kActionCount) ? listSel : -1;
@@ -86,19 +86,28 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
   GUI.drawList(
       act.renderer, actionRect, kActionCount, actionSel,
       [&](int index) -> std::string {
-        if (index < 0 || index >= kActionCount) return {};
-        return I18n::getInstance().get(titles[index]);
+        if (act.isChannel) {
+          if (index < 0 || index >= kChannelActionCount) return {};
+          return I18n::getInstance().get(kChannelTitles[index]);
+        }
+        if (index == 0) {
+          // Favourite toggle shows the label of the *next* state.
+          return act.contactIsFavourite() ? tr(STR_MESHCORE_REMOVE_FAVOURITE) : tr(STR_MESHCORE_ADD_FAVOURITE);
+        }
+        if (index < 1 || index >= kDmActionCount) return {};
+        return I18n::getInstance().get(kDmTitles[index - 1]);
       },
       nullptr, nullptr, nullptr, false,
       [&](int index) -> bool {
         if (act.isChannel) return false;
-        if (index == 0) {
+        if (index == 1) {
           if (!connected) return true;
           // Dim "Reset Path" when the contact has no learned path (0xFF).
           MeshCoreContact c;
           return !act.store.findContactByPubkey(act.contactPubkey, c) || c.pathLength == 0xFF;
         }
-        if (!connected) return (index == 4);  // Unlist requires a connected companion
+        // Favourite toggle and Unlist require a connected companion.
+        if (!connected) return (index == 0 || index == 5);
         return false;
       });
 

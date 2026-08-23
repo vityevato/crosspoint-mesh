@@ -61,6 +61,10 @@ class MeshCoreThreadActivity final : public Activity {
   /// Expose pubkey for Hub to match delivery callbacks to this conversation.
   const uint8_t* contactPubkeyForDelivery() const { return contactPubkey; }
 
+  /// Whether the DM contact is marked favourite (flags bit 0). Snapshot taken
+  /// at construction from the contact record; the Hub is the reconciler.
+  bool contactIsFavourite() const { return _isFavourite; }
+
   friend struct ThreadMessenger;
   friend struct ThreadMenuRenderer;
 
@@ -76,6 +80,8 @@ class MeshCoreThreadActivity final : public Activity {
   uint8_t channelIdx = 0;
   char threadName[64] = {};
   uint8_t contactPubkey[32] = {};
+  /// Favourite state snapshot (flags bit 0) taken at construction.
+  bool _isFavourite = false;
 
   // Batch loading — only visible messages, not the whole thread
   static constexpr uint8_t MAX_VISIBLE_BATCH = 10;
@@ -100,11 +106,16 @@ class MeshCoreThreadActivity final : public Activity {
   int _contentAreaHeight = 0;
   bool _needsRebuild = false;
 
-  // Async BLE unlist operation (mirrors Discovery's pattern)
-  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT };
+  // Async BLE operations (mirror Discovery's pattern): the UI shows a
+  // persistent toast, then polls for the companion's PKT_OK/error before
+  // committing any local state.
+  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT, SETTING_FAVOURITE };
   PendingOp _pendingOp = PendingOp::IDLE;
   uint32_t _pendingStartMs = 0;
+  /// Target favourite state for an in-flight SETTING_FAVOURITE op.
+  bool _pendingFavouriteTarget = false;
   void completeUnlistOp(bool success);
+  void completeFavouriteOp(bool success);
 
   // Scroll state machine — created in onEnter, deleted in onExit.
   ThreadScroller* _scroller = nullptr;

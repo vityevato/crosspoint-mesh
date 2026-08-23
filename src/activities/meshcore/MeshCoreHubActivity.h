@@ -196,6 +196,10 @@ class MeshCoreHubActivity final : public Activity {
   void reloadContactsFromStore();
   /** Sorts contactSortIndex by (favourite, lastActivity desc, name asc). */
   void rebuildContactSortIndex();
+  /** Applies a MeshCoreContactFavouriteResult from a finished DM thread:
+   *  commits the flag, persists, re-sorts and re-selects the contact at its
+   *  new sorted position so the Contacts list keeps it highlighted. */
+  void handleContactFavouriteResult(const MeshCoreContactFavouriteResult& res);
   /** Begins the background per-contact last-message sweep (runs in loop()). */
   void startContactActivitySweep();
 

@@ -46,6 +46,7 @@ MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInpu
                                                const MeshCoreContact& contact, MeshCoreHubActivity* hub)
     : Activity("MeshCoreThread", renderer, mappedInput), client(client), store(store), _hub(hub), isChannel(false) {
   memcpy(contactPubkey, contact.publicKey, 32);
+  _isFavourite = (contact.flags & MeshCoreContact::FLAG_FAVOURITE) != 0;
   if (contact.name[0] != '\0') {
     snprintf(threadName, sizeof(threadName), "%s", contact.name);
   } else {
@@ -274,11 +275,20 @@ void MeshCoreThreadActivity::loop() {
 
 void MeshCoreThreadActivity::_loopBleStateMachine() {
   if (_pendingOp != PendingOp::IDLE && !client.isCommandPending()) {
-    completeUnlistOp(client.getLastCommandResult());
+    const bool success = client.getLastCommandResult();
+    if (_pendingOp == PendingOp::DELETING_CONTACT) {
+      completeUnlistOp(success);
+    } else {
+      completeFavouriteOp(success);
+    }
   }
   if (_pendingOp != PendingOp::IDLE && (millis() - _pendingStartMs) > 10000) {
-    LOG_ERR("MESH", "Unlist BLE timeout (no response after 10 s)");
-    completeUnlistOp(false);
+    LOG_ERR("MESH", "Async BLE timeout (no response after 10 s)");
+    if (_pendingOp == PendingOp::DELETING_CONTACT) {
+      completeUnlistOp(false);
+    } else {
+      completeFavouriteOp(false);
+    }
   }
 }
 
@@ -405,7 +415,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
 
   if (currentTab == Tab::MENU) {
     // Action indices: 0..(actionCount-1) = menu actions, actionCount = settings toggle
-    int actionCount = isChannel ? 2 : 5;
+    int actionCount = isChannel ? 2 : 6;
     if (itemIdx >= actionCount) {
       // Settings toggle
       if (_menuSettings) {
@@ -432,10 +442,41 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           break;
       }
     } else {
-      // DM menu: 0=Reset Path, 1=Scroll to End, 2=Clear, 3=Share QR, 4=Unlist
+      // DM menu: 0=Toggle Favourite, 1=Reset Path, 2=Scroll to End, 3=Clear, 4=Share QR, 5=Unlist
       bool connected = (client.getState() == BleConnectionState::CONNECTED);
       switch (itemIdx) {
-        case 0: {  // Reset Path
+        case 0: {  // Toggle Favourite (async — waits for companion PKT_OK)
+          if (!connected) {
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            break;
+          }
+          // Compute the target from the hub's RAM state (source of truth —
+          // the disk copy lags behind until the hub flushes), never XOR a
+          // possibly-stale flags byte read from the store.
+          const bool targetFavourite = !contactIsFavourite();
+          MeshCoreContact found = {};
+          if (!store.findContactByPubkey(contactPubkey, found)) {
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            break;
+          }
+          found.flags = (found.flags & ~MeshCoreContact::FLAG_FAVOURITE) |
+                        (targetFavourite ? MeshCoreContact::FLAG_FAVOURITE : 0);
+          if (!client.addUpdateContact(found)) {
+            LOG_ERR("MESH", "Failed to queue favourite update");
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            break;
+          }
+          _pendingOp = PendingOp::SETTING_FAVOURITE;
+          _pendingStartMs = millis();
+          _pendingFavouriteTarget = targetFavourite;
+          _toast.show(tr(STR_MESHCORE_SAVING), 0);  // persistent until the node replies
+          requestUpdate();
+          return true;
+        }
+        case 1: {  // Reset Path
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -457,17 +498,17 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           requestUpdate();
           return true;
         }
-        case 1:  // Scroll to End
+        case 2:  // Scroll to End
           scrollToEnd();
           return true;
-        case 2:  // Clear Conversation
+        case 3:  // Clear Conversation
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
-        case 3:  // Share Contact (QR)
+        case 4:  // Share Contact (QR)
           shareContactQr();
           return true;
-        case 4: {  // Unlist Contact (async, waits for BLE)
+        case 5: {  // Unlist Contact (async, waits for BLE)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -583,7 +624,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU: {
-      int count = isChannel ? 2 : 5;  // Channel: 2 actions; DM: 5 actions (+Reset Path, +Share QR)
+      int count = isChannel ? 2 : 6;  // Channel: 2 actions; DM: 6 (Favourite, Reset Path, ..., Unlist)
       if (_menuSettings) count += 1;  // +1 for the settings toggle
       return count;
     }
@@ -616,6 +657,28 @@ void MeshCoreThreadActivity::completeUnlistOp(bool success) {
     finish();
   } else {
     LOG_ERR("MESH", "Contact unlist failed");
+    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+    requestUpdate();
+  }
+}
+
+// ── Async favourite toggle completion handler ──
+// Called from loop() when the companion ACKs (PKT_OK) or the op times out.
+// On success the op finishes back to the Hub (mirroring the unlist flow):
+// the Hub commits the flag, persists, re-sorts and keeps the contact
+// selected. The local state is committed ONLY after the node ACKed, so the
+// Contacts list/menu never disagree with the companion's stored state.
+
+void MeshCoreThreadActivity::completeFavouriteOp(bool success) {
+  _pendingOp = PendingOp::IDLE;
+  if (success) {
+    MeshCoreContactFavouriteResult res;
+    memcpy(res.pubkey, contactPubkey, sizeof(res.pubkey));
+    res.favourite = _pendingFavouriteTarget;
+    setResult(ActivityResult(res));
+    finish();
+  } else {
+    LOG_ERR("MESH", "Favourite update failed");
     _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
     requestUpdate();
   }
@@ -708,7 +771,7 @@ void MeshCoreThreadActivity::_renderNormal() {
   } else if (currentTab == Tab::MESSAGES) {
     btn2 = tr(STR_MESHCORE_SEND);
   } else if (currentTab == Tab::MENU) {
-    int actionCount = isChannel ? 2 : 5;
+    int actionCount = isChannel ? 2 : 6;
     btn2 = (selectedIndex > 0 && selectedIndex - 1 >= actionCount) ? tr(STR_TOGGLE) : tr(STR_SELECT);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));

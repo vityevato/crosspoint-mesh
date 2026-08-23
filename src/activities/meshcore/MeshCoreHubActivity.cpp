@@ -852,8 +852,8 @@ void MeshCoreHubActivity::rebuildContactSortIndex() {
   auto before = [this](uint16_t a, uint16_t b) -> bool {
     const auto& ca = savedContacts[a];
     const auto& cb = savedContacts[b];
-    const bool fa = (ca.flags & 1) != 0;  // favourite
-    const bool fb = (cb.flags & 1) != 0;
+    const bool fa = (ca.flags & MeshCoreContact::FLAG_FAVOURITE) != 0;  // favourite
+    const bool fb = (cb.flags & MeshCoreContact::FLAG_FAVOURITE) != 0;
     if (fa != fb) return fa;  // favourites pinned on top
     const uint32_t ta = contactLastActivity ? contactLastActivity[a] : 0;
     const uint32_t tb = contactLastActivity ? contactLastActivity[b] : 0;
@@ -1073,6 +1073,39 @@ void MeshCoreHubActivity::markContactRead(const uint8_t* pubkey32) {
   }
 }
 
+void MeshCoreHubActivity::handleContactFavouriteResult(const MeshCoreContactFavouriteResult& res) {
+  // Commit flag + persist + re-sort (the companion already ACKed the change).
+  if (savedContacts) {
+    for (uint16_t i = 0; i < savedContactCount; ++i) {
+      if (memcmp(savedContacts[i].publicKey, res.pubkey, 32) != 0) continue;
+      if (res.favourite) {
+        savedContacts[i].flags |= MeshCoreContact::FLAG_FAVOURITE;
+      } else {
+        savedContacts[i].flags &= static_cast<uint8_t>(~MeshCoreContact::FLAG_FAVOURITE);
+      }
+      rebuildContactSortIndex();
+      // Persist immediately — the flag was already committed to the companion
+      // (ACKed addUpdateContact), so the local store must not lag behind until
+      // the next contact-list sync or the hub's onExit.
+      _contactsDirty = false;
+      store.saveContacts(savedContacts.get(), savedContactCount);
+      break;
+    }
+  }
+
+  // Re-sort moved the contact — highlight it at its new position instead of
+  // leaving the stale row index pointing at a different contact.
+  for (uint16_t i = 0; i < savedContactCount; ++i) {
+    const uint16_t displayIdx = contactSortIndex ? contactSortIndex[i] : i;
+    if (memcmp(savedContacts[displayIdx].publicKey, res.pubkey, 32) == 0) {
+      selectedIndex = i + 1;  // 0 = tab bar, i+1 = sorted contact row
+      break;
+    }
+  }
+  _toast.show(res.favourite ? tr(STR_MESHCORE_FAVOURITE_ADDED) : tr(STR_MESHCORE_FAVOURITE_REMOVED), 3000);
+  requestUpdate();
+}
+
 void MeshCoreHubActivity::openChannelThread(uint8_t channelIdx) {
   channels[channelIdx].unreadCount = 0;
   startActivityForResult(std::make_unique<MeshCoreThreadActivity>(renderer, mappedInput, client, store, channelIdx,
@@ -1093,6 +1126,8 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
                            if (std::get_if<MeshCoreUnlistResult>(&result.data)) {
                              LOG_DBG("MESH", "Hub: contact deleted — reloading from store");
                              reloadContactsFromStore();
+                           } else if (const auto* fr = std::get_if<MeshCoreContactFavouriteResult>(&result.data)) {
+                             handleContactFavouriteResult(*fr);
                            }
                            requestUpdate();
                          });

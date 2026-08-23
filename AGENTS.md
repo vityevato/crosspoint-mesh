@@ -366,6 +366,12 @@ model.
 
 ## Contribution Instructions
 
+- At session start, if a user-global `AGENTS.md` exists (e.g.
+  `~/.config/opencode/AGENTS.md`), you MUST read it and follow its rules
+  together with this file. It may define cross-repo conventions such as
+  clickable source-link formatting, screenshot/vision tooling, and
+  scratch-file placement.
+
 - You MUST verify your changes with the formatter and static analysis.
 
     Use the following commands:

@@ -61,6 +61,7 @@ struct MeshCoreContact {
   uint16_t unreadCount = 0;  ///< Number of unread messages
 
   static constexpr uint8_t PUBLIC_KEY_DISPLAY_LEN = 11;  // "AABB..CCDD\0"
+  static constexpr uint8_t FLAG_FAVOURITE = 0x01;        ///< bit 0 of flags
 
   // Return compact 4-byte hex representation for UI display: "AABB..CCDD"
   void getPublicKeyLabel(char out[PUBLIC_KEY_DISPLAY_LEN]) const {
