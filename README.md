@@ -43,9 +43,9 @@ single device. Community-built, fully hackable, free forever.
 - **Localization**: 24 UI languages and counting. RTL support.
 
 - **MeshCore Client**: Built-in BLE client for the [MeshCore](https://meshcore.co.uk/) decentralized
-  mesh network — communicate without internet access, even in remote areas. This
-  is not a full MeshCore client: the companion node must be configured beforehand
-  with a full-featured client, such as the MeshCore smartphone app. CrossPoint
+  mesh network — communicate without internet access, even in remote areas.
+  This is not a full MeshCore client: **the companion node must be configured beforehand
+  with a full-featured client, such as the MeshCore smartphone app.** CrossPoint
   connects to that already-configured companion over BLE and focuses on
   messaging.
 
