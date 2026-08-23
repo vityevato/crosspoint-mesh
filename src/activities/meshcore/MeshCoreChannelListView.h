@@ -38,10 +38,10 @@ class MeshCoreChannelListView {
         },
         [ch = channels, vi = visibleIdx, &store](int index) {
           const uint8_t chIdx = vi[index];
-          char buf[26] = "";
           MeshCoreMessage last;
           char ts[24] = "";
           if (store.loadNewestChannelMessage(chIdx, last) && formatMeshCoreTimestamp(last.timestamp, ts, sizeof(ts))) {
+            char buf[26] = "";
             snprintf(buf, sizeof(buf), "%s", ts);
             return std::string(buf);
           }

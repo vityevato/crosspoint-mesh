@@ -52,16 +52,16 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
     const char* nameEnd = strchr(nameStart, '&');
     if (!nameEnd) nameEnd = nameStart + strlen(nameStart);
     size_t nameLen = nameEnd - nameStart;
-    if (nameLen > 63) nameLen = 63;
+    if (nameLen > 32) nameLen = 32;  // MeshCoreContact::name is 32 chars + NUL
 
-    char nameBuf[64] = {};
+    char nameBuf[33] = {};
     size_t ni = 0;
-    for (size_t i = 0; i < nameLen && ni < 63; ++i) {
+    for (size_t i = 0; i < nameLen && ni < 32; ++i) {
       char ch = nameStart[i];
       if (ch == '+') {
         nameBuf[ni++] = ' ';
       } else if (ch == '%' && i + 2 < nameLen) {
-        char hex[3] = {nameStart[i + 1], nameStart[i + 2], '\0'};
+        const char hex[3] = {nameStart[i + 1], nameStart[i + 2], '\0'};
         nameBuf[ni++] = static_cast<char>(strtoul(hex, nullptr, 16));
         i += 2;
       } else {
@@ -79,7 +79,7 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
 
     uint8_t pubkey[32] = {};
     for (int i = 0; i < 32; ++i) {
-      char byte[3] = {keyStart[i * 2], keyStart[i * 2 + 1], '\0'};
+      const char byte[3] = {keyStart[i * 2], keyStart[i * 2 + 1], '\0'};
       pubkey[i] = static_cast<uint8_t>(strtoul(byte, nullptr, 16));
     }
 
@@ -115,7 +115,7 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
   uint8_t pkt[256];
   if (decodedLen > sizeof(pkt)) return false;
   for (size_t i = 0; i < decodedLen; ++i) {
-    char byte[3] = {body[i * 2], body[i * 2 + 1], '\0'};
+    const char byte[3] = {body[i * 2], body[i * 2 + 1], '\0'};
     pkt[i] = static_cast<uint8_t>(strtoul(byte, nullptr, 16));
   }
 
@@ -143,7 +143,7 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
 
   // ── ADVERT payload ──
   // public key (32 bytes)
-  uint8_t* pubkey = pkt + off;
+  const uint8_t* pubkey = pkt + off;
   off += 32;
 
   // skip timestamp (4 bytes LE)
@@ -178,7 +178,7 @@ inline bool parseMeshCoreContactUrl(const char* url, MeshCoreContact& out) {
   // Remaining bytes are the node name (even without HAS_NAME flag,
   // some firmwares embed a name without setting the flag).
   size_t nameLen = decodedLen - off;
-  if (nameLen > 63) nameLen = 63;
+  if (nameLen > 32) nameLen = 32;  // MeshCoreContact::name is 32 chars + NUL
 
   memset(&out, 0, sizeof(out));
   memcpy(out.publicKey, pubkey, 32);

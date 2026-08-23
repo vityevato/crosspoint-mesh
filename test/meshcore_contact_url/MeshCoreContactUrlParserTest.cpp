@@ -144,4 +144,22 @@ TEST(MeshCoreContactUrlParser, BizCardSensorParsesAsSensor) {
   EXPECT_EQ(c.type, MeshNodeType::SENSOR);
 }
 
+TEST(MeshCoreContactUrlParser, LongNameIsTruncatedToBufferSize) {
+  // MeshCoreContact::name holds 32 chars + NUL. Longer names must be truncated,
+  // never overflowed (out.name[33]).
+  MeshCoreContact c{};
+  const std::string longName(60, 'x');
+  ASSERT_TRUE(parse(contactUrl(longName.c_str(), 1), c));
+  EXPECT_EQ(std::string(c.name), std::string(32, 'x'));
+  EXPECT_EQ(strlen(c.name), 32u);
+}
+
+TEST(MeshCoreContactUrlParser, BizCardLongNameIsTruncatedToBufferSize) {
+  MeshCoreContact c{};
+  const std::string longName(60, 'y');
+  ASSERT_TRUE(parse(bizCard(0x01, longName.c_str()), c));
+  EXPECT_EQ(std::string(c.name), std::string(32, 'y'));
+  EXPECT_EQ(strlen(c.name), 32u);
+}
+
 }  // namespace
