@@ -69,17 +69,9 @@ struct FilePathResult {
 
 struct MeshCoreUnlistResult {};
 
-/// Result of a favourite (flags bit 0) toggle in a DM thread. Carries the
-/// contact pubkey and the newly-committed favourite state so the Hub can
-/// reconcile the store, the sorted list and the selected row.
-struct MeshCoreContactFavouriteResult {
-  uint8_t pubkey[32] = {};
-  bool favourite = false;
-};
-
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
                                    IntervalResult, PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult,
-                                   FilePathResult, MeshCoreUnlistResult, MeshCoreContactFavouriteResult>;
+                                   FilePathResult, MeshCoreUnlistResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

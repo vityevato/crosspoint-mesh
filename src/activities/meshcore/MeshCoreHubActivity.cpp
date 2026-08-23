@@ -1082,12 +1082,15 @@ void MeshCoreHubActivity::markContactRead(const uint8_t* pubkey32) {
   }
 }
 
-void MeshCoreHubActivity::handleContactFavouriteResult(const MeshCoreContactFavouriteResult& res) {
+void MeshCoreHubActivity::handleContactFavouriteResult(const uint8_t* pubkey32, bool favourite) {
   // Commit flag + persist + re-sort (the companion already ACKed the change).
+  // Called by the DM Thread when a favourite toggle completes; the thread
+  // stays open (same menu) and only the in-RAM contact + store are updated
+  // here, so the persisted file can never lag behind the companion.
   if (savedContacts) {
     for (uint16_t i = 0; i < savedContactCount; ++i) {
-      if (memcmp(savedContacts[i].publicKey, res.pubkey, 32) != 0) continue;
-      if (res.favourite) {
+      if (memcmp(savedContacts[i].publicKey, pubkey32, 32) != 0) continue;
+      if (favourite) {
         savedContacts[i].flags |= MeshCoreContact::FLAG_FAVOURITE;
       } else {
         savedContacts[i].flags &= static_cast<uint8_t>(~MeshCoreContact::FLAG_FAVOURITE);
@@ -1106,12 +1109,12 @@ void MeshCoreHubActivity::handleContactFavouriteResult(const MeshCoreContactFavo
   // leaving the stale row index pointing at a different contact.
   for (uint16_t i = 0; i < savedContactCount; ++i) {
     const uint16_t displayIdx = contactSortIndex ? contactSortIndex[i] : i;
-    if (memcmp(savedContacts[displayIdx].publicKey, res.pubkey, 32) == 0) {
+    if (memcmp(savedContacts[displayIdx].publicKey, pubkey32, 32) == 0) {
       selectedIndex = i + 1;  // 0 = tab bar, i+1 = sorted contact row
       break;
     }
   }
-  _toast.show(res.favourite ? tr(STR_MESHCORE_FAVOURITE_ADDED) : tr(STR_MESHCORE_FAVOURITE_REMOVED), 3000);
+  _toast.show(favourite ? tr(STR_MESHCORE_FAVOURITE_ADDED) : tr(STR_MESHCORE_FAVOURITE_REMOVED), 3000);
   requestUpdate();
 }
 
@@ -1135,9 +1138,9 @@ void MeshCoreHubActivity::openContactThread(const MeshCoreContact& contact) {
                            if (std::get_if<MeshCoreUnlistResult>(&result.data)) {
                              LOG_DBG("MESH", "Hub: contact deleted — reloading from store");
                              reloadContactsFromStore();
-                           } else if (const auto* fr = std::get_if<MeshCoreContactFavouriteResult>(&result.data)) {
-                             handleContactFavouriteResult(*fr);
                            }
+                           // Favourite toggles never finish the Thread — they
+                           // are committed in place via handleContactFavouriteResult.
                            requestUpdate();
                          });
 }

@@ -173,6 +173,12 @@ class MeshCoreHubActivity final : public Activity {
   /// the contact by public key.
   void markContactRead(const uint8_t* pubkey32);
 
+  /// Applies a committed favourite (flags bit 0) change: updates the in-RAM
+  /// contact, persists, re-sorts and re-selects the contact at its new sorted
+  /// position. Called by the DM Thread when a toggle completes (the companion
+  /// already ACKed it), so the user never leaves the conversation.
+  void handleContactFavouriteResult(const uint8_t* pubkey32, bool favourite);
+
  public:
   /// File path for saving/loading contacts (shared constant).
   static constexpr const char* MESHCORE_CONTACTS_FILE = "/meshcore_contacts.txt";
@@ -196,10 +202,6 @@ class MeshCoreHubActivity final : public Activity {
   void reloadContactsFromStore();
   /** Sorts contactSortIndex by (favourite, lastActivity desc, name asc). */
   void rebuildContactSortIndex();
-  /** Applies a MeshCoreContactFavouriteResult from a finished DM thread:
-   *  commits the flag, persists, re-sorts and re-selects the contact at its
-   *  new sorted position so the Contacts list keeps it highlighted. */
-  void handleContactFavouriteResult(const MeshCoreContactFavouriteResult& res);
   /** Begins the background per-contact last-message sweep (runs in loop()). */
   void startContactActivitySweep();
 

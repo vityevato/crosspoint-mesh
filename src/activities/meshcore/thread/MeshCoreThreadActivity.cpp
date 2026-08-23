@@ -664,19 +664,20 @@ void MeshCoreThreadActivity::completeUnlistOp(bool success) {
 
 // ── Async favourite toggle completion handler ──
 // Called from loop() when the companion ACKs (PKT_OK) or the op times out.
-// On success the op finishes back to the Hub (mirroring the unlist flow):
-// the Hub commits the flag, persists, re-sorts and keeps the contact
-// selected. The local state is committed ONLY after the node ACKed, so the
-// Contacts list/menu never disagree with the companion's stored state.
+// On success the flag is committed in place and the Thread stays open on the
+// same conversation and menu (the favourite toggle must not bounce the user
+// back to the hub). The Hub reconciles the in-RAM contact, persists, re-sorts
+// and re-selects the row, so the Contacts list is correct the moment the user
+// returns. Local state is committed ONLY after the node ACKed, so the menu
+// label never disagrees with the companion's stored state.
 
 void MeshCoreThreadActivity::completeFavouriteOp(bool success) {
   _pendingOp = PendingOp::IDLE;
   if (success) {
-    MeshCoreContactFavouriteResult res;
-    memcpy(res.pubkey, contactPubkey, sizeof(res.pubkey));
-    res.favourite = _pendingFavouriteTarget;
-    setResult(ActivityResult(res));
-    finish();
+    _isFavourite = _pendingFavouriteTarget;
+    if (_hub) _hub->handleContactFavouriteResult(contactPubkey, _pendingFavouriteTarget);
+    _toast.show(_pendingFavouriteTarget ? tr(STR_MESHCORE_FAVOURITE_ADDED) : tr(STR_MESHCORE_FAVOURITE_REMOVED), 3000);
+    requestUpdate();
   } else {
     LOG_ERR("MESH", "Favourite update failed");
     _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
