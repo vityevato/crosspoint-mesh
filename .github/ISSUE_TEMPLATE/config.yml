@@ -1,10 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Scope Question (start here if unsure)
-    url: https://github.com/vityevato/crosspoint-mesh/discussions
-    about: |
-      Not sure if your idea fits CrossPoint Mesh's scope? Start a Discussion before filing an issue.
-      See SCOPE.md for what is in and out.
   - name: Read the Scope document
     url: https://github.com/vityevato/crosspoint-mesh/blob/master/SCOPE.md
     about: The authoritative list of what CrossPoint Mesh will and will not accept.

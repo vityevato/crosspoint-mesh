@@ -20,9 +20,6 @@ body:
 
         The checklist below exists to save both of us time.
 
-        If you are not sure whether your idea fits, open a [Discussion](../../discussions) first instead of filing
-        this issue.
-
   - type: checkboxes
     id: scope-check
     attributes:
