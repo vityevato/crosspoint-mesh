@@ -49,17 +49,6 @@ single device. Community-built, fully hackable, free forever.
   connects to that already-configured companion over BLE and focuses on
   messaging.
 
-  > [!WARNING]
-  > **Disconnect on sleep.** To save power, CrossPoint drops the BLE
-  > connection to the companion when the device sleeps or leaves the MeshCore
-  > mode. While disconnected, you cannot tell whether a message has arrived,
-  > so a companion with its own message indicator (such as a buzzer) is
-  > recommended — for example the WisMesh Tag or the Seeed Studio SenseCAP
-  > T1000-E.
-  >
-  > **Contacts list scope.** The Contacts tab lists chat-type nodes only;
-  > sensors, repeaters, and room servers are not shown.
-
   Included messaging features:
 
   - **Three-tab hub**: **Contacts**, **Channels**, and **Menu** — primary functions
@@ -96,6 +85,17 @@ single device. Community-built, fully hackable, free forever.
     administration that only the full app exposes.
   - Room servers — you cannot join a Room Server or chat through it; rooms
     are reachable only from the full-featured smartphone client.
+
+> [!WARNING]
+> **Disconnect on sleep.** To save power, CrossPoint drops the BLE
+> connection to the companion when the device sleeps or leaves the MeshCore
+> mode. While disconnected, you cannot tell whether a message has arrived,
+> so a companion with its own message indicator (such as a buzzer) is
+> recommended — for example the WisMesh Tag or the Seeed Studio SenseCAP
+> T1000-E.
+>
+> **Contacts list scope.** The Contacts tab lists chat-type nodes only;
+> sensors, repeaters, and room servers are not shown.
 
 - **T4 text input**: button-only devices (Xteink X3/X4) type through a
   T9-style button keyboard instead of a touchscreen keyboard. Predictive word
