@@ -26,8 +26,13 @@ void MeshCoreScanActivity::onEnter() {
   MESHCORE_LOG_HEAP("Scan onEnter:start");
 
   // Check heap
-  if (ESP.getFreeHeap() < 30000) {
+  if (ESP.getFreeHeap() < MIN_SCAN_HEAP_BYTES) {
     LOG_ERR("MESH", "Heap too low for BLE: %d", ESP.getFreeHeap());
+    // Return a cancelled result: the hub must NOT treat this as a successful
+    // connection (it would re-render the hub as if still connected).
+    ActivityResult res;
+    res.isCancelled = true;
+    setResult(std::move(res));
     finish();
     return;
   }

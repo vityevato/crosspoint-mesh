@@ -790,6 +790,16 @@ bool MeshCoreMessageStore::loadCompanionAddress(char* out, size_t maxLen, uint8_
   return out[0] != '\0';
 }
 
+bool MeshCoreMessageStore::removeCompanionAddress() {
+  // Forget the auto-reconnect target only; the companion's scoped data
+  // directory (contacts, messages, PIN) is intentionally left intact.
+  if (!Storage.remove(COMPANION_FILE)) {
+    LOG_ERR("MESH", "Failed to remove companion address file");
+    return false;
+  }
+  return true;
+}
+
 // --- Companion PIN (per-companion, stored in scoped directory) ---
 
 bool MeshCoreMessageStore::saveCompanionPin(uint32_t pin) {

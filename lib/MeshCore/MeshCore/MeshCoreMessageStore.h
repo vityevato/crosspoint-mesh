@@ -128,6 +128,10 @@ class MeshCoreMessageStore {
   // Companion auto-reconnect address
   bool saveCompanionAddress(const char* bleAddr, uint8_t addressType = 0);
   bool loadCompanionAddress(char* out, size_t maxLen, uint8_t* addressType = nullptr);
+  /// Forgets the auto-reconnect target (removes the stored companion address
+  /// file) so the next Hub entry no longer auto-connects to it. The companion's
+  /// own data directory (contacts, messages, PIN) is left untouched.
+  bool removeCompanionAddress();
 
   // Companion BLE pairing PIN (instance methods use scoped companion)
   bool saveCompanionPin(uint32_t pin);

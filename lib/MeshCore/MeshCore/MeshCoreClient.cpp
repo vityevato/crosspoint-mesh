@@ -266,7 +266,9 @@ void MeshCoreClient::failConnect(bool disconnectFirst) {
 }
 
 void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
+  const uint32_t tStart = millis();
   LOG_INF("MESH", "Connecting to %s (type=%d)", bleAddress, addressType);
+  LOG_DBG("MESH", "doConnect: heap=%d", (int)ESP.getFreeHeap());
 
   bleClient = NimBLEDevice::createClient();
   if (!bleClient) {
@@ -285,7 +287,11 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
 
   NimBLEAddress addr(std::string(bleAddress), addressType);
 
-  if (!bleClient->connect(addr)) {
+  LOG_DBG("MESH", "doConnect: calling bleClient->connect() (blocks; NimBLE default timeout)...");
+  const bool connectOk = bleClient->connect(addr);
+  LOG_DBG("MESH", "doConnect: connect() returned=%d after %lu ms", connectOk ? 1 : 0,
+          (unsigned long)(millis() - tStart));
+  if (!connectOk) {
     LOG_ERR("MESH", "BLE connect failed");
     failConnect(false);
     return;
@@ -302,7 +308,9 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
   // Companion firmware requires MITM-authenticated encryption on all NUS
   // characteristics; without this, subscribe/write are silently rejected.
   LOG_INF("MESH", "Starting secure connection (pairing) with PIN %lu", (unsigned long)connectPin);
-  if (!bleClient->secureConnection()) {
+  const bool pairOk = bleClient->secureConnection();
+  LOG_DBG("MESH", "secureConnection() returned=%d after %lu ms", pairOk ? 1 : 0, (unsigned long)(millis() - tStart));
+  if (!pairOk) {
     LOG_ERR("MESH", "BLE pairing/encryption failed");
     failConnect(true);
     return;
@@ -311,6 +319,7 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
   LOG_INF("MESH", "BLE link encrypted (bonded=%d timeout=%d)", connInfo.isBonded(), connInfo.getConnTimeout());
 
   // Discover NUS service
+  LOG_DBG("MESH", "doConnect: discovering NUS service (elapsed %lu ms)", (unsigned long)(millis() - tStart));
   NimBLERemoteService* svc = bleClient->getService(NUS_SERVICE_UUID);
   if (!svc) {
     LOG_ERR("MESH", "NUS service not found");
@@ -320,6 +329,7 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
 
   rxChar = svc->getCharacteristic(NUS_RX_UUID);
   txChar = svc->getCharacteristic(NUS_TX_UUID);
+  LOG_DBG("MESH", "doConnect: NUS RX/TX characteristics found (elapsed %lu ms)", (unsigned long)(millis() - tStart));
   if (!rxChar || !txChar) {
     LOG_ERR("MESH", "NUS characteristics not found");
     failConnect(true);
@@ -338,6 +348,7 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
   // Protocol handshake delay: allow device to process CCCD write
   // before sending commands (matches MeshMapper 500ms handshake delay)
   vTaskDelay(pdMS_TO_TICKS(500));
+  LOG_DBG("MESH", "doConnect: handshake delay done (elapsed %lu ms)", (unsigned long)(millis() - tStart));
 
   // Save address for auto-reconnect
   snprintf(autoReconnectAddr, sizeof(autoReconnectAddr), "%s", bleAddress);

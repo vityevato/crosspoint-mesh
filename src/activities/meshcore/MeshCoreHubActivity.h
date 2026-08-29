@@ -44,6 +44,11 @@ class MeshCoreHubActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  /// Always prevent auto-sleep while the Hub is open, exactly like the stable
+  /// pre-reconnect firmware. Allowing auto-sleep during the reconnect dropped
+  /// the CPU into low-power mode, which destabilised the ESP32-C3 BT
+  /// controller's timing and crashed it (hci_reset / r_rwip_reset) at the
+  /// connect timeout. The user can still sleep manually via the power button.
   bool preventAutoSleep() override { return true; }
   bool isMeshCoreActivity() const override { return true; }
 
@@ -58,7 +63,31 @@ class MeshCoreHubActivity final : public Activity {
   int selectedIndex = 0;
   bool autoReconnecting = false;
   bool reconnectOnDisconnect = false;
-  bool pendingAutoScan = false;
+  bool pendingAutoReconnect = false;
+
+  /// Endless re-connect to the last known companion, built entirely out of the
+  /// operations the stable scan flow already performs and paced like it, so the
+  /// ESP32-C3 BT controller is never handed a new HCI procedure while it is
+  /// still unwinding a failed one (the controller crashes on back-to-back
+  /// directed connects and on HCI RESET right after a failed connect):
+  ///   CONNECT   -> one directed connect() to the stored address (NimBLE's
+  ///                default timeout, byte-identical to the old onEnter flow).
+  ///                On failure we STOP doing directed connects entirely.
+  ///   IDLE      -> no BLE activity at all for RECONNECT_IDLE_MS, so the
+  ///                controller fully settles.
+  ///   SCAN      -> one passive startScan(RECONNECT_SCAN_SEC), the same command
+  ///                the scan activity issues; connect only if the known
+  ///                companion actually appears in the results.
+  /// Cycle: CONNECT -> IDLE -> SCAN -> (found ? CONNECT : IDLE) -> SCAN -> ...
+  /// The Scan button and Back work in any phase.
+  enum class ReconnectPhase : uint8_t { CONNECT, IDLE, SCAN, WAIT_SCAN };
+  ReconnectPhase _reconnectPhase = ReconnectPhase::CONNECT;
+  static constexpr uint32_t RECONNECT_SCAN_SEC = 10;   // passive scan window (as scan activity)
+  static constexpr uint32_t RECONNECT_IDLE_MS = 5000;  // silent pause between BLE ops
+  static constexpr uint32_t RECONNECT_HEARTBEAT_MS = 2000;
+  uint32_t _reconnectAttemptStartMs = 0;
+  uint32_t _reconnectPhaseAtMs = 0;
+  uint32_t _reconnectHeartbeatMs = 0;
 
   // Menu navigation states
   bool showingStatus = false;
@@ -188,6 +217,13 @@ class MeshCoreHubActivity final : public Activity {
   void openDiscover();
   void launchScanActivity();
   void switchTab(Tab tab);
+  /// Starts the endless scan-assisted auto-reconnect to the stored companion
+  /// address (one directed connect, then gentle scan-polling; see
+  /// ReconnectPhase doc). Falls back to scan mode when no address is set.
+  void startAutoReconnect();
+  /// Looks for the stored companion address among the latest scan results and,
+  /// if found, starts a connect to it. Returns true when a connect was issued.
+  bool connectToKnownScanResult();
 
   void saveAdvertToFile();
   void loadContactsFromFile();

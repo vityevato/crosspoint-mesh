@@ -511,6 +511,7 @@ STR_MESHCORE_NO_DEVICES: "Устройства не найдены"
 STR_MESHCORE_NO_MESSAGES: "Нет сообщений"
 STR_MESHCORE_REMOVE_CONTACT: "Удалить из контактов"
 STR_MESHCORE_RETRY: "Повтор"
+STR_MESHCORE_SCAN: "Скан"
 STR_MESHCORE_SCANNING: "Сканирование..."
 STR_MESHCORE_SEND: "Написать"
 

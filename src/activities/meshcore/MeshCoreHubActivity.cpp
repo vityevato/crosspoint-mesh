@@ -143,11 +143,10 @@ void MeshCoreHubActivity::onEnter() {
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
 
-  // Auto-reconnect to known companion address
+  // Auto-reconnect to known companion address (endless scan-assist, see
+  // startAutoReconnect)
   if (addr[0] != '\0') {
-    autoReconnecting = true;
-    client.connectTo(addr, addrType);
-    requestUpdate();
+    startAutoReconnect();
     return;
   }
 
@@ -196,6 +195,43 @@ void MeshCoreHubActivity::launchScanActivity() {
                            if (channelCount > MESHCORE_MAX_CHANNELS) channelCount = MESHCORE_MAX_CHANNELS;
                            requestUpdate();
                          });
+}
+
+void MeshCoreHubActivity::startAutoReconnect() {
+  // Endless re-connect to the known companion, built from the same single-shot
+  // operations the stable scan flow performs (see ReconnectPhase doc in the
+  // header). The first step is exactly the old onEnter flow: one directed
+  // connect with NimBLE's default timeout. Once that fails we never issue a
+  // directed connect to an absent peer again — only gentle scan-polling.
+  const char* addr = client.getAutoReconnectAddress();
+  if (addr[0] == '\0') {
+    launchScanActivity();
+    return;
+  }
+  autoReconnecting = true;
+  reconnectOnDisconnect = false;
+  _reconnectPhase = ReconnectPhase::CONNECT;
+  _reconnectAttemptStartMs = millis();
+  _reconnectHeartbeatMs = 0;
+  LOG_DBG("MESH", "Auto-reconnect started, phase CONNECT");
+  client.connectTo(addr, client.getAutoReconnectAddressType());
+  requestUpdate();
+}
+
+bool MeshCoreHubActivity::connectToKnownScanResult() {
+  const char* knownAddr = client.getAutoReconnectAddress();
+  if (knownAddr[0] == '\0') return false;
+  const auto* results = client.getScanResults();
+  const uint8_t n = client.getScanResultCount();
+  for (uint8_t i = 0; i < n; ++i) {
+    if (strcmp(knownAddr, results[i].address) == 0) {
+      LOG_DBG("MESH", "Known companion found in scan, connecting");
+      client.connectTo(results[i].address, results[i].addressType);
+      _reconnectAttemptStartMs = millis();
+      return true;
+    }
+  }
+  return false;
 }
 
 // --- Input handling ---
@@ -289,35 +325,100 @@ void MeshCoreHubActivity::loop() {
   if (autoReconnecting) {
     auto bleState = client.getState();
     if (bleState == BleConnectionState::CONNECTED) {
+      LOG_DBG("MESH", "Auto-reconnect: CONNECTED, done");
       autoReconnecting = false;
       channelCount = client.getCompanion().maxChannels;
       if (channelCount > MESHCORE_MAX_CHANNELS) channelCount = MESHCORE_MAX_CHANNELS;
       requestUpdate();
-    } else if (bleState == BleConnectionState::DISCONNECTED) {
+      return;
+    }
+
+    // Confirm ("Scan"): abort the in-flight scan/connect attempt and switch
+    // straight to scan mode. Tear down BLE first so the worker task can unblock
+    // cleanly. If the client is idle the disconnect is a no-op.
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      LOG_DBG("MESH", "Scan pressed during reconnect: state=%d phase=%d heap=%d", (int)bleState, (int)_reconnectPhase,
+              (int)ESP.getFreeHeap());
       autoReconnecting = false;
+      if (bleState != BleConnectionState::DISCONNECTED) {
+        client.disconnect();
+      }
       launchScanActivity();
       return;
     }
-    // Still CONNECTING/INITIALIZING — allow Back to cancel
-    if (autoReconnecting) {
-      if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-        autoReconnecting = false;
-        // Tear down BLE first so the worker task can unblock cleanly.
-        // Without this, deinit() may need to force-kill the worker while
-        // it's blocked inside a NimBLE call, leaving the stack in an
-        // indeterminate state that causes a panic on cleanup.
-        client.disconnect();
-        onGoHome();
-      }
+
+    // Back: exit the hub entirely.
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      autoReconnecting = false;
+      client.disconnect();
+      onGoHome();
       return;
     }
+
+    // Periodic heartbeat so crash reports show the reconnect screen's state
+    // and how long the current phase has been running.
+    if (static_cast<uint32_t>(millis() - _reconnectHeartbeatMs) >= RECONNECT_HEARTBEAT_MS) {
+      _reconnectHeartbeatMs = millis();
+      LOG_DBG("MESH", "Reconnect screen: bleState=%d phase=%d elapsed=%lu ms", (int)bleState, (int)_reconnectPhase,
+              (unsigned long)(millis() - _reconnectAttemptStartMs));
+    }
+
+    // Scan-assisted state machine (see ReconnectPhase doc in the header):
+    //   CONNECT   -> a directed connect() is in flight (initial, or after a
+    //                scan hit); when it fails we switch to IDLE and never do a
+    //                directed connect to an absent peer again
+    //   IDLE      -> no BLE activity for RECONNECT_IDLE_MS (controller settles)
+    //   SCAN      -> start one passive scan
+    //   WAIT_SCAN -> scan running; when it ends, connect if the known companion
+    //                was seen, else go IDLE
+    const uint32_t now = millis();
+    switch (_reconnectPhase) {
+      case ReconnectPhase::CONNECT:
+        if (bleState == BleConnectionState::DISCONNECTED) {
+          LOG_DBG("MESH", "Reconnect: CONNECT failed (%lu ms), entering IDLE", (unsigned long)now);
+          _reconnectPhase = ReconnectPhase::IDLE;
+          _reconnectPhaseAtMs = now;
+          requestUpdate();
+        }
+        break;
+      case ReconnectPhase::IDLE:
+        if (static_cast<uint32_t>(now - _reconnectPhaseAtMs) >= RECONNECT_IDLE_MS) {
+          LOG_DBG("MESH", "Reconnect: IDLE done (%lu ms), entering SCAN", (unsigned long)now);
+          _reconnectPhase = ReconnectPhase::SCAN;
+          requestUpdate();
+        }
+        break;
+      case ReconnectPhase::SCAN:
+        if (bleState == BleConnectionState::DISCONNECTED) {
+          LOG_DBG("MESH", "Reconnect: starting scan (%lu ms)", (unsigned long)now);
+          client.startScan(RECONNECT_SCAN_SEC);
+          _reconnectPhase = ReconnectPhase::WAIT_SCAN;
+          _reconnectAttemptStartMs = now;
+          requestUpdate();
+        }
+        break;
+      case ReconnectPhase::WAIT_SCAN:
+        if (bleState == BleConnectionState::DISCONNECTED) {  // scan finished
+          if (connectToKnownScanResult()) {
+            LOG_DBG("MESH", "Reconnect: scan hit, entering CONNECT (%lu ms)", (unsigned long)now);
+            _reconnectPhase = ReconnectPhase::CONNECT;
+          } else {
+            LOG_DBG("MESH", "Reconnect: scan done, no hit, entering IDLE (%lu ms)", (unsigned long)now);
+            _reconnectPhase = ReconnectPhase::IDLE;
+            _reconnectPhaseAtMs = now;
+          }
+          requestUpdate();
+        }
+        break;
+    }
+    return;
   }
 
-  // Handle unexpected BLE disconnect — auto-scan for companions
-  if (pendingAutoScan) {
-    pendingAutoScan = false;
+  // Handle unexpected BLE disconnect — endless re-connect to the known node
+  if (pendingAutoReconnect) {
+    pendingAutoReconnect = false;
     reconnectOnDisconnect = false;
-    launchScanActivity();
+    startAutoReconnect();
     return;
   }
 
@@ -335,6 +436,12 @@ void MeshCoreHubActivity::loop() {
       requestUpdate();
     } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       showingDisconnectPopup = false;
+      // Manual disconnect: forget this companion as the auto-reconnect target
+      // (clear the in-memory address and the persisted file) so the endless
+      // reconnect does not immediately re-attach to it. The companion's own
+      // data (contacts/messages/PIN) is kept.
+      client.setAutoReconnectAddress(nullptr);
+      store.removeCompanionAddress();
       client.disconnect();
       requestUpdate();
     }
@@ -581,13 +688,14 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   }
 
   // Auto-reconnect in progress — full-screen popup so the user knows the hub
-  // is busy (and can cancel with Back) instead of a stale-looking tab UI.
+  // is busy. Confirm ("Scan") cancels the endless retry and switches to scan
+  // mode, Back exits the hub.
   if (autoReconnecting) {
     GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), tr(STR_MESHCORE), nullptr);
 
     GUI.drawPopup(renderer, tr(STR_CONNECTING));
 
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_MESHCORE_SCAN), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
     renderer.displayBuffer();
@@ -722,9 +830,10 @@ void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
     currentTab = Tab::CONTACTS;
     selectedIndex = 0;
   } else if (state == BleConnectionState::DISCONNECTED) {
-    // Unexpected disconnect while previously connected — auto-scan
+    // Unexpected disconnect while previously connected — endless auto-reconnect
+    // to the known companion (no timeout; the user can switch to scan or exit).
     if (reconnectOnDisconnect && !autoReconnecting) {
-      pendingAutoScan = true;
+      pendingAutoReconnect = true;
     }
   }
   LOG_INF("MESH", "Hub state: %d", static_cast<int>(state));
