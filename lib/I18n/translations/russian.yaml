@@ -543,3 +543,5 @@ STR_MESHCORE_UNKNOWN: "Неизвестный"
 STR_MESHCORE_CONVERSATION_CLEARED: "Переписка очищена"
 STR_MESHCORE_USE_READER_FONT: "Шрифт читалки в переписках"
 
+
+STR_ADDITIONAL_KEYBOARD_LAYOUT: "Дополнительная раскладка клавиатуры"
