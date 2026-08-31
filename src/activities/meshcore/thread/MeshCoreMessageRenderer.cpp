@@ -15,8 +15,9 @@ ThreadRenderCtx::ThreadRenderCtx(const GfxRenderer& renderer, const Rect& rect, 
     : metrics(UITheme::getInstance().getMetrics()),
       bodyFontId(bodyFontId),
       bodyLineH(renderer.getLineHeight(bodyFontId)),
-      metaFontId(bodyFontId),
+      metaFontId(meshcore::MESHCORE_META_FONT_ID),
       metaLineH(renderer.getLineHeight(metaFontId)),
+      metaDimmed(metaFontId == bodyFontId),
       maxTextWidth(rect.width - 2 * metrics.contentSidePadding) {}
 
 void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMessage* msgs, uint8_t count,
@@ -73,7 +74,7 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
       const auto& msg = msgs[i];
       bool showSender = (isChannel && msg.direction != MsgDirection::SENT && msg.senderName[0]);
       if (showSender) {
-        renderer.drawText(ctx.bodyFontId, 0, 0, msg.senderName, true);
+        renderer.drawText(ctx.metaFontId, 0, 0, msg.senderName, true);
       }
       if (msg.text[0]) {
         renderer.drawText(ctx.bodyFontId, 0, 0, msg.text, true);
@@ -91,7 +92,7 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
     if (filler.id != 0) {
       bool showSender = (isChannel && filler.direction != MsgDirection::SENT && filler.senderName[0]);
       if (showSender) {
-        renderer.drawText(ctx.bodyFontId, 0, 0, filler.senderName, true);
+        renderer.drawText(ctx.metaFontId, 0, 0, filler.senderName, true);
       }
       if (filler.text[0]) {
         renderer.drawText(ctx.bodyFontId, 0, 0, filler.text, true);
@@ -122,23 +123,24 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
 
     auto fits = [&](int lineH) { return clipToFit ? (yPos + lineH <= bottom) : (yPos <= bottom); };
 
-    // Sender line
-    if (showSender && fits(ctx.bodyLineH)) {
+    // Sender line — always the meta (system) font; dimmed only when the
+    // body font coincides with it (i.e. "use reader font" is off).
+    if (showSender && fits(ctx.metaLineH)) {
       int senderX;
       if (outgoing) {
-        int senderW = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
+        int senderW = renderer.getTextWidth(ctx.metaFontId, msg.senderName);
         senderX = rect.x + rect.width - ctx.metrics.contentSidePadding - senderW;
       } else {
         senderX = rect.x + ctx.metrics.contentSidePadding;
       }
-      renderer.drawText(ctx.bodyFontId, senderX, yPos, msg.senderName, true);
-      if (!outgoing) {
-        int sw = renderer.getTextWidth(ctx.bodyFontId, msg.senderName);
-        for (int py = yPos; py < yPos + ctx.bodyLineH; py++)
+      renderer.drawText(ctx.metaFontId, senderX, yPos, msg.senderName, true);
+      if (!outgoing && ctx.metaDimmed) {
+        int sw = renderer.getTextWidth(ctx.metaFontId, msg.senderName);
+        for (int py = yPos; py < yPos + ctx.metaLineH; py++)
           for (int px = senderX; px < senderX + sw; px++)
             if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
       }
-      yPos += ctx.bodyLineH;
+      yPos += ctx.metaLineH;
     }
 
     // Body text — line by line
@@ -216,9 +218,11 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
       }
       renderer.drawText(ctx.metaFontId, metaX, yPos, metaBuf, true);
       int mw = renderer.getTextWidth(ctx.metaFontId, metaBuf);
-      for (int py = yPos; py < yPos + ctx.metaLineH; py++)
-        for (int px = metaX; px < metaX + mw; px++)
-          if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      if (ctx.metaDimmed) {
+        for (int py = yPos; py < yPos + ctx.metaLineH; py++)
+          for (int px = metaX; px < metaX + mw; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
       yPos += ctx.metaLineH;
     }
   };

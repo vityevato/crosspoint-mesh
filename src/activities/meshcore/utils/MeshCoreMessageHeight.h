@@ -50,8 +50,12 @@ std::vector<std::string> wrapMessageBody(const GfxRenderer& renderer, int fontId
  *  - meta line (timestamp + hop count)
  *  - vertical gap between consecutive messages (meshcoreMessageGapPx)
  *
+ * The sender and meta lines are measured with the system UI font's line
+ * height (MESHCORE_META_FONT_ID), the body text with the given fontId —
+ * the same split the renderer uses.
+ *
  * @param renderer     GfxRenderer for font metrics and word-wrapping
- * @param fontId       Body font ID (used for both body and meta text)
+ * @param fontId       Body font ID (message text only)
  * @param contentWidth Available width for wrapped text in pixels
  *                     (screenWidth - 2 * contentSidePadding)
  * @param isChannel    true = channel (may show sender name);

@@ -13,7 +13,12 @@
 
 static constexpr char MESHCORE_DIR[] = "/.crosspoint/meshcore";
 static constexpr char COMPANION_FILE[] = "/.crosspoint/meshcore/companion.json";
-static constexpr uint8_t META_FILE_VERSION = 2;
+// v2: added totalPx, positionPx, fontId
+// v3: added metaFontId — meta lines are no longer measured with the body
+//     font, so v2 height caches are invalid and trigger a one-time rebuild
+//     (readMeta leaves metaFontId = 0 for v2 files).
+static constexpr uint8_t META_FILE_VERSION = 3;
+static constexpr uint8_t META_FILE_VERSION_PRE_META_FONT = 2;
 
 void MeshCoreMessageStore::bleAddrToKey(const char* bleAddr, char* keyOut, size_t keySize) {
   if (!bleAddr || keySize < 13) {
@@ -119,7 +124,8 @@ bool MeshCoreMessageStore::readMeta(const char* convPath, ConvMeta& out) {
   if (!Storage.openFileForRead("MESH", filePath, file)) return false;
 
   uint8_t version;
-  if (file.read(&version, 1) != 1 || version != META_FILE_VERSION) return false;
+  if (file.read(&version, 1) != 1) return false;
+  if (version != META_FILE_VERSION && version != META_FILE_VERSION_PRE_META_FONT) return false;
 
   if (file.read(reinterpret_cast<uint8_t*>(&out.count), 2) != 2) return false;
   if (file.read(reinterpret_cast<uint8_t*>(&out.startId), 4) != 4) return false;
@@ -130,6 +136,15 @@ bool MeshCoreMessageStore::readMeta(const char* convPath, ConvMeta& out) {
   int32_t fontIdRaw = 0;
   if (file.read(reinterpret_cast<uint8_t*>(&fontIdRaw), 4) != 4) return false;
   out.fontId = fontIdRaw;
+  // v2 files carry no metaFontId — leave 0 so the thread activity treats
+  // the cached heights as stale and rebuilds them once (the meta line
+  // height formula changed between v2 and v3).
+  out.metaFontId = 0;
+  if (version == META_FILE_VERSION) {
+    int32_t metaFontIdRaw = 0;
+    if (file.read(reinterpret_cast<uint8_t*>(&metaFontIdRaw), 4) != 4) return false;
+    out.metaFontId = metaFontIdRaw;
+  }
   return true;
 }
 
@@ -150,6 +165,8 @@ bool MeshCoreMessageStore::writeMeta(const char* convPath, const ConvMeta& meta)
   if (file.write(reinterpret_cast<const uint8_t*>(&meta.positionPx), 4) != 4) return false;
   int32_t fontIdRaw = meta.fontId;
   if (file.write(reinterpret_cast<uint8_t*>(&fontIdRaw), 4) != 4) return false;
+  int32_t metaFontIdRaw = meta.metaFontId;
+  if (file.write(reinterpret_cast<uint8_t*>(&metaFontIdRaw), 4) != 4) return false;
   return true;
 }
 

@@ -12,6 +12,7 @@
 
 #include "../MeshCoreHubActivity.h"
 #include "../MeshCoreSubtitle.h"
+#include "../utils/MeshCoreDisplayUtils.h"
 #include "../utils/MeshCoreHeapLog.h"
 #include "../utils/MeshCoreMessageHeight.h"
 #include "../utils/MeshCoreShareUrl.h"
@@ -25,7 +26,6 @@
 #include "activities/reader/QrDisplayActivity.h"
 #include "activities/util/TextEntryHelpers.h"
 #include "components/UITheme.h"
-#include "fontIds.h"
 
 // Channel thread constructor
 MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -111,9 +111,12 @@ void MeshCoreThreadActivity::onEnter() {
   // Check font match — if changed, recalculate all heights synchronously.
   // Mirrors the reader's pattern: block onEnter() with a popup while
   // rebuilding, so the user sees what's happening and the next render()
-  // shows ready-to-use pages.
-  if (_meta.fontId != _bodyFontId) {
-    LOG_DBG("MESH", "Thread onEnter: font mismatch (meta=%d current=%d) — queuing rebuild", _meta.fontId, _bodyFontId);
+  // shows ready-to-use pages. metaFontId mismatches cover both the
+  // reader-font toggle and the one-time v2→v3 cache migration (meta lines
+  // are now measured with the system font's line height).
+  if (_meta.fontId != _bodyFontId || _meta.metaFontId != meshcore::MESHCORE_META_FONT_ID) {
+    LOG_DBG("MESH", "Thread onEnter: font mismatch (meta=%d/%d current=%d/%d) — queuing rebuild", _meta.fontId,
+            _meta.metaFontId, _bodyFontId, meshcore::MESHCORE_META_FONT_ID);
     _needsRebuild = true;
   } else {
     loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
@@ -616,9 +619,9 @@ void MeshCoreThreadActivity::_loopInputNav() {
 void MeshCoreThreadActivity::resolveBodyFont() {
   auto settings = makeUniqueNoThrow<MeshCoreSettings>();
   if (settings && meshcore_settings::load(*settings)) {
-    _bodyFontId = settings->useReaderFont ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
+    _bodyFontId = settings->useReaderFont ? SETTINGS.getReaderFontId() : meshcore::MESHCORE_META_FONT_ID;
   } else {
-    _bodyFontId = SMALL_FONT_ID;  // fallback
+    _bodyFontId = meshcore::MESHCORE_META_FONT_ID;  // fallback
   }
 }
 
@@ -875,6 +878,7 @@ void MeshCoreThreadActivity::_rebuildMessageHeights() {
   }
   _meta.totalPx = newTotalPx;
   _meta.fontId = _bodyFontId;
+  _meta.metaFontId = meshcore::MESHCORE_META_FONT_ID;
 
   if (isChannel) {
     store.saveChannelMeta(channelIdx, _meta);

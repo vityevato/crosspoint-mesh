@@ -19,6 +19,8 @@ struct ConvMeta {
                             ///< measured from the top of the first message and
                             ///< corresponds to the top of the viewport on screen.
   int fontId = 0;           ///< Font ID used to render this thread (for scroll restore)
+  int metaFontId = 0;       ///< Font ID the meta lines were measured with; 0 means
+                            ///< stale (v2 cache) — thread rebuilds heights
 };
 
 class MeshCoreMessageStore {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <I18n.h>
+#include <fontIds.h>
 
 #include <cstdio>
 #include <string>
@@ -9,6 +10,13 @@ namespace meshcore {
 
 // Separator with middle dot for use in lists and status lines
 static constexpr const char* DotSeparator = "·";
+
+// Font used for message metadata (sender name and service line) in the
+// thread view — always the system UI font, regardless of the body font
+// chosen for message text. Also the body font when "use reader font" is
+// off, so metadata is rendered dimmed when the two fonts coincide and
+// plain black when the body uses a reader font.
+static constexpr int MESHCORE_META_FONT_ID = UI_10_FONT_ID;
 
 /**
  * Builds a dialog list row title, prefixing a middle dot when the dialog

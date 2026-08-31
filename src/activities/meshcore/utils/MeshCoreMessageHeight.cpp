@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "MeshCoreDisplayUtils.h"
 #include "components/themes/BaseTheme.h"
 
 // ── Shared content-area height ──
@@ -76,12 +77,15 @@ uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, i
                                       const MeshCoreMessage& msg, const ThemeMetrics& metrics, int maxHeight) {
   constexpr int maxLines = 100;
   const uint16_t lineH = renderer.getLineHeight(fontId);
+  // Metadata (sender name and service line) always uses the system UI font,
+  // independent of the body font — mirrors ThreadRenderCtx / renderMessageBatch.
+  const uint16_t metaLineH = renderer.getLineHeight(meshcore::MESHCORE_META_FONT_ID);
   uint16_t height = 0;
 
   // ── Sender name line ──
   bool showSender = (isChannel && msg.direction != MsgDirection::SENT && msg.senderName[0]);
   if (showSender) {
-    height += lineH;
+    height += metaLineH;
   }
 
   // ── Body text — uses shared wrapMessageBody to count lines ──
@@ -92,7 +96,7 @@ uint16_t measureMeshCoreMessageHeight(const GfxRenderer& renderer, int fontId, i
 
   // ── Meta line (mirrors the render gate: outgoing always draws status) ──
   if (msg.direction == MsgDirection::SENT || msg.timestamp > 0) {
-    height += lineH;
+    height += metaLineH;
   }
 
   // ── Vertical gap between consecutive messages ──

@@ -17,6 +17,7 @@ struct ThreadRenderCtx {
   int bodyLineH;
   int metaFontId;
   int metaLineH;
+  bool metaDimmed;  ///< Meta text rendered dimmed (gray) when it shares the body font
   int maxTextWidth;
 
   ThreadRenderCtx(const GfxRenderer& renderer, const Rect& rect, int bodyFontId);

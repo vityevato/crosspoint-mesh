@@ -414,20 +414,30 @@ production; contacts are re-fetched from the node on the next full sync).
 | N+1 | 2 | Contact count (`uint16_t`) |
 | N+3 | 8× | Per-contact: 6-byte pubkey prefix + `uint16_t` unread |
 
-### `meta.bin` — version 1
+### `meta.bin` — version 3
 
 Per-conversation metadata file. Located at `conv/ch_<N>/meta.bin` and
 `conv/dm_<hexprefix>/meta.bin`.
 
 | Offset | Size | Field |
 | --- | --- | --- |
-| 0 | 1 | Version (`META_FILE_VERSION = 1`) |
+| 0 | 1 | Version (`META_FILE_VERSION = 3`) |
 | 1 | 2 | `count` — number of messages (`uint16_t`) |
 | 3 | 4 | `startId` — id of the oldest message (`uint32_t`) |
 | 7 | 4 | `endId` — id of the newest message (`uint32_t`) |
 | 11 | 4 | `positionId` — id of last viewed message (scroll restore) |
+| 15 | 4 | `totalPx` — total pixel height of all messages (`uint32_t`) |
+| 19 | 4 | `positionPx` — pixel scroll offset (scroll restore) |
+| 23 | 4 | `fontId` — body font id the heights were computed with (`int32_t`) |
+| 27 | 4 | `metaFontId` — meta-line font id the heights were computed with (`int32_t`) |
 
-Total: 15 bytes.
+Total: 31 bytes.
+
+Version 2 files (27 bytes, no `metaFontId`) are still read — the field
+defaults to 0, which the thread activity detects as a mismatch and uses
+to trigger a one-time height rebuild (meta lines are measured with the
+system font's line height since v3). Version 1 files are not readable
+and are treated as missing.
 
 ### `msgs/` — per-file message storage
 

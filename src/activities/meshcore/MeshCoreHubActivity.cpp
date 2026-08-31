@@ -845,8 +845,8 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   int contentWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
   MeshCoreSettings settings;
-  int fontId =
-      (meshcore_settings::load(settings) && settings.useReaderFont) ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
+  int fontId = (meshcore_settings::load(settings) && settings.useReaderFont) ? SETTINGS.getReaderFontId()
+                                                                             : meshcore::MESHCORE_META_FONT_ID;
 
   MeshCoreMessage msgWithHeight = msg;
   msgWithHeight.heightPx = measureMeshCoreMessageHeight(renderer, fontId, contentWidth, msg.type == MsgType::CHANNEL,
