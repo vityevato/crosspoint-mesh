@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "I18n.h"
 #include "RecentBooksStore.h"
@@ -853,10 +854,26 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const EpdFontFamily::Style popupFontFamily = metrics.popupTextBold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
   // Scale y position proportionally to screen height
   const int y = static_cast<int>(renderer.getScreenHeight() * metrics.popupTopOffsetRatio);
-  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, message, popupFontFamily);
-  const int textHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int w = textWidth + marginX * 2;
-  const int h = textHeight + marginY * 2;
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+
+  // Keep the popup inside the screen: leave an outer gap equal to the popup's
+  // own side padding on each side, and cap the line count at what fits below
+  // the top anchor. wrappedText truncates the last line with an ellipsis.
+  const int maxTextWidth = renderer.getScreenWidth() - 2 * (marginX + frameThickness + marginX);
+  const int bottomGap = marginY + frameThickness;
+  const int maxLines = std::max(1, (renderer.getScreenHeight() - y - 2 * marginY - bottomGap) / lineHeight);
+
+  const std::vector<std::string> lines =
+      renderer.wrappedText(UI_12_FONT_ID, message, maxTextWidth, maxLines, popupFontFamily);
+
+  int maxLineWidth = 0;
+  for (const std::string& line : lines) {
+    const int lineWidth = renderer.getTextWidth(UI_12_FONT_ID, line.c_str(), popupFontFamily);
+    if (lineWidth > maxLineWidth) maxLineWidth = lineWidth;
+  }
+
+  const int w = maxLineWidth + marginX * 2;
+  const int h = std::max(1, static_cast<int>(lines.size())) * lineHeight + marginY * 2;
   const int x = (renderer.getScreenWidth() - w) / 2;
 
   const bool useRoundedPopup = metrics.popupCornerRadius > 0;
@@ -869,9 +886,13 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
     renderer.fillRect(x, y, w, h, false);
   }
 
-  const int textX = x + (w - textWidth) / 2;
   const int textY = y + marginY + metrics.popupTextBaselineOffsetY;
-  renderer.drawText(UI_12_FONT_ID, textX, textY, message, metrics.popupTextInverted, popupFontFamily);
+  for (size_t i = 0; i < lines.size(); ++i) {
+    const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, lines[i].c_str(), popupFontFamily);
+    const int textX = x + (w - textWidth) / 2;
+    renderer.drawText(UI_12_FONT_ID, textX, textY + static_cast<int>(i) * lineHeight, lines[i].c_str(),
+                      metrics.popupTextInverted, popupFontFamily);
+  }
   renderer.displayBuffer();
   return Rect{x, y, w, h};
 }
