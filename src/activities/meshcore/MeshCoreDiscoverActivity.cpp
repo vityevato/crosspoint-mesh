@@ -39,6 +39,8 @@ void MeshCoreDiscoverActivity::onEnter() {
   MESHCORE_LOG_HEAP("Discover onEnter");
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, &client);
+  _dcPopup.setClock(&millis);
+  _dcPopup.arm(client.getState() == BleConnectionState::CONNECTED);
   requestUpdate();
 }
 
@@ -49,6 +51,16 @@ void MeshCoreDiscoverActivity::onExit() {
 
 void MeshCoreDiscoverActivity::loop() {
   client.poll();
+
+  // Disconnect popup is modal: consume all input and return to the hub
+  // (finish()) on Back or after the auto-return timeout.
+  if (_dcPopup.update(client)) requestUpdate();
+  if (_dcPopup.isActive()) {
+    if (_dcPopup.handleInput(mappedInput)) {
+      finish();
+    }
+    return;
+  }
 
   if (_toast.poll()) requestUpdate();
 
@@ -204,6 +216,13 @@ bool MeshCoreDiscoverActivity::isSavingInProgress(const MeshCoreContact& node) c
 
 void MeshCoreDiscoverActivity::render(RenderLock&&) {
   renderer.clearScreen();
+
+  if (_dcPopup.isActive()) {
+    char headerSubtitle[64];
+    _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
+    _dcPopup.render(renderer, mappedInput, tr(STR_MESHCORE_DISCOVERED), headerSubtitle);
+    return;
+  }
 
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();

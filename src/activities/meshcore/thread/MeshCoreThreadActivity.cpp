@@ -81,6 +81,9 @@ void MeshCoreThreadActivity::onEnter() {
   _toast.setClock(&millis);
   _toast.setSubtitleProvider(provideSubtitle, this);
 
+  _dcPopup.setClock(&millis);
+  _dcPopup.arm(client.getState() == BleConnectionState::CONNECTED);
+
   resolveBodyFont();
   const auto& metrics = UITheme::getInstance().getMetrics();
   _contentAreaWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
@@ -258,6 +261,15 @@ void MeshCoreThreadActivity::loop() {
 
   _loopBleStateMachine();
 
+  // Disconnect popup is modal: consume all input and return to the hub
+  // (finish()) on Back or after the auto-return timeout.
+  if (_dcPopup.isActive()) {
+    if (_dcPopup.handleInput(mappedInput)) {
+      finish();
+    }
+    return;
+  }
+
 #ifdef SIMULATOR
   if (handleMockKey("Thread", client.getBleClient())) {
     requestUpdate();
@@ -289,6 +301,14 @@ void MeshCoreThreadActivity::_loopBleStateMachine() {
     } else {
       completeFavouriteOp(false);
     }
+  }
+
+  // Unexpected disconnect while this thread is on screen: pop up a notice
+  // and return to the hub, where the endless auto-reconnect takes over.
+  // Note: completeUnlistOp() above may already have finished the activity,
+  // so guard the popup activation accordingly.
+  if (_dcPopup.update(client)) {
+    requestUpdate();
   }
 }
 
@@ -638,6 +658,11 @@ void MeshCoreThreadActivity::provideSubtitle(const void* ctx, char* buf, size_t 
   formatMeshCoreSubtitle(self->client, buf, bufSize);
 }
 
+void MeshCoreThreadActivity::notifyDisconnect(bool sendFailed) {
+  _dcPopup.show(sendFailed ? tr(STR_MESHCORE_MSG_NOT_SENT) : tr(STR_MESHCORE_CONNECTION_LOST));
+  requestUpdate();
+}
+
 // ── Async unlist completion handler ──
 // Called from loop() when the BLE command completes or times out.
 // Mirrors Discovery's completeContactSave() exactly — also updates the
@@ -701,6 +726,12 @@ void MeshCoreThreadActivity::sendMessage() {
 void MeshCoreThreadActivity::render(RenderLock&&) {
   renderer.clearScreen();
   if (_renderFontRebuildPopup()) return;
+  if (_dcPopup.isActive()) {
+    char headerSubtitle[64];
+    _toast.getSubtitle(headerSubtitle, sizeof(headerSubtitle));
+    _dcPopup.render(renderer, mappedInput, threadName, headerSubtitle);
+    return;
+  }
   if (_renderConfirmPopup()) return;
   _renderNormal();
 }

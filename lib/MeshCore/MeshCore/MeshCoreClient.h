@@ -347,6 +347,14 @@ class MeshCoreClient {
   QueueHandle_t workQueue = nullptr;
   volatile bool workerRunning = false;
 
+  // Set/cleared by the worker task around its blocking doConnect()/doScan()
+  // operations. disconnect() aborts and waits for these flags before tearing
+  // the client down — otherwise deleteClient() frees bleClient while the
+  // worker is still inside doConnect() (use-after-free on rxChar writes,
+  // observed as a null-rxChar panic in runInitSequence's APP_START write).
+  volatile bool connectInFlight = false;
+  volatile bool scanInFlight = false;
+
   void doScan(uint32_t durationSec);
   void doConnect(const char* bleAddress, uint8_t addressType);
   // Centralised failure cleanup for doConnect() error paths.

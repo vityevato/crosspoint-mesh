@@ -22,8 +22,8 @@ void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const Activity
     return;
   }
 
-  // For DMs: append to store FIRST to obtain the assigned id,
-  // then send with that id for delivery tracking.
+  // Build the outgoing record first — used for both the send path and the
+  // disconnected fallback (persisted as FAILED so the typed text survives).
   MeshCoreMessage msg = {};
   msg.direction = MsgDirection::SENT;
   msg.type = isCh ? MsgType::CHANNEL : MsgType::DIRECT;
@@ -36,6 +36,28 @@ void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const Activity
   const auto& tmetrics = UITheme::getInstance().getMetrics();
   int tcontentWidth = act.renderer.getScreenWidth() - 2 * tmetrics.contentSidePadding;
   msg.heightPx = measureMeshCoreMessageHeight(act.renderer, bodyFontId, tcontentWidth, isCh, msg, tmetrics);
+
+  // Refresh the link state before sending: the text-entry activity never
+  // calls client.poll(), so a connection loss that happened while the user
+  // was typing is only detected here.
+  client.poll();
+  if (client.getState() != BleConnectionState::CONNECTED) {
+    LOG_ERR("MESH", "Send blocked: not connected");
+    msg.deliveryStatus = DeliveryStatus::FAILED;
+    if (isCh) {
+      store.appendChannelMessage(chIdx, msg);
+      // Refresh the activity's meta so onExit()->savePosition() persists the
+      // store meta INCLUDING this failed message instead of clobbering it.
+      store.getChannelMeta(chIdx, act._meta);
+    } else {
+      uint32_t msgId = 0;
+      if (store.appendDirectMessage(pubkey, msg, &msgId)) {  // stored as FAILED
+        store.getDirectMeta(pubkey, act._meta);
+      }
+    }
+    act.notifyDisconnect(/*sendFailed=*/true);
+    return;
+  }
 
   bool sent = false;
   if (isCh) {

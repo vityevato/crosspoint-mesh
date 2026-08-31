@@ -44,6 +44,19 @@ class MeshBleClientCallbacks : public NimBLEClientCallbacks {
 
 static MeshBleClientCallbacks sBleCallbacks;
 
+namespace {
+
+/// Marks a worker-side blocking operation (doConnect/doScan) as in flight so
+/// disconnect() can abort and wait for it before tearing the client down.
+/// Cleared automatically on every exit path.
+struct InFlightScope {
+  volatile bool& flag;
+  explicit InFlightScope(volatile bool& f) : flag(f) { flag = true; }
+  ~InFlightScope() { flag = false; }
+};
+
+}  // namespace
+
 MeshCoreClient::MeshCoreClient() = default;
 
 MeshCoreClient::~MeshCoreClient() { deinit(); }
@@ -196,6 +209,8 @@ bool MeshCoreClient::startScan(uint32_t durationSec) {
 }
 
 void MeshCoreClient::doScan(uint32_t durationSec) {
+  InFlightScope scanScope(scanInFlight);
+
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setActiveScan(true);
   scan->setInterval(100);
@@ -278,9 +293,28 @@ void MeshCoreClient::failConnect(bool disconnectFirst) {
 }
 
 void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
+  // Mark the whole connect sequence (including init) as in flight so
+  // disconnect()/deinit() abort and wait instead of freeing the client
+  // underneath this worker task.
+  InFlightScope connectScope(connectInFlight);
+
+  // Skip stale CONNECT items that were queued before disconnect() ran:
+  // the state machine already moved on, and running a full connect now
+  // would clobber the new state (e.g. SCANNING set by startScan()).
+  if (state != BleConnectionState::CONNECTING) {
+    LOG_ERR("MESH", "Stale connect item skipped (state=%d)", static_cast<int>(state));
+    return;
+  }
+
   const uint32_t tStart = millis();
   LOG_INF("MESH", "Connecting to %s (type=%d)", bleAddress, addressType);
   LOG_DBG("MESH", "doConnect: heap=%d", (int)ESP.getFreeHeap());
+
+  // Clean up any client left behind by a previous aborted attempt.
+  if (bleClient) {
+    NimBLEDevice::deleteClient(bleClient);
+    bleClient = nullptr;
+  }
 
   bleClient = NimBLEDevice::createClient();
   if (!bleClient) {
@@ -288,6 +322,11 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
     setState(BleConnectionState::DISCONNECTED);
     return;
   }
+
+  // Abort when the main task cancels the attempt (disconnect/deinit) or the
+  // link drops mid-sequence. When cancelConnect is set, failConnect() leaves
+  // the client for the main task to tear down.
+  const auto linkLost = [this]() { return cancelConnect || (bleClient && !bleClient->isConnected()); };
 
   // Attach security callbacks (handles passkey entry during pairing)
   bleClient->setClientCallbacks(&sBleCallbacks, false);
@@ -315,6 +354,11 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
   // controller revisions drop the link (reason=520 / HCI timeout) if pairing
   // starts too fast — the controller's LL state machine may still be settling.
   vTaskDelay(pdMS_TO_TICKS(150));
+  if (linkLost()) {
+    LOG_INF("MESH", "doConnect aborted: link lost or cancelled");
+    failConnect(true);
+    return;
+  }
 
   // Establish encrypted link BEFORE any GATT operations.
   // Companion firmware requires MITM-authenticated encryption on all NUS
@@ -324,6 +368,11 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
   LOG_DBG("MESH", "secureConnection() returned=%d after %lu ms", pairOk ? 1 : 0, (unsigned long)(millis() - tStart));
   if (!pairOk) {
     LOG_ERR("MESH", "BLE pairing/encryption failed");
+    failConnect(true);
+    return;
+  }
+  if (linkLost()) {
+    LOG_INF("MESH", "doConnect aborted: link lost or cancelled");
     failConnect(true);
     return;
   }
@@ -356,11 +405,21 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
     return;
   }
   LOG_DBG("MESH", "Subscribed to TX notifications");
+  if (linkLost()) {
+    LOG_INF("MESH", "doConnect aborted: link lost or cancelled");
+    failConnect(true);
+    return;
+  }
 
   // Protocol handshake delay: allow device to process CCCD write
   // before sending commands (matches MeshMapper 500ms handshake delay)
   vTaskDelay(pdMS_TO_TICKS(500));
   LOG_DBG("MESH", "doConnect: handshake delay done (elapsed %lu ms)", (unsigned long)(millis() - tStart));
+  if (linkLost()) {
+    LOG_INF("MESH", "doConnect aborted: link lost or cancelled");
+    failConnect(true);
+    return;
+  }
 
   // Save address for auto-reconnect
   snprintf(autoReconnectAddr, sizeof(autoReconnectAddr), "%s", bleAddress);
@@ -380,7 +439,52 @@ void MeshCoreClient::doConnect(const char* bleAddress, uint8_t addressType) {
 }
 
 void MeshCoreClient::disconnect() {
-  if (bleClient) {
+  // A connect/scan may be in flight on the worker task. Abort it and wait
+  // for the worker to release bleClient before tearing the client down —
+  // deleteClient() while doConnect() still holds it is a use-after-free
+  // (observed on device as a null-rxChar panic in the APP_START write).
+  const bool fromWorker = (xTaskGetCurrentTaskHandle() == workerTaskHandle);
+  bool skipClientTeardown = false;
+
+  if (connectInFlight && !fromWorker) {
+    cancelConnect = true;
+    if (bleClient) {
+      if (state == BleConnectionState::CONNECTING) {
+        // Unblock a pending connect attempt (ble_gap_conn_cancel).
+        bleClient->cancelConnect();
+      } else if (bleClient->isConnected()) {
+        // Link is up (INITIALIZING stage) — dropping it makes the worker's
+        // blocking writes/reads fail fast so doConnect can abort.
+        bleClient->disconnect();
+      }
+    }
+    uint32_t start = millis();
+    while (connectInFlight && (millis() - start) < 15000) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    cancelConnect = false;
+    if (connectInFlight) {
+      // Pathological: the worker is stuck inside a NimBLE call. Leave the
+      // client alone — the worker aborts via its own guards when the call
+      // returns and cleans up (failConnect deletes the client).
+      LOG_ERR("MESH", "disconnect: connect still in flight after 15 s, skipping client teardown");
+      skipClientTeardown = true;
+    }
+  }
+
+  if (scanInFlight && !fromWorker) {
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan && scan->isScanning()) scan->stop();
+    uint32_t start = millis();
+    while (scanInFlight && (millis() - start) < 15000) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    if (scanInFlight) {
+      LOG_ERR("MESH", "disconnect: scan still in flight after 15 s");
+    }
+  }
+
+  if (bleClient && !skipClientTeardown) {
     if (bleClient->isConnected()) {
       bleClient->disconnect();
     }
@@ -396,8 +500,15 @@ void MeshCoreClient::disconnect() {
     // createClient() fails permanently (NIMBLE_MAX_CONNECTIONS=1).
     vTaskDelay(pdMS_TO_TICKS(500));
   }
-  rxChar = nullptr;
-  txChar = nullptr;
+
+  // On the pathological timeout path the worker may still be inside
+  // doConnect()/runInitSequence() using rxChar — leave the pointers for its
+  // own cleanup (failConnect nulls them). The enqueueCmd state guard blocks
+  // new commands once the state is reset below.
+  if (!skipClientTeardown) {
+    rxChar = nullptr;
+    txChar = nullptr;
+  }
   cmdCount = 0;
   cmdHead = 0;
   cmdTail = 0;
@@ -552,7 +663,12 @@ bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const cha
     len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), contact.publicKey, ts, text, /*attempt=*/2);
   }
 
-  return enqueueCmd(buf, len, MeshProto::PKT_MSG_SENT);
+  const bool queued = enqueueCmd(buf, len, MeshProto::PKT_MSG_SENT);
+  if (!queued) {
+    // Never leave a live tracker behind for a message that was not queued.
+    _pendingDm = {};
+  }
+  return queued;
 }
 
 bool MeshCoreClient::resetPath(const MeshCoreContact& contact) {
@@ -838,6 +954,13 @@ void MeshCoreClient::poll() {
 }
 
 bool MeshCoreClient::enqueueCmd(const uint8_t* data, size_t len, uint8_t expectedResp) {
+  // Fail fast when the link is gone: a queued command would silently sit
+  // in the queue (sendNextCmd() cannot write without rxChar) until the next
+  // poll() flushes it, and callers would report success to the user.
+  if (state != BleConnectionState::CONNECTED) {
+    LOG_ERR("MESH", "Cannot enqueue cmd=0x%02X: not connected", (unsigned)data[0]);
+    return false;
+  }
   if (cmdCount >= CMD_QUEUE_SIZE) {
     LOG_ERR("MESH", "Command queue full");
     return false;
@@ -1145,6 +1268,14 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
 
 bool MeshCoreClient::runInitSequence() {
   inInitSequence = true;
+
+  // Defensive: rxChar/txChar are nulled by disconnect()/failConnect() during
+  // teardown. Without this, a write on a torn-down link dereferences null.
+  if (!rxChar || !txChar) {
+    LOG_ERR("MESH", "Init sequence aborted: link torn down");
+    inInitSequence = false;
+    return false;
+  }
 
   uint8_t buf[64];
   size_t len;

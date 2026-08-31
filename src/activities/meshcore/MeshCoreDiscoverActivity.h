@@ -6,6 +6,7 @@
 
 #include <cstdint>
 
+#include "MeshCoreDisconnectPopup.h"
 #include "StatusMessageOverlay.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
@@ -38,6 +39,9 @@ class MeshCoreDiscoverActivity final : public Activity {
   int selectedIndex = 0;
 
   StatusMessageOverlay _toast;
+
+  // Disconnect detection: popup + auto-return to the hub (hub reconnects).
+  MeshCoreDisconnectPopup _dcPopup;
 
   MeshCoreContact* discoveredNodes;
   uint16_t& discoveredNodeCount;

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <memory>
 
+#include "../MeshCoreDisconnectPopup.h"
 #include "../MeshCoreSettings.h"
 #include "../StatusMessageOverlay.h"
 #include "activities/Activity.h"
@@ -58,6 +59,14 @@ class MeshCoreThreadActivity final : public Activity {
   /// Called by Hub when a delivery callback fires for this conversation.
   /// Reloads visible messages from store and triggers a repaint.
   void onDeliveryUpdate(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status);
+
+  /**
+   * Show the disconnect popup and return to the hub shortly after.
+   * @param sendFailed true when a just-typed message could not be sent
+   *        (popup shows the "message not sent" text instead of the
+   *        generic connection-lost text).
+   */
+  void notifyDisconnect(bool sendFailed);
 
   /// Expose pubkey for Hub to match delivery callbacks to this conversation.
   const uint8_t* contactPubkeyForDelivery() const { return contactPubkey; }
@@ -137,6 +146,9 @@ class MeshCoreThreadActivity final : public Activity {
 
   // Ephemeral toast overlay
   StatusMessageOverlay _toast;
+
+  // Disconnect detection: popup + auto-return to the hub (hub reconnects).
+  MeshCoreDisconnectPopup _dcPopup;
 
   // Menu settings — loaded when MENU tab is opened, freed on tab switch or exit
   std::unique_ptr<MeshCoreSettings> _menuSettings;
