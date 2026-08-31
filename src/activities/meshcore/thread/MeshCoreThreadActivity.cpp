@@ -66,6 +66,19 @@ void MeshCoreThreadActivity::onDeliveryUpdate(uint32_t msgId, const uint8_t* pub
   LOG_INF("MESH", "Thread DM delivery: msgId=%lu status=%d", (unsigned long)msgId, (int)status);
 }
 
+void MeshCoreThreadActivity::onChannelHeardUpdate(uint8_t chIdx, uint8_t heardCount) {
+  // The Hub already wrote the new heard count (pathLength) to the store.
+  // endId/startId do not change on a metadata-only update, so
+  // _loopDetectNewMessages() would not repaint — reload and repaint here.
+  ConvMeta currentMeta;
+  if (store.getChannelMeta(channelIdx, currentMeta)) {
+    _meta = currentMeta;
+    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
+  }
+  requestUpdate();
+  LOG_INF("MESH", "Thread channel heard: ch=%d count=%d", (int)chIdx, (int)heardCount);
+}
+
 void MeshCoreThreadActivity::onEnter() {
   Activity::onEnter();
   MESHCORE_LOG_HEAP("Thread onEnter:start");

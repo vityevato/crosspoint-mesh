@@ -1187,6 +1187,12 @@ void MeshCoreHubActivity::handleChannelHeard(uint8_t channelIdx, uint8_t heardCo
   store.loadChannelMessages(channelIdx, meta.endId, static_cast<uint8_t>(1), true, &lastMsg, loaded);
   if (loaded == 1 && lastMsg.direction == MsgDirection::SENT) {
     store.updateChannelMessage(channelIdx, lastMsg.id, heardCount, lastMsg.snr);
+    // If this channel's thread is open, forward the update so it reloads
+    // and repaints (the heard count changes no endId/startId, so the
+    // thread's own new-message detection would not trigger).
+    if (_activeThread && _activeThread->matchesChannel(channelIdx)) {
+      _activeThread->onChannelHeardUpdate(channelIdx, heardCount);
+    }
   }
 }
 

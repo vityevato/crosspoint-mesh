@@ -277,23 +277,29 @@ class MeshCoreClient {
 
   // Tracker for "heard by N repeaters" on outgoing channel messages.
   // Each call to sendChannelMessage() registers a pending tracker keyed by the
-  // message text + channel.  When a matching GRP_TXT re-flood arrives via
-  // PUSH_LOG_RX_DATA (0x88) and contains our node hash in its path, the tracker
-  // transitions from pending (payloadHash == 0) to locked (payloadHash != 0).
-  // Subsequent re-floods with the same payload hash increment echoCount.
+  // channel routing hash (SHA256(channel secret)[0], the unencrypted first
+  // payload byte of every GRP_TXT packet). When a matching GRP_TXT re-flood
+  // arrives via PUSH_LOG_RX_DATA (0x88) on that channel within the lock
+  // window, the tracker transitions from pending (payloadHash == 0) to locked
+  // (payloadHash != 0). Subsequent re-floods with the same payload hash
+  // increment echoCount (deduped by relay routing hash in seenHashes).
   struct SentChannelTracker {
     char text[184];  // MAX_MSG_TEXT_LEN from MeshCoreTypes.h
     uint8_t channelIdx;
+    uint8_t channelHash;  // GRP_TXT channel routing hash; 0 = unknown
     uint32_t sentTimeMs;
     uint32_t payloadHash;  // 0 = pending (not yet locked)
     uint8_t echoCount;
+    uint8_t seenHashes[MeshProto::MESH_MAX_PATH_HASHES];  // relay hashes already counted
     bool active;
   };
   static constexpr uint8_t MAX_TRACKERS = 4;
   static constexpr uint32_t TRACKER_TTL_MS = 45000;          // 45 s expiry
   static constexpr uint32_t TRACKER_LOCK_WINDOW_MS = 15000;  // 15 s to lock pending tracker
   SentChannelTracker _trackers[MAX_TRACKERS] = {};
-  uint8_t _ourNodeHash = 0;  // first byte of companion public key, set on SELF_INFO
+  // Channel routing hashes, filled from PKT_CHANNEL_INFO (SHA256(secret16)[0]).
+  uint8_t _channelHash[MESHCORE_MAX_CHANNELS] = {};
+  bool _channelHashValid[MESHCORE_MAX_CHANNELS] = {};
   void handleRxLog(const uint8_t* data, size_t len);
 
   char autoReconnectAddr[18] = {};

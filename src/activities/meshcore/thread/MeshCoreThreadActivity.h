@@ -60,6 +60,10 @@ class MeshCoreThreadActivity final : public Activity {
   /// Reloads visible messages from store and triggers a repaint.
   void onDeliveryUpdate(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status);
 
+  /// Called by Hub when the repeater heard-count for this channel changes.
+  /// Reloads visible messages from store and triggers a repaint.
+  void onChannelHeardUpdate(uint8_t chIdx, uint8_t heardCount);
+
   /**
    * Show the disconnect popup and return to the hub shortly after.
    * @param sendFailed true when a just-typed message could not be sent
