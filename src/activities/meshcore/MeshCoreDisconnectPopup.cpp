@@ -1,9 +1,8 @@
 #include "MeshCoreDisconnectPopup.h"
 
-#include <MeshCore/MeshCoreClient.h>
-
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <MeshCore/MeshCoreClient.h>
 
 #include "I18n.h"
 #include "components/UITheme.h"
