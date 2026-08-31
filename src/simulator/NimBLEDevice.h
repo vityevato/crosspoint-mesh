@@ -827,6 +827,11 @@ class NimBLEClient {
     nusService.setMockCompanion(nullptr);
   }
 
+  // Mock connect() is synchronous, so there is never a pending attempt to
+  // cancel — kept for API parity with the real NimBLEClient
+  // (MeshCoreClient::deinit calls it when state is CONNECTING).
+  void cancelConnect() const {}
+
   void setClientCallbacks(NimBLEClientCallbacks* cb, bool) { callbacks = cb; }
 
   NimBLERemoteService* getService(const NimBLEUUID&) {

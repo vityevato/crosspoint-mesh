@@ -115,9 +115,21 @@ void MeshCoreClient::deinit() {
   _pendingDm = {};
 
   // Interrupt any in-progress blocking connect/init so the worker can exit.
-  // Only disconnect the link here — do NOT call NimBLEDevice::deleteClient()
+  // Only interrupt the link here — do NOT call NimBLEDevice::deleteClient()
   // yet, as the worker task may still be holding a reference to bleClient.
-  if (bleClient && (state == BleConnectionState::CONNECTING || state == BleConnectionState::INITIALIZING)) {
+  if (bleClient && state == BleConnectionState::CONNECTING) {
+    // A connect() attempt is in flight. bleClient->disconnect() (a plain
+    // ble_gap_terminate) does NOT abort a pending connection attempt, so the
+    // worker stays blocked inside connect() and gets force-killed 15 s later,
+    // after which NimBLEDevice::deinit(true) races the host task still
+    // processing the connect event and crashes (esp_nimble_disable vs
+    // handleGapEvent/connect-cancelled). cancelConnect() sends
+    // ble_gap_conn_cancel, which unblocks connect() and lets the worker exit
+    // cleanly before the controller is torn down.
+    bleClient->cancelConnect();
+  } else if (bleClient && state == BleConnectionState::INITIALIZING) {
+    // Link is established and the init handshake is in progress — terminating
+    // the link makes runInitSequence() fail and the worker exit.
     bleClient->disconnect();
   }
 
