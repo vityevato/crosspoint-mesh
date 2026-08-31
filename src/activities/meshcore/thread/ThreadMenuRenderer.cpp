@@ -65,6 +65,12 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
 
   const auto& m = UITheme::getInstance().getMetrics();
   const int sepGap = m.verticalSpacing;
+  // RoundedRaff pads each list row with kSelectableRowGap, so the vertical
+  // pitch is getListRowStep(false), not raw listRowHeight. Using the theme's
+  // real step keeps the settings separator below the last action row on every
+  // theme (raw listRowHeight would drop the line into the row text on
+  // RoundedRaff for DM menus with many actions).
+  const int listRowStep = GUI.getListRowStep(false);
 
   static constexpr StrId kChannelTitles[] = {
       StrId::STR_MESHCORE_SCROLL_TO_END,
@@ -113,7 +119,7 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
 
   if (!hasSettings) return;
 
-  int sepY = contentRect.y + kActionCount * m.listRowHeight + sepGap;
+  int sepY = contentRect.y + kActionCount * listRowStep + sepGap;
   act.renderer.drawLine(contentRect.x + m.contentSidePadding, sepY,
                         contentRect.x + contentRect.width - m.contentSidePadding - 1, sepY, true);
 
