@@ -55,13 +55,16 @@ MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInpu
 }
 
 void MeshCoreThreadActivity::onDeliveryUpdate(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status) {
-  // The Hub already wrote the new status to the store.
-  // Reload meta and re-load visible messages so the UI reflects the change.
-  ConvMeta currentMeta;
-  if (store.getDirectMeta(contactPubkey, currentMeta)) {
-    _meta = currentMeta;
-    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
-  }
+  // The Hub already wrote the new status to the store. A status flip does not
+  // change message heights, so reload the visible batch anchored at the
+  // CURRENT in-RAM scroll position and repaint. Do not adopt the persisted
+  // meta here: the inbound-message path advances positionPx/positionId in RAM
+  // without flushing them at the moment a status update can land (savePosition
+  // runs on explicit scrolls, on send, and on exit), so the persisted copy can
+  // sit one message behind the live view — adopting it visibly yanks the
+  // thread back (observed: the ack jumped the view back to the sent message
+  // after a new inbound message had scrolled it to the bottom).
+  loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
   requestUpdate();
   LOG_INF("MESH", "Thread DM delivery: msgId=%lu status=%d", (unsigned long)msgId, (int)status);
 }
@@ -70,11 +73,8 @@ void MeshCoreThreadActivity::onChannelHeardUpdate(uint8_t chIdx, uint8_t heardCo
   // The Hub already wrote the new heard count (pathLength) to the store.
   // endId/startId do not change on a metadata-only update, so
   // _loopDetectNewMessages() would not repaint — reload and repaint here.
-  ConvMeta currentMeta;
-  if (store.getChannelMeta(channelIdx, currentMeta)) {
-    _meta = currentMeta;
-    loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
-  }
+  // Same stale-meta rule as onDeliveryUpdate: anchor at the in-RAM position.
+  loadMessages(_meta.positionId > 0 ? _meta.positionId : _meta.startId, /*up=*/false);
   requestUpdate();
   LOG_INF("MESH", "Thread channel heard: ch=%d count=%d", (int)chIdx, (int)heardCount);
 }
@@ -350,6 +350,11 @@ void MeshCoreThreadActivity::_loopDetectNewMessages() {
                              ? _meta.totalPx - static_cast<uint32_t>(_contentAreaHeight)
                              : 0;
       _meta.positionId = (_visibleCount > 0) ? _visibleMsgs[0].id : _meta.endId;
+      // Persist the new bottom position now: the visible view advances in RAM
+      // here, and leaving the disk copy one message behind lets any later
+      // reader of the persisted meta (e.g. a status-update repaint) anchor at
+      // the stale position and jump the thread back up.
+      savePosition();
       // The user is at the end of the conversation and will see the new
       // message — it must not be counted as unread.
       if (_hub) {
