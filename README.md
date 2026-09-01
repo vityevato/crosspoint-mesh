@@ -8,8 +8,6 @@ single device. Community-built, fully hackable, free forever.
 
 **Now running on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
 
-![CrossPoint Reader running on Xteink device](./docs/images/cover.jpg)
-
 [![Watch CrossPoint Mesh demo on YouTube](https://img.youtube.com/vi/4BtQzdU9oqg/maxresdefault.jpg)](https://www.youtube.com/watch?v=4BtQzdU9oqg)
 
 > If you're planning to buy an Xteink device, consider purchasing an **X3/X4 Developer Edition** through https://crosspointreader.com. CrossPoint receives a small share of each sale, helping fund development costs.
