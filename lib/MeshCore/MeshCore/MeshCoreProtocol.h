@@ -159,13 +159,18 @@ bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]);
 
 // Parse a PUSH_LOG_RX_DATA (0x88) frame. If the embedded raw LoRa packet is a
 // group/channel text message (GRP_TXT), extracts the forwarding repeater hashes
-// (first byte of each path element) into outHashes, a content hash of the
-// encrypted payload into outPayloadHash, and checks whether ourNodeHash is
-// present in the path (identifying this as a re-flood of our own message).
-// The payload hash is identical across every re-flood of the same message,
-// letting the caller count distinct repeaters. Returns true only for GRP_TXT
-// packets.
+// (first byte of each path element) into outHashes, the channel hash (first
+// payload byte, unencrypted in GRP_TXT) into outChannelHash, and a content hash
+// of the encrypted payload into outPayloadHash. The payload hash is identical
+// across every re-flood of the same message, letting the caller count distinct
+// repeaters; the channel hash identifies which channel the re-flood belongs to.
+// Returns true only for GRP_TXT packets.
 bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, uint8_t maxHashes, uint8_t& outHashCount,
-                         uint32_t& outPayloadHash, uint8_t ourNodeHash, bool& pathContainsOurHash);
+                         uint32_t& outPayloadHash, uint8_t& outChannelHash);
+
+// MeshCore channel routing hash: first byte of SHA256(secret16). This is the
+// unencrypted channel_hash byte carried in every GRP_TXT packet (firmware
+// BaseChatMesh::setChannel()/addChannel() with a 128-bit key).
+uint8_t channelHashFromSecret(const uint8_t* secret16);
 
 }  // namespace MeshProto

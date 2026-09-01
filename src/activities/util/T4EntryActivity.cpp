@@ -665,15 +665,15 @@ void T4EntryActivity::onComplete() {
       result += candidate;
     }
   }
-  // When the last action was a word confirmation (space/punctuation via
-  // handlePunctuation), a trailing space was appended as a word separator
-  // for continued typing.  Strip it on exit — it is never semantically
-  // meaningful at the end of a Text result.  Password and URL fields are
-  // excluded: a trailing space there could be intentional.
-  // _wordJustConfirmed is set by handlePunctuation() in both MULTI_TAP
-  // and PREDICT modes, so this covers both.
-  if (_inputType == InputType::Text && _wordJustConfirmed && !result.empty() && result.back() == ' ') {
-    result.pop_back();
+  // T4 inserts a trailing space only as a word/punctuation separator — there
+  // is no bare-space key — so any trailing space in a Text result is a
+  // separator artifact, never semantically meaningful. Strip all of them on
+  // exit. (Do not gate this on _wordJustConfirmed: that flag is cleared 800 ms
+  // after the last punctuation action, so a Confirm pressed later — the normal
+  // case — would keep the separator in the message.) Password and URL fields
+  // are excluded: a trailing space there could be intentional.
+  if (_inputType == InputType::Text) {
+    while (!result.empty() && result.back() == ' ') result.pop_back();
   }
   LOG_DBG("T4", "onComplete: mode=%d, result='%s'", static_cast<int>(_mode), result.c_str());
   learnIntoLexicon(result);

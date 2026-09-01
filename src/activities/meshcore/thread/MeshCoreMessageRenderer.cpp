@@ -217,8 +217,8 @@ void renderMessageBatch(const GfxRenderer& renderer, Rect rect, const MeshCoreMe
         metaX = rect.x + ctx.metrics.contentSidePadding;
       }
       renderer.drawText(ctx.metaFontId, metaX, yPos, metaBuf, true);
-      int mw = renderer.getTextWidth(ctx.metaFontId, metaBuf);
       if (ctx.metaDimmed) {
+        int mw = renderer.getTextWidth(ctx.metaFontId, metaBuf);
         for (int py = yPos; py < yPos + ctx.metaLineH; py++)
           for (int px = metaX; px < metaX + mw; px++)
             if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);

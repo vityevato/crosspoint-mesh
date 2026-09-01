@@ -1,6 +1,7 @@
 #include "MeshCoreProtocol.h"
 
 #include <Logging.h>
+#include <mbedtls/sha256.h>
 
 #include <cstring>
 
@@ -474,10 +475,10 @@ bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]) {
 }
 
 bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, uint8_t maxHashes, uint8_t& outHashCount,
-                         uint32_t& outPayloadHash, uint8_t ourNodeHash, bool& pathContainsOurHash) {
+                         uint32_t& outPayloadHash, uint8_t& outChannelHash) {
   outHashCount = 0;
   outPayloadHash = 0;
-  pathContainsOurHash = false;
+  outChannelHash = 0;
 
   // 0x88 LOG_RX_DATA frame: [0x88][snr*4:int8][rssi:int8][raw LoRa packet...]
   if (len < 3 + 2 || frame[0] != PUSH_LOG_RX_DATA) return false;
@@ -505,16 +506,18 @@ bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, u
 
   // Each path element identifies a forwarding repeater by its routing hash
   // (first byte of the element, which is the first byte of its public key).
-  // Check whether ourNodeHash appears in the path — if so, this is a re-flood
-  // of a message that originated from our companion.
+  // NOTE: the message origin's hash is NOT in the path — the origin transmits
+  // with an empty path (zero hop) and every flood forwarder appends only its
+  // own hash (firmware Mesh::routeRecvPacket()).
   for (uint8_t i = 0; i < hashCount && outHashCount < maxHashes; ++i) {
-    uint8_t firstByte = pkt[off + static_cast<size_t>(i) * hashSize];
-    outHashes[outHashCount++] = firstByte;
-    if (ourNodeHash != 0 && firstByte == ourNodeHash) {
-      pathContainsOurHash = true;
-    }
+    outHashes[outHashCount++] = pkt[off + static_cast<size_t>(i) * hashSize];
   }
   off += pathBytes;
+
+  // GRP_TXT payload: [channel_hash:1][MAC + encrypted data...]. The channel
+  // hash is unencrypted and identical across every re-flood of the message.
+  if (off >= pktLen) return false;
+  outChannelHash = pkt[off];
 
   // FNV-1a hash of the (encrypted) payload — identical across every re-flood of
   // the same message, so it lets the caller correlate copies of one message.
@@ -526,6 +529,17 @@ bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, u
   // Avoid colliding with the "unlocked" sentinel value of 0.
   outPayloadHash = h ? h : 1u;
   return true;
+}
+
+uint8_t channelHashFromSecret(const uint8_t* secret16) {
+  uint8_t digest[32] = {};
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, /*is224=*/0);
+  mbedtls_sha256_update(&ctx, secret16, 16);
+  mbedtls_sha256_finish(&ctx, digest);
+  mbedtls_sha256_free(&ctx);
+  return digest[0];
 }
 
 }  // namespace MeshProto
