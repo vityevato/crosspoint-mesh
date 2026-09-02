@@ -50,7 +50,7 @@ int SdCardFontManager::loadFile(const SdCardFontFileInfo& file, const char* fami
     return 0;
   }
   renderer.registerSdCardFont(fontId, font);
-  loaded_.push_back({font, fontId, file.pointSize});
+  loaded_.push_back({font, fontId, file.pointSize, familyName});
 
   LOG_DBG("SDMGR", "Loaded %s size=%u id=%d styles=%u", file.path.c_str(), file.pointSize, fontId, font->styleCount());
 
@@ -85,18 +85,22 @@ int SdCardFontManager::loadFamilyExtraSize(const SdCardFontFamilyInfo& family, G
   const SdCardFontFileInfo* file = family.findFile(pointSize);
   if (!file) return 0;  // family has no .cpfont at this exact size
 
-  // Reuse an already-loaded font of the same size (e.g. when a reader size
-  // happens to match a UI size) instead of double-loading the file.
+  // Reuse an already-loaded font of the same size from the SAME family (e.g.
+  // when a reader size happens to match a UI size) instead of double-loading
+  // the file. Different families can share a point size (e.g. the Emoji pack
+  // next to a reader family), so the family name must match too.
   for (const auto& lf : loaded_) {
-    if (lf.size == pointSize) return lf.fontId;
+    if (lf.size == pointSize && lf.familyName == family.name) return lf.fontId;
   }
 
   return loadFile(*file, family.name.c_str(), renderer);
 }
 
 void SdCardFontManager::unloadAll(GfxRenderer& renderer) {
-  // Drop UI CJK fallbacks before the SD fonts they point at are freed.
+  // Drop UI CJK fallbacks and per-glyph emoji fallbacks before the SD fonts
+  // they point at are freed.
   renderer.clearFallbackFonts();
+  renderer.clearEmojiFallbackFonts();
   renderer.clearSdCardFonts();
   for (auto& lf : loaded_) {
     renderer.removeFont(lf.fontId);

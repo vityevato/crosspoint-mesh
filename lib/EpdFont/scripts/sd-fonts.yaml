@@ -251,3 +251,22 @@ families:
       italic:     {url: "https://raw.githubusercontent.com/jacobxperez/lexica-ultralegible/main/fonts/ttf/LexicaUltralegible-Italic.ttf"}
       bolditalic: {url: "https://raw.githubusercontent.com/jacobxperez/lexica-ultralegible/main/fonts/ttf/LexicaUltralegible-BoldItalic.ttf"}
 
+  # ── Emoji (MeshCore chats) ─────────────────────────────────────────────
+
+  # Monochrome emoji pack used as a per-glyph fallback for MeshCore chat
+  # text (message bodies rendered with the active reader font). The firmware
+  # loads the same point size as the reader font, so the family ships the
+  # reader sizes. Single-style: the .cpfont carries a regular cut only and
+  # style resolution falls back to it (see SdCardFont).
+  #
+  # Install-only-by-hand: FontDownloadActivity filters this family out of
+  # the manifest, so it is never offered in the on-device download menu —
+  # users install it locally (web upload or copying the prebuilt files from
+  # lib/EpdFont/prebuilt/Emoji/ to the SD card).
+  - name: Emoji
+    description: "Monochrome emoji for MeshCore chats"
+    intervals: emoji
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular: {path: "builtinFonts/source/NotoEmoji/NotoEmoji-Regular.ttf"}
+

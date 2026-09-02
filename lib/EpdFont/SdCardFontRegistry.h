@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,14 @@ class SdCardFontRegistry {
   // when creating new installs; both are read from if present.
   static constexpr const char* FONTS_DIR_HIDDEN = "/.fonts";
   static constexpr const char* FONTS_DIR_VISIBLE = "/fonts";
+
+  // SD-card family name of the downloadable monochrome emoji pack
+  // (lib/EpdFont/scripts/sd-fonts.yaml "Emoji" entry). It is a per-glyph
+  // chat fallback, not a reading font: reader-font pickers MUST exclude it
+  // so a user cannot select it as their book font.
+  static constexpr const char* EMOJI_FAMILY_NAME = "Emoji";
+
+  static bool isEmojiFamilyName(const char* name) { return name != nullptr && strcmp(name, EMOJI_FAMILY_NAME) == 0; }
 
   // Returns the existing root for `familyName` (the one that contains
   // /<root>/<familyName>/), or nullptr if the family is not installed in

@@ -209,6 +209,83 @@ int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const Epd
   return fontId;
 }
 
+void GfxRenderer::setEmojiFallbackFont(const int primaryFontId, const int emojiFontId) {
+  const auto primaryIt = fontMap.find(primaryFontId);
+  if (primaryIt == fontMap.end()) {
+    LOG_ERR("GFX", "Cannot set emoji fallback: primary font %d not found", primaryFontId);
+    return;
+  }
+  if (emojiFontId == 0) {
+    primaryIt->second.setEmojiFallback(nullptr);
+    emojiFallbackMap_.erase(primaryFontId);
+    return;
+  }
+  const auto emojiIt = fontMap.find(emojiFontId);
+  if (emojiIt == fontMap.end()) {
+    LOG_ERR("GFX", "Cannot set emoji fallback: emoji font %d not found", emojiFontId);
+    return;
+  }
+  // Install on the stored family's EpdFont objects so the measurement path
+  // (EpdFont::getTextBounds) sees the same fallback as drawText. std::map
+  // nodes are stable, so &emojiIt->second stays valid until that font is
+  // unloaded — callers must clearEmojiFallbackFonts() before unloading.
+  primaryIt->second.setEmojiFallback(&emojiIt->second);
+  emojiFallbackMap_[primaryFontId] = emojiFontId;
+}
+
+void GfxRenderer::clearEmojiFallbackFonts() {
+  for (const auto& [primaryId, emojiId] : emojiFallbackMap_) {
+    (void)emojiId;
+    const auto it = fontMap.find(primaryId);
+    if (it != fontMap.end()) it->second.setEmojiFallback(nullptr);
+  }
+  emojiFallbackMap_.clear();
+}
+
+void GfxRenderer::recordEmojiCacheText(FontCacheManager* cache, const int fontId, const int emojiFontId,
+                                       const char* text, const EpdFontFamily::Style style) const {
+  if (!cache || text == nullptr || *text == '\0') return;
+  const auto fontIt = fontMap.find(fontId);
+  const auto emojiIt = fontMap.find(emojiFontId);
+  if (fontIt == fontMap.end() || emojiIt == fontMap.end()) return;
+  const EpdFontFamily& primary = fontIt->second;
+  const EpdFontFamily& emoji = emojiIt->second;
+
+  constexpr int kBufferSize = 64;
+  char buffer[kBufferSize];
+  size_t len = 0;
+  auto flush = [&]() {
+    if (len == 0) return;
+    buffer[len] = '\0';
+    cache->recordText(buffer, emojiFontId, style);
+    len = 0;
+  };
+
+  const uint8_t* cursor = reinterpret_cast<const uint8_t*>(text);
+  uint32_t cp;
+  while ((cp = utf8NextCodepoint(&cursor))) {
+    // Only emoji the primary lacks and the emoji font covers need prefetching.
+    if (!utf8IsEmojiCodepoint(cp) || primary.hasCodepoint(cp, style) || !emoji.hasCodepoint(cp, style)) continue;
+    if (len + 4 >= kBufferSize) flush();
+    // Re-encode the codepoint back to UTF-8 (misc symbols are 3 bytes,
+    // supplementary-plane emoji are 4).
+    if (cp < 0x800) {
+      buffer[len++] = static_cast<char>(0xC0 | (cp >> 6));
+      buffer[len++] = static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+      buffer[len++] = static_cast<char>(0xE0 | (cp >> 12));
+      buffer[len++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+      buffer[len++] = static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+      buffer[len++] = static_cast<char>(0xF0 | (cp >> 18));
+      buffer[len++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+      buffer[len++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+      buffer[len++] = static_cast<char>(0x80 | (cp & 0x3F));
+    }
+  }
+  flush();
+}
+
 // Translate logical (x,y) coordinates to physical panel coordinates based on current orientation
 // This should always be inlined for better performance
 static inline void rotateCoordinates(const GfxRenderer::Orientation orientation, const int x, const int y, int* phyX,
@@ -309,13 +386,11 @@ enum class TextRotation { None, Rotated90CW };
 //
 // The advance width is also halved in drawText() so layout reserves exactly the right
 // horizontal space for the scaled glyph.
-static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
-                             const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
-                             const bool pixelState, const EpdFontFamily::Style style) {
-  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
+static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode, const EpdFont& font,
+                             const EpdGlyph* glyph, int cursorX, int cursorY, const bool pixelState) {
   if (!glyph) return;
 
-  const EpdFontData* fontData = fontFamily.getData(style);
+  const EpdFontData* fontData = font.data;
   const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
   if (!bitmap) return;
 
@@ -377,16 +452,11 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
 }
 
 template <TextRotation rotation = TextRotation::None>
-static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
-                           const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
-                           const bool pixelState, const EpdFontFamily::Style style) {
-  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
-  if (!glyph) {
-    LOG_ERR("GFX", "No glyph for codepoint %d", cp);
-    return;
-  }
+static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode, const EpdFont& font,
+                           const EpdGlyph* glyph, int cursorX, int cursorY, const bool pixelState) {
+  if (!glyph) return;
 
-  const EpdFontData* fontData = fontFamily.getData(style);
+  const EpdFontData* fontData = font.data;
   const bool is2Bit = fontData->is2Bit;
   const uint8_t width = glyph->width;
   const uint8_t height = glyph->height;
@@ -575,6 +645,13 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     fontCacheManager_->recordText(renderedText, resolvedFontId, style);
+    // Prewarm emoji glyphs too when an emoji fallback is registered: scan-mode
+    // draws are discarded, so SD-card emoji fonts would otherwise miss the
+    // warmup pass and hit storage I/O during the real render.
+    const auto emojiIt = emojiFallbackMap_.find(resolvedFontId);
+    if (emojiIt != emojiFallbackMap_.end()) {
+      recordEmojiCacheText(fontCacheManager_, resolvedFontId, emojiIt->second, renderedText, style);
+    }
     return;
   }
 
@@ -584,11 +661,15 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     return;
   }
   const auto& font = fontIt->second;
+  const EpdFont* styleFont = font.getFont(style);
 
   const char* textCursor = renderedText;
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor)))) {
+    // Invisible emoji sequence controls (ZWJ, VS16): zero-width, no bitmap.
+    if (utf8IsEmojiControl(cp)) continue;
+
     // RTL vowel marks (Hebrew niqqud, Arabic harakat) ride the combining-mark
     // path: zero-advance overlays on the preceding base glyph (applyBidiVisual
     // emits base-then-marks per UAX#9 L3). anchorFor pins position-sensitive
@@ -597,14 +678,15 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     // font-native position. Fonts without their glyphs — the built-ins — miss
     // the getGlyph lookup and skip them, as before.
     if (utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) {
-      const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
+      const EpdGlyph* combiningGlyph = styleFont->getGlyph(cp);
       if (!combiningGlyph) continue;
       const auto anchor = combiningMark::anchorFor(cp);
       const int raiseBy =
           combiningMark::raiseAboveBase(anchor, combiningGlyph->top, combiningGlyph->height, lastBaseTop);
       const int combiningX = combiningMark::anchorOver(anchor, lastBaseX, lastBaseLeft, lastBaseWidth,
                                                        combiningGlyph->left, combiningGlyph->width);
-      renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos - raiseBy, black, style);
+      renderCharImpl<TextRotation::None>(*this, renderMode, *styleFont, combiningGlyph, combiningX, yPos - raiseBy,
+                                         black);
       continue;
     }
 
@@ -618,7 +700,12 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       lastBaseX += fp4::toPixel(prevAdvanceFP + kernFP);       // snap 12.4 fixed-point to nearest pixel
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    // Per-glyph emoji fallback: missing emoji codepoints come from the
+    // same-pixel-size emoji font; the returned glyph carries that font's
+    // advance and bitmap. Anything else unrenderable keeps the replacement
+    // glyph (U+FFFD box), matching pre-emoji behaviour.
+    const EpdFont* glyphFont = styleFont;
+    const EpdGlyph* glyph = styleFont->getGlyphWithEmojiFallback(cp, &glyphFont);
 
     lastBaseLeft = glyph ? glyph->left : 0;
     lastBaseWidth = glyph ? glyph->width : 0;
@@ -634,9 +721,9 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
     if (isSupSub) {
       // yPos already carries the vertical offset applied by TextBlock::render().
-      renderCharScaled(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
+      renderCharScaled(*this, renderMode, *glyphFont, glyph, lastBaseX, yPos, black);
     } else {
-      renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
+      renderCharImpl<TextRotation::None>(*this, renderMode, *glyphFont, glyph, lastBaseX, yPos, black);
     }
     prevCp = cp;
   }
@@ -1912,9 +1999,16 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
       if (BidiUtils::isTransparentMark(cp)) {
         continue;
       }
+      // Invisible emoji sequence controls (ZWJ, VS16) draw nothing in drawText.
+      if (utf8IsEmojiControl(cp)) {
+        continue;
+      }
       int32_t advFP = sdIt->second->getAdvance(cp, styleIdx);
       if (advFP == 0 && !utf8IsCombiningMark(cp)) {
-        const EpdGlyph* glyph = font.getGlyph(cp, style);
+        // Missing from the advance table: emoji codepoints come from the
+        // same-pixel-size emoji fallback font, mirroring drawText.
+        const EpdFont* glyphFont = font.getFont(style);
+        const EpdGlyph* glyph = glyphFont->getGlyphWithEmojiFallback(cp);
         advFP = glyph ? glyph->advanceX : 0;
       }
       widthFP += isSupSub ? (advFP + 1) / 2 : advFP;
@@ -1933,12 +2027,17 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   int widthPx = 0;
   int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
   const auto& font = fontIt->second;
+  const EpdFont* styleFont = font.getFont(style);
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
     // RTL vowel marks (niqqud/harakat) are zero-advance overlays in drawText — no width.
     if (BidiUtils::isTransparentMark(cp)) {
       continue;
     }
     if (utf8IsCombiningMark(cp)) {
+      continue;
+    }
+    // Invisible emoji sequence controls (ZWJ, VS16) draw nothing in drawText.
+    if (utf8IsEmojiControl(cp)) {
       continue;
     }
     cp = font.applyLigatures(cp, text, style);
@@ -1950,7 +2049,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
       widthPx += fp4::toPixel(prevAdvanceFP + kernFP);         // snap 12.4 fixed-point to nearest pixel
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    // Emoji codepoints the font lacks come from the same-pixel-size emoji
+    // fallback font, mirroring drawText.
+    const EpdGlyph* glyph = styleFont->getGlyphWithEmojiFallback(cp);
     prevAdvanceFP = glyph ? glyph->advanceX : 0;
     if ((style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
       prevAdvanceFP = (prevAdvanceFP + 1) / 2;
@@ -2010,6 +2111,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
   }
 
   const auto& font = fontIt->second;
+  const EpdFont* styleFont = font.getFont(style);
 
   int lastBaseY = y;
   int lastBaseLeft = 0;
@@ -2020,6 +2122,9 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
+    // Invisible emoji sequence controls (ZWJ, VS16): zero-width, no bitmap.
+    if (utf8IsEmojiControl(cp)) continue;
+
     // RTL vowel marks (Hebrew niqqud, Arabic harakat) ride the combining-mark
     // path: zero-advance overlays on the preceding base glyph (applyBidiVisual
     // emits base-then-marks per UAX#9 L3). anchorFor pins position-sensitive
@@ -2028,7 +2133,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     // font-native position. Fonts without their glyphs — the built-ins — miss
     // the getGlyph lookup and skip them, as before.
     if (utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) {
-      const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
+      const EpdGlyph* combiningGlyph = styleFont->getGlyph(cp);
       if (!combiningGlyph) continue;
       const auto anchor = combiningMark::anchorFor(cp);
       const int raiseBy =
@@ -2036,7 +2141,8 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
       const int combiningX = x - raiseBy;
       const int combiningY = combiningMark::anchorOverRotated90CW(anchor, lastBaseY, lastBaseLeft, lastBaseWidth,
                                                                   combiningGlyph->left, combiningGlyph->width);
-      renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, combiningX, combiningY, black, style);
+      renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, *styleFont, combiningGlyph, combiningX, combiningY,
+                                                black);
       continue;
     }
 
@@ -2049,14 +2155,15 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
       lastBaseY -= fp4::toPixel(prevAdvanceFP + kernFP);       // snap 12.4 fixed-point to nearest pixel
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdFont* glyphFont = styleFont;
+    const EpdGlyph* glyph = styleFont->getGlyphWithEmojiFallback(cp, &glyphFont);
 
     lastBaseLeft = glyph ? glyph->left : 0;
     lastBaseWidth = glyph ? glyph->width : 0;
     lastBaseTop = glyph ? glyph->top : 0;
     prevAdvanceFP = glyph ? glyph->advanceX : 0;  // 12.4 fixed-point
 
-    renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, x, lastBaseY, black, style);
+    renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, *glyphFont, glyph, x, lastBaseY, black);
     prevCp = cp;
   }
 }

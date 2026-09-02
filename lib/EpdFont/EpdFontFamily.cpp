@@ -39,3 +39,13 @@ int8_t EpdFontFamily::getKerning(const uint32_t leftCp, const uint32_t rightCp, 
 uint32_t EpdFontFamily::applyLigatures(const uint32_t cp, const char*& text, const Style style) const {
   return getFont(style)->applyLigatures(cp, text);
 }
+
+void EpdFontFamily::setEmojiFallback(const EpdFontFamily* fallback) {
+  // Per-style pairing: each of this family's style fonts falls back to the
+  // emoji family's font for the same style. Emoji-only families ship a single
+  // regular cut, so getFont() resolves bold/italic requests to it.
+  if (regular) regular->setEmojiFallback(fallback ? fallback->getFont(REGULAR) : nullptr);
+  if (bold) bold->setEmojiFallback(fallback ? fallback->getFont(BOLD) : nullptr);
+  if (italic) italic->setEmojiFallback(fallback ? fallback->getFont(ITALIC) : nullptr);
+  if (boldItalic) boldItalic->setEmojiFallback(fallback ? fallback->getFont(BOLD_ITALIC) : nullptr);
+}

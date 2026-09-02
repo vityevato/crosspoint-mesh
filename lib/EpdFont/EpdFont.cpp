@@ -23,13 +23,17 @@ void EpdFont::getTextBounds(const char* string, const int startX, const int star
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&string)))) {
+    // Invisible emoji sequence controls (ZWJ, VS16): zero-width, no bitmap,
+    // and they must not produce a replacement-glyph box.
+    if (utf8IsEmojiControl(cp)) continue;
+
     const bool isCombining = utf8IsCombiningMark(cp);
 
     if (!isCombining) {
       cp = applyLigatures(cp, string);
     }
 
-    const EpdGlyph* glyph = getGlyph(cp);
+    const EpdGlyph* glyph = getGlyphWithEmojiFallback(cp);
     if (!glyph) {
       // Keep cursor movement stable when a base glyph is missing, but don't attach subsequent
       // combining marks to stale base metrics.
@@ -189,6 +193,25 @@ const EpdGlyph* EpdFont::getGlyph(const uint32_t cp) const {
   return nullptr;
 }
 
+const EpdGlyph* EpdFont::getGlyphWithEmojiFallback(const uint32_t cp, const EpdFont** usedFont) const {
+  if (usedFont) *usedFont = this;
+  // Fast path: no fallback registered — zero overhead for the reader font
+  // pipeline, which never sets one.
+  if (emojiFallback == nullptr) {
+    return getGlyph(cp);
+  }
+  if (hasCodepoint(cp)) {
+    return getGlyph(cp);
+  }
+  if (utf8IsEmojiCodepoint(cp) && emojiFallback->hasCodepoint(cp)) {
+    if (usedFont) *usedFont = emojiFallback;
+    return emojiFallback->getGlyph(cp);
+  }
+  // Unrenderable emoji keeps the replacement-glyph box (matches pre-emoji
+  // behaviour); non-emoji misses fall through to the same path.
+  return getGlyph(cp);
+}
+
 bool EpdFont::hasCodepoint(const uint32_t cp) const {
   const int count = data->intervalCount;
   if (count > 0) {
@@ -198,7 +221,6 @@ bool EpdFont::hasCodepoint(const uint32_t cp) const {
         intervals, end, cp, [](uint32_t value, const EpdUnicodeInterval& interval) { return value < interval.first; });
     if (it != intervals && cp <= (it - 1)->last) return true;
   }
-
   // Interval table miss. SD card fonts only keep the current page's glyphs in
   // their interval table — ask their full RAM-resident coverage index instead.
   if (data->coverageHandler) {

@@ -52,6 +52,31 @@ There are three ways to install fonts:
 
 3. Insert the SD card and power on your CrossPoint reader
 
+## Emoji Pack
+
+The **Emoji** family is a special-purpose font: a monochrome emoji subset
+that MeshCore chats use as a per-glyph fallback (message bodies rendered
+with the active reader font fall back to the Emoji pack of the same point
+size). It ships in `lib/EpdFont/prebuilt/Emoji/` as prebuilt `.cpfont`
+files, so no build step is needed:
+
+- Copy `Emoji/` to `/.fonts/Emoji/` (or `/fonts/Emoji/`) on the SD card,
+  or upload the files through the web interface's Fonts tab.
+- Rebuild after changing the curated subset
+  (`lib/EpdFont/scripts/emoji_ranges.py`):
+
+  ```sh
+  python3 lib/EpdFont/scripts/build-sd-fonts.py \
+      --only Emoji --output-dir lib/EpdFont/prebuilt
+  ```
+
+Unlike regular families, the Emoji pack never appears in the reader
+font-family pickers (device and web settings) and is never offered in
+the on-device font download menu: it is a chat fallback installed
+locally only (web upload or manual SD copy). When the pack is absent,
+chats degrade to the built-in 10 px emoji subset; emoji outside that
+subset render as replacement boxes.
+
 ## CJK in the User Interface
 
 The built-in UI fonts are Latin-only, so by default the interface (book titles

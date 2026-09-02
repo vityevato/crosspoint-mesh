@@ -20,6 +20,7 @@
 #include "FontCacheManager.h"
 #include "Memory.h"
 #include "MeshCoreMessageRenderer.h"
+#include "SdCardFontSystem.h"
 #include "ThreadMenuRenderer.h"
 #include "ThreadMessenger.h"
 #include "ThreadScroller.h"
@@ -96,6 +97,11 @@ void MeshCoreThreadActivity::onEnter() {
 
   _dcPopup.setClock(&millis);
   _dcPopup.arm(client.getState() == BleConnectionState::CONNECTED);
+
+  // Re-sync SD font state before resolving the body font: the reader font or
+  // the Emoji pack may have been installed/removed (web UI, font download
+  // activity) while the hub was open. Cheap no-op when nothing changed.
+  sdFontSystem.ensureLoaded(renderer);
 
   resolveBodyFont();
   const auto& metrics = UITheme::getInstance().getMetrics();

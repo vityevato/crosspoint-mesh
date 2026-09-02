@@ -104,6 +104,12 @@ EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, 
 EpdFont smallFont(&notosans_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
+// Monochrome emoji fallback for the chat UI font (same 10px size as UI_10).
+// Drawn per glyph when the primary font lacks an emoji codepoint — see
+// GfxRenderer::setEmojiFallbackFont().
+EpdFont emoji10Font(&emoji_10_regular);
+EpdFontFamily emoji10FontFamily(&emoji10Font);
+
 EpdFont ui10RegularFont(&ubuntu_10_regular);
 EpdFont ui10BoldFont(&ubuntu_10_bold);
 EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont);
@@ -262,6 +268,11 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+  renderer.insertFont(EMOJI_10_FONT_ID, emoji10FontFamily);
+  // Chat bodies, sender names and metadata use UI_10 — give it the built-in
+  // emoji fallback. Reader-font bodies get their fallback from the SD Emoji
+  // family (see SdCardFontSystem::setupEmojiFallback).
+  renderer.setEmojiFallbackFont(UI_10_FONT_ID, EMOJI_10_FONT_ID);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

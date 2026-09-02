@@ -24,11 +24,13 @@ constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_L
 
 int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontFamilyName, uint8_t fontFamily) {
   if (sdFontFamilyName[0] != '\0' && registry) {
-    const auto& families = registry->getFamilies();
-    for (int i = 0; i < static_cast<int>(families.size()); i++) {
-      if (families[i].name == sdFontFamilyName) {
-        return CrossPointSettings::BUILTIN_FONT_COUNT + i;
-      }
+    // Count only the families the Family tab actually lists (the Emoji pack
+    // is a chat fallback and never appears as a reading-font row).
+    int listIdx = CrossPointSettings::BUILTIN_FONT_COUNT;
+    for (const auto& family : registry->getFamilies()) {
+      if (SdCardFontRegistry::isEmojiFamilyName(family.name.c_str())) continue;
+      if (family.name == sdFontFamilyName) return listIdx;
+      ++listIdx;
     }
   }
 
@@ -63,6 +65,9 @@ void TextSettingsActivity::onEnter() {
   if (registry_) {
     const auto& families = registry_->getFamilies();
     for (int i = 0; i < static_cast<int>(families.size()); i++) {
+      // The Emoji pack is a chat fallback, not a reading font. settingIndex
+      // keeps the raw registry index so applyFamily() maps back correctly.
+      if (SdCardFontRegistry::isEmojiFamilyName(families[i].name.c_str())) continue;
       fonts_.push_back({families[i].name, false, static_cast<uint8_t>(CrossPointSettings::BUILTIN_FONT_COUNT + i)});
     }
   }

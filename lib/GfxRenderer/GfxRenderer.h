@@ -84,6 +84,11 @@ class GfxRenderer {
   // app-level SD font setup when an SD family is loaded. See resolveTextFontId().
   std::map<int, int> fallbackFontMap_;
 
+  // Per-glyph emoji fallback map: font id -> emoji font id of the same pixel
+  // size (see setEmojiFallbackFont()). Kept in sync with the EpdFont-level
+  // fallback pointers the measurement path uses.
+  std::map<int, int> emojiFallbackMap_;
+
   // If `text` contains a CJK codepoint that `fontId` cannot render and `fontId`
   // has a registered fallback, returns the fallback id; otherwise returns
   // fontId unchanged. The whole string is routed as a unit so each draw/measure
@@ -147,6 +152,21 @@ class GfxRenderer {
   // setFallbackFont maps a primary UI font id to an SD font id of the same size.
   void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
   void clearFallbackFonts() { fallbackFontMap_.clear(); }
+
+  // Per-glyph emoji fallback (see EpdFont::getGlyphWithEmojiFallback): maps a
+  // font id to an emoji font id of the SAME pixel size. Text glyphs always come
+  // from the primary font; only emoji codepoints the primary lacks are drawn
+  // from the mapped font. Also installs the fallback pointer on the primary
+  // family's EpdFont objects so width measurement stays pixel-identical to
+  // rendering. emojiFontId == 0 clears the pair.
+  void setEmojiFallbackFont(int primaryFontId, int emojiFontId);
+  void clearEmojiFallbackFonts();
+
+  // During scan-mode prewarming, record the emoji-only codepoints of `text`
+  // (those `fontId` lacks and `emojiFontId` covers) against `emojiFontId` so
+  // SD-card emoji glyphs get prefetched like the rest of the line.
+  void recordEmojiCacheText(FontCacheManager* cache, int fontId, int emojiFontId, const char* text,
+                            EpdFontFamily::Style style) const;
   // Ensure SD card font glyph data is loaded for the given text. Called from layout code
   // (which holds a const GfxRenderer&) before measuring word widths. Safe to call on non-SD fonts (no-op).
   // styleMask: bitmask of styles to prepare (bit 0=regular, 1=bold, 2=italic, 3=bold-italic).

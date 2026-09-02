@@ -271,3 +271,138 @@ TEST(EpdFont, HeightCalculation) {
   EXPECT_EQ(textHeight("To"), 12);
   EXPECT_EQ(textHeight("oo"), 8);
 }
+
+// ============================================================================
+// Part 3: Per-glyph emoji fallback
+// ============================================================================
+
+namespace {
+
+// Synthetic emoji fallback font: a single U+1F600 (😀) glyph, 10px square,
+// advance exactly 10px (160 FP). No kerning, no replacement glyph.
+// clang-format off
+const EpdGlyph kEmojiGlyphs[] = {
+  /* 0 U+1F600 */ { 10, 10, 160, 0, 10, 0, 0 },
+};
+const EpdUnicodeInterval kEmojiIntervals[] = {
+  { 0x1F600, 0x1F600, 0 },
+};
+const EpdFontData kEmojiFontData = {
+  .bitmap            = nullptr,
+  .glyph             = kEmojiGlyphs,
+  .intervals         = kEmojiIntervals,
+  .intervalCount     = 1,
+  .advanceY          = 16,
+  .ascender          = 10,
+  .descender         = 0,
+  .is2Bit            = false,
+  .groups            = nullptr,
+  .groupCount        = 0,
+  .glyphToGroup      = nullptr,
+  .kernLeftClasses   = nullptr,
+  .kernRightClasses  = nullptr,
+  .kernMatrix        = nullptr,
+  .kernLeftEntryCount  = 0,
+  .kernRightEntryCount = 0,
+  .kernLeftClassCount  = 0,
+  .kernRightClassCount = 0,
+  .ligaturePairs     = nullptr,
+  .ligaturePairCount = 0,
+  .glyphMissHandler  = nullptr,
+  .glyphMissCtx      = nullptr,
+};
+
+// Base test font plus a U+FFFD replacement glyph (width 7) — used to verify
+// that unrenderable emoji keep drawing the replacement box.
+const EpdGlyph kFffdGlyphs[] = {
+  { 8, 12, 137, 0, 12, 0, 0 },  // 'T'
+  { 7,  8, 130, 0,  8, 0, 0 },  // 'a'
+  { 8,  8, 145, 0,  8, 0, 0 },  // 'o'
+  { 7,  8, 136, 0,  8, 0, 0 },  // 'x'
+  { 7,  8, 120, 0,  8, 0, 0 },  // U+FFFD
+};
+const EpdUnicodeInterval kFffdIntervals[] = {
+  { 0x54, 0x54, 0 },
+  { 0x61, 0x61, 1 },
+  { 0x6F, 0x6F, 2 },
+  { 0x78, 0x78, 3 },
+  { 0xFFFD, 0xFFFD, 4 },
+};
+const EpdFontData kFffdFontData = {
+  .bitmap            = nullptr,
+  .glyph             = kFffdGlyphs,
+  .intervals         = kFffdIntervals,
+  .intervalCount     = 5,
+  .advanceY          = 16,
+  .ascender          = 12,
+  .descender         = 0,
+  .is2Bit            = false,
+  .groups            = nullptr,
+  .groupCount        = 0,
+  .glyphToGroup      = nullptr,
+  .kernLeftClasses   = kKernLeft,
+  .kernRightClasses  = kKernRight,
+  .kernMatrix        = kKernMatrix,
+  .kernLeftEntryCount  = 2,
+  .kernRightEntryCount = 2,
+  .kernLeftClassCount  = 2,
+  .kernRightClassCount = 2,
+  .ligaturePairs     = nullptr,
+  .ligaturePairCount = 0,
+  .glyphMissHandler  = nullptr,
+  .glyphMissCtx      = nullptr,
+};
+// clang-format on
+
+const EpdFont& emojiTestFont() {
+  static EpdFont font(&kEmojiFontData);
+  return font;
+}
+
+}  // namespace
+
+TEST(EpdFont, EmojiFallbackNotRegistered) {
+  testFont().setEmojiFallback(nullptr);
+  // Base font has no FFFD: an emoji with no fallback contributes nothing.
+  EXPECT_EQ(textWidth("\xF0\x9F\x98\x80"), 0);  // U+1F600
+}
+
+TEST(EpdFont, EmojiFallbackUsesFallbackGlyph) {
+  testFont().setEmojiFallback(&emojiTestFont());
+  EXPECT_EQ(textWidth("\xF0\x9F\x98\x80"), 10);  // U+1F600 from fallback font
+  testFont().setEmojiFallback(nullptr);
+}
+
+TEST(EpdFont, EmojiFallbackAdvanceIsAdditive) {
+  testFont().setEmojiFallback(&emojiTestFont());
+  // "😀x": emoji advance is exactly 10px (no kerning to/from emoji — codepoints
+  // above 0xFFFF are excluded from kern lookup), 'x' occupies [10, 17).
+  EXPECT_EQ(textWidth("\xF0\x9F\x98\x80x"), 17);
+  // Text-only strings are unaffected by the fallback registration.
+  EXPECT_EQ(textWidth("ax"), 15);
+  testFont().setEmojiFallback(nullptr);
+}
+
+TEST(EpdFont, EmojiFallbackSkipsZwjAndVs16) {
+  testFont().setEmojiFallback(&emojiTestFont());
+  // ZWJ (U+200D) and VS16 (U+FE0F) are invisible controls: zero width, no box.
+  EXPECT_EQ(textWidth("\xF0\x9F\x98\x80\xE2\x80\x8D\xF0\x9F\x98\x80"), 20);  // 😀 ZWJ 😀
+  EXPECT_EQ(textWidth("\xF0\x9F\x98\x80\xEF\xB8\x8F"), 10);                  // 😀 VS16
+  testFont().setEmojiFallback(nullptr);
+}
+
+TEST(EpdFont, EmojiFallbackUncoveredKeepsReplacementBox) {
+  // Primary WITH a U+FFFD glyph: an emoji neither font covers must keep the
+  // replacement box (pre-emoji behaviour preserved on purpose).
+  EpdFont fffdFont(&kFffdFontData);
+  fffdFont.setEmojiFallback(&emojiTestFont());
+
+  int w = 0, h = 0;
+  fffdFont.getTextDimensions("\xF0\x9F\x98\x81", &w, &h);  // U+1F601 uncovered
+  EXPECT_EQ(w, 7);                                         // FFFD box width
+  fffdFont.getTextDimensions("\xF0\x9F\x98\x80", &w, &h);  // U+1F600 covered
+  EXPECT_EQ(w, 10);                                        // fallback glyph
+  // Non-emoji missing codepoints keep the box too.
+  fffdFont.getTextDimensions("Z", &w, &h);
+  EXPECT_EQ(w, 7);
+}

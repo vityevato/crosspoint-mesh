@@ -44,6 +44,7 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
       - [3.9.4 Conversation Thread](#394-conversation-thread)
       - [3.9.5 Discovery Nodes](#395-discovery-nodes)
       - [3.9.6 Companion Status](#396-companion-status)
+      - [3.9.7 Emoji in Chats](#397-emoji-in-chats)
     - [3.10 Text Entry (T4 Keyboard)](#310-text-entry-t4-keyboard)
   - [4. Reading Mode](#4-reading-mode)
     - [Page Turning](#page-turning)
@@ -708,6 +709,36 @@ count.
 Shows the connected companion's details as a popup: **Name**, **Model**,
 **Firmware**, **Battery** voltage, and **Radio** configuration (frequency,
 bandwidth, spreading factor, coding rate). Press **Back** to close it.
+
+#### 3.9.7 Emoji in Chats
+
+Messages in MeshCore threads can contain emoji. They render as
+monochrome (black-and-white) pictographs on the e-ink screen.
+
+Emoji rendering works out of the box: a built-in 10 px emoji font covers
+the most common emoji (smileys, gestures, hearts, flags, and other
+popular pictographs). When chats use a reading font (thread menu →
+**Use Reader Font in Conversations** is on), emoji first try to match
+the reading font's size through the optional **Emoji pack** installed on
+the SD card, and fall back to the built-in 10 px subset when the pack is
+absent — emoji then look smaller than the surrounding text.
+
+The full-size **Emoji pack** (12/14/16/18 pt, matching the reading font
+sizes) is installed locally only (it is not offered in the on-device
+font download menu):
+
+1. **Upload via web interface:** File Transfer → Fonts tab → upload the
+   `.cpfont` files from `lib/EpdFont/prebuilt/Emoji/` in the repository.
+2. **Manual SD card copy:** copy the `Emoji/` folder from
+   `lib/EpdFont/prebuilt/` to `/.fonts/Emoji/` (or `/fonts/Emoji/`) on
+   the SD card and reboot.
+
+The Emoji pack is a chat fallback, not a reading font: it never appears
+in the reader font-family pickers. Without the pack, emoji not covered
+by the built-in subset show as a small replacement box.
+
+See the [Emoji Pack README](lib/EpdFont/prebuilt/README.md) for the pack
+contents, the prebuilt files, and how to rebuild it.
 
 ---
 

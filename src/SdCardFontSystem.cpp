@@ -64,6 +64,12 @@ void SdCardFontSystem::begin(GfxRenderer& renderer) {
     }
   }
 
+  // loadFamily() may have unloaded fonts (which clears all emoji fallbacks,
+  // including the built-in pair) — re-assert the built-in pairing, and pair
+  // the active reader font (SD or built-in) with the Emoji pack if installed.
+  setupBuiltinEmojiFallback(renderer);
+  setupEmojiFallback(renderer);
+
   LOG_DBG("SDFS", "SD font system ready (%d families discovered)", registry_.getFamilyCount());
 }
 
@@ -89,6 +95,8 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     // a size inherited from an SD family has to come back into that set.
     snapFontPointSizeTo(snapToNearestPointSize(BUILTIN_READER_POINT_SIZES, std::size(BUILTIN_READER_POINT_SIZES),
                                                SETTINGS.fontPointSize));
+    setupBuiltinEmojiFallback(renderer);
+    setupEmojiFallback(renderer);
     return;
   }
 
@@ -132,6 +140,12 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
     SETTINGS.clearSdFontFamily();
   }
+
+  // unloadAll() clears every emoji fallback (including the built-in pair)
+  // whenever a family is reloaded — re-assert the built-in pairing and the
+  // reader-size Emoji pairing for whichever font ended up active.
+  setupBuiltinEmojiFallback(renderer);
+  setupEmojiFallback(renderer);
 }
 
 void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
@@ -164,10 +178,54 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
     const int sdFontId = manager_.loadFamilyExtraSize(*family, renderer, ui.pointSize);
     if (sdFontId != 0) {
       renderer.setFallbackFont(ui.fontId, sdFontId);
+      // MeshCore chat lines containing CJK are whole-string routed to this
+      // 10pt instance (body font UI_10). Pair it with the built-in 10px emoji
+      // font so emoji survive the routing.
+      if (ui.fontId == UI_10_FONT_ID) {
+        renderer.setEmojiFallbackFont(sdFontId, EMOJI_10_FONT_ID);
+      }
     } else {
       LOG_DBG("SDFS", "No %u pt SD glyphs for UI fallback in %s", ui.pointSize, familyName.c_str());
     }
   }
+}
+
+void SdCardFontSystem::setupEmojiFallback(GfxRenderer& renderer) {
+  // Reader-size pairing covers two cases: the loaded SD reader family, or —
+  // when no SD family is loaded — the active built-in reader font (both can
+  // render chat bodies depending on "use reader font in chats").
+  int readerFontId = manager_.getFontId(manager_.currentFamilyName());
+  uint8_t emojiSize = manager_.currentPointSize();
+  if (readerFontId == 0) {
+    readerFontId = SETTINGS.getReaderFontId();
+    emojiSize = SETTINGS.fontPointSize;
+  }
+  if (readerFontId == 0) return;
+
+  // Preferred: the SD Emoji pack at the same point size as the reader font.
+  const auto* emojiFamily = registry_.findFamily(SdCardFontRegistry::EMOJI_FAMILY_NAME);
+  if (emojiFamily) {
+    const int emojiFontId = manager_.loadFamilyExtraSize(*emojiFamily, renderer, emojiSize);
+    if (emojiFontId != 0) {
+      renderer.setEmojiFallbackFont(readerFontId, emojiFontId);
+      return;
+    }
+    LOG_DBG("SDFS", "No %u pt Emoji glyphs available", emojiSize);
+  } else {
+    LOG_DBG("SDFS", "Emoji family not installed");
+  }
+
+  // Degraded mode: no SD Emoji pack (or its size is missing) — pair the
+  // reader font with the built-in 10px emoji font instead, so chats still
+  // draw pictographs (smaller than the surrounding text) rather than
+  // replacement boxes. Emoji the built-in subset lacks keep their boxes.
+  renderer.setEmojiFallbackFont(readerFontId, EMOJI_10_FONT_ID);
+}
+
+void SdCardFontSystem::setupBuiltinEmojiFallback(GfxRenderer& renderer) {
+  // Built-in chat fonts always fall back to the built-in 10px emoji font,
+  // regardless of which SD family (if any) is loaded.
+  renderer.setEmojiFallbackFont(UI_10_FONT_ID, EMOJI_10_FONT_ID);
 }
 
 int SdCardFontSystem::resolveFontId(const char* familyName, uint8_t /*pointSize*/) const {

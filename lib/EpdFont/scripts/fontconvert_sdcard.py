@@ -33,6 +33,7 @@ import argparse
 from collections import namedtuple
 
 from cpfont_version import CPFONT_VERSION
+from emoji_ranges import EMOJI_INTERVALS
 
 # --- Unicode interval presets ---
 
@@ -78,6 +79,9 @@ INTERVAL_PRESETS = {
                     (0x1EA0, 0x1EF9), (0x2000, 0x206F), (0x20A0, 0x20CF),
                     (0x2070, 0x209F), (0x2190, 0x21FF), (0x2200, 0x22FF),
                     (0xFB00, 0xFB06)],
+    # Curated monochrome emoji subset (emoji_ranges.py) for the MeshCore
+    # chat Emoji family. Generate from the monochrome Noto Emoji TTF.
+    "emoji":       EMOJI_INTERVALS,
 }
 
 # Regex for parsing unnamed hex range intervals: (0xSTART-0xEND)
