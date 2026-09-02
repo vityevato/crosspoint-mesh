@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 /**
  * Lightweight ephemeral status-message overlay for header subtitles.
@@ -107,6 +108,11 @@ class StatusMessageOverlay {
 
   /** @return true if a status message is currently being displayed. */
   bool isActive() const { return _message[0] != '\0'; }
+
+  /** @return true when the active message equals @p msg (no active message
+   *  never matches, even for an empty @p msg). Lets callers clear a toast
+   *  only when it is still theirs. */
+  bool matches(const char* msg) const { return _message[0] != '\0' && strcmp(_message, msg) == 0; }
 
  private:
   char _message[64] = {};

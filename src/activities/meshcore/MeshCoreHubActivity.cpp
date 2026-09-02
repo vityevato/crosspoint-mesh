@@ -269,18 +269,62 @@ void MeshCoreHubActivity::loop() {
   }
 
   // Channel activity: load the newest message timestamp per configured channel
-  // once the channel list is in (and after every reconnect).
+  // once the channel list is in (and after every reconnect). Chunked like the
+  // contact sweep so SD reads never block the main loop for long.
   if (_channelActivityNeedsLoad && channelCount > 0 && !client.isCommandPending() && store.hasCompanionKey()) {
-    for (uint8_t i = 0; i < channelCount && i < MESHCORE_MAX_CHANNELS; ++i) {
-      if (!channels[i].configured) continue;
+    constexpr uint8_t kChannelSweepChunk = 8;
+    for (uint8_t chunkDone = 0; chunkDone < kChannelSweepChunk && _channelActivityIndex < channelCount &&
+                                _channelActivityIndex < MESHCORE_MAX_CHANNELS;
+         ++_channelActivityIndex) {
+      if (!channels[_channelActivityIndex].configured) continue;
+      ++chunkDone;
       uint32_t ts = 0;
       MeshCoreMessage last;
-      if (store.loadNewestChannelMessage(i, last)) {
+      if (store.loadNewestChannelMessage(_channelActivityIndex, last)) {
         ts = last.timestamp;
       }
-      channelLastActivity[i] = ts;
+      channelLastActivity[_channelActivityIndex] = ts;
     }
-    _channelActivityNeedsLoad = false;
+    if (_channelActivityIndex >= channelCount) {
+      _channelActivityNeedsLoad = false;
+      _channelActivityIndex = 0;
+      requestUpdate();
+    }
+  }
+
+  // Channel-sync progress toast: while the client is still fetching channel
+  // info, show "Reading channels… (done/total)" in the header subtitle.
+  if (client.isChannelSyncActive()) {
+    const uint8_t done = client.getChannelSyncDone();
+    if (done != _channelSyncToastDone) {
+      _channelSyncToastDone = done;
+      snprintf(_channelSyncToastText, sizeof(_channelSyncToastText), tr(STR_MESHCORE_SYNC_CHANNELS),
+               static_cast<unsigned>(done), static_cast<unsigned>(client.getChannelSyncTotal()));
+      _toast.show(_channelSyncToastText, 0);
+      requestDebouncedUpdate();
+    }
+  } else if (_channelSyncToastDone != 0xFF) {
+    _channelSyncToastDone = 0xFF;
+    if (_toast.matches(_channelSyncToastText)) {
+      _toast.clear();
+      requestUpdate();
+    }
+  }
+
+  // Message-drain toast: clear "Reading messages…" once the stream has been
+  // silent for MESSAGE_DRAIN_IDLE_MS.
+  if (_msgDrainToastActive && _toast.matches(tr(STR_MESHCORE_SYNC_MESSAGES)) &&
+      static_cast<uint32_t>(millis() - _lastIncomingMsgMs) >= MESSAGE_DRAIN_IDLE_MS) {
+    _msgDrainToastActive = false;
+    _toast.clear();
+    requestUpdate();
+  }
+
+  // Trailing list redraw: if the last bursty update (channel info or incoming
+  // message) arrived within the debounce window, flush once it settles.
+  if (_listUpdateQueued && static_cast<uint32_t>(millis() - _listUpdateAtMs) >= LIST_UPDATE_DEBOUNCE_MS) {
+    _listUpdateQueued = false;
+    _listUpdateAtMs = millis();
     requestUpdate();
   }
 
@@ -824,6 +868,7 @@ void MeshCoreHubActivity::handleStateChange(BleConnectionState state) {
 
     // Re-rank channels by message activity after (re)connecting.
     _channelActivityNeedsLoad = true;
+    _channelActivityIndex = 0;
 
     // Always land on the first tab after (re)connecting — a previous
     // disconnect/auto-rescan can otherwise leave the user on the last tab.
@@ -884,7 +929,12 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
           contactLastActivity[i] = msgWithHeight.timestamp;
           rebuildContactSortIndex();  // sender rises to the top (after favourites)
         }
-        requestUpdate();
+        // While the offline-queue drain streams messages, show a persistent
+        // "Reading messages…" toast instead of the standard subtitle.
+        _toast.show(tr(STR_MESHCORE_SYNC_MESSAGES), 0);
+        _msgDrainToastActive = true;
+        _lastIncomingMsgMs = millis();
+        requestDebouncedUpdate();
         return;
       }
     }
@@ -892,7 +942,12 @@ void MeshCoreHubActivity::handleMessage(const MeshCoreMessage& msg) {
     LOG_DBG("MESH", "Discarding DM from non-contact");
     return;
   }
-  requestUpdate();
+  // While the offline-queue drain streams messages, show a persistent
+  // "Reading messages…" toast instead of the standard subtitle.
+  _toast.show(tr(STR_MESHCORE_SYNC_MESSAGES), 0);
+  _msgDrainToastActive = true;
+  _lastIncomingMsgMs = millis();
+  requestDebouncedUpdate();
 }
 
 bool MeshCoreHubActivity::ensureContactsCapacity(uint16_t needed) {
@@ -1166,14 +1221,31 @@ void MeshCoreHubActivity::handleAdvert(const MeshCoreContact& node) {
 }
 
 void MeshCoreHubActivity::handleChannel(const MeshCoreChannel& ch) {
-  if (ch.index < 8) {
-    uint16_t prevUnread = channels[ch.index].unreadCount;
-    channels[ch.index] = ch;
-    // Preserve the unread counter: PKT_CHANNEL_INFO carries no unread count
-    // (parseChannelInfo leaves it 0), so copying the whole struct would wipe
-    // the persisted/accumulated value on every (re)connect.
-    channels[ch.index].unreadCount = prevUnread;
+  if (ch.index >= MESHCORE_MAX_CHANNELS) return;
+  uint16_t prevUnread = channels[ch.index].unreadCount;
+  const bool changed = !channels[ch.index].configured || strcmp(channels[ch.index].name, ch.name) != 0 ||
+                       channels[ch.index].type != ch.type;
+  channels[ch.index] = ch;
+  // Preserve the unread counter: PKT_CHANNEL_INFO carries no unread count
+  // (parseChannelInfo leaves it 0), so copying the whole struct would wipe
+  // the persisted/accumulated value on every (re)connect.
+  channels[ch.index].unreadCount = prevUnread;
+
+  // Debounce redraws: a (re)connect delivers one response per channel, and a
+  // full repaint per response would saturate the slow e-ink screen. Repaint at
+  // most every LIST_UPDATE_DEBOUNCE_MS; loop() flushes a trailing change.
+  if (!changed) return;
+  requestDebouncedUpdate();
+}
+
+void MeshCoreHubActivity::requestDebouncedUpdate() {
+  const uint32_t now = millis();
+  if (now - _listUpdateAtMs >= LIST_UPDATE_DEBOUNCE_MS) {
+    _listUpdateAtMs = now;
+    _listUpdateQueued = false;
     requestUpdate();
+  } else {
+    _listUpdateQueued = true;
   }
 }
 
@@ -1212,7 +1284,7 @@ void MeshCoreHubActivity::handleDelivery(uint32_t msgId, const uint8_t* pubkey32
 // --- Navigation ---
 
 void MeshCoreHubActivity::markChannelRead(uint8_t channelIdx) {
-  if (channelIdx < 8 && channels[channelIdx].unreadCount > 0) {
+  if (channelIdx < MESHCORE_MAX_CHANNELS && channels[channelIdx].unreadCount > 0) {
     channels[channelIdx].unreadCount = 0;
     requestUpdate();
   }

@@ -114,7 +114,7 @@ inline bool handleMockKey(const char* activityName, NimBLEClient* bleClient) {
     // Build PKT_CHANNEL_INFO (0x12, 50 bytes) with generated name.
     // Simulates a channel appearing on the device side: lands in the
     // first free slot after the JSON-defined channels, cycling within
-    // the 8 slots the hub can display.
+    // MOCK_MAX_CHANNELS (40) — the range the hub's Channels tab supports.
     if (!bleClient || !bleClient->isConnected()) return false;
 
     const MockCompanion* comp = bleClient->getMockCompanion();

@@ -608,7 +608,7 @@ Lists saved peer contacts. Favourite contacts are pinned to the top
 
 #### 3.9.2 Channels Tab
 
-Lists the LoRa channels configured on the companion (up to 8), sorted by
+Lists the LoRa channels configured on the companion (up to 40), sorted by
 most recent activity. A leading dot marks channels with unread messages;
 the subtitle shows the last message time.
 
