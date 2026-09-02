@@ -837,15 +837,16 @@ if compress:
         (0xFFFD, 0xFFFD),   # Replacement Character
     ]
 
-    # 16 KB cap: bounds the device's transient per-group malloc (prewarm temp
+    # 8 KB cap: bounds the device's transient per-group malloc (prewarm temp
     # buffer and hot-group fallback both allocate one contiguous block of
     # `uncompressedSize`). On the ESP32-C3, once NimBLE is initialised the heap
-    # is fragmented and the largest contiguous block can drop to ~31 KB, so a
-    # single dense script group (e.g. Cyrillic at 16-18 px is ~34-40 KB) could
-    # not be allocated and its glyphs rendered blank. Splitting at 16 KB keeps
-    # every group comfortably allocatable while costing only a few percent of
+    # is fragmented and the largest contiguous block can drop to ~15-21 KB, so
+    # a 16 KB group (e.g. Cyrillic) could not be allocated and its glyphs
+    # rendered blank (field crash: "Failed to allocate temp buffer (16304 bytes)
+    # for group 6" in the MeshCore thread). Splitting at 8 KB keeps every group
+    # allocatable with ~7 KB of headroom while costing only a few percent of
     # DEFLATE ratio (intra-group glyph redundancy dominates the 32 KB window).
-    GROUP_MAX_UNCOMPRESSED_BYTES = 16384
+    GROUP_MAX_UNCOMPRESSED_BYTES = 8192
 
     def get_script_group(code_point):
         for i, (start, end) in enumerate(SCRIPT_GROUP_RANGES):
