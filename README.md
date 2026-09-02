@@ -57,7 +57,7 @@ single device. Community-built, fully hackable, free forever.
     etc.) via encrypted BLE with PIN authentication
   - **Auto-reconnect** — automatically reconnects to the last paired companion when in range
   - **Channels** — join and send messages on public channels, hashtag channels, and
-    encrypted private channels (up to 8)
+    encrypted private channels (up to 40)
   - **Contacts & direct messages** — view saved contacts with unread counts,
     send private messages with paginated conversation history, per-message delivery
     status (Sent / Delivered / Failed), bounded retry escalation (direct → flood),

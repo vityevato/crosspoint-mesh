@@ -530,6 +530,9 @@ void MeshCoreClient::disconnect() {
   _pendingDm = {};
   initialRequestsPending = false;
   msgDrainCount = 0;
+  channelSyncActive = false;
+  channelSyncNext = 0;
+  channelSyncTotal = 0;
 
   if (state != BleConnectionState::DISCONNECTED) {
     setState(BleConnectionState::DISCONNECTED);
@@ -898,10 +901,29 @@ void MeshCoreClient::poll() {
       LOG_ERR("MESH", "Failed to queue battery request");
     }
     requestContacts();
-    for (uint8_t i = 0; i < companion.maxChannels && i < 8; ++i) {
-      requestChannel(i);
+    // Channel info is fetched over the whole companion channel range (up to
+    // MESHCORE_MAX_CHANNELS) in small batches as the command queue drains —
+    // see the refill loop below. The initial message drain (requestMessages)
+    // is deferred until the channel list has been fully requested.
+    channelSyncTotal = (companion.maxChannels > MESHCORE_MAX_CHANNELS) ? MESHCORE_MAX_CHANNELS : companion.maxChannels;
+    channelSyncNext = 0;
+    channelSyncActive = true;
+  }
+
+  // Channel-list sync: refill GET_CHANNEL requests in batches until the whole
+  // companion channel range has been queried. Bounded by the command queue so
+  // the burst never overflows it, and leaving CHANNEL_SYNC_QUEUE_RESERVE slots
+  // free for periodic commands (battery poll, mark-read, sends). Once complete,
+  // fire the deferred initial message drain.
+  if (channelSyncActive && rxChar) {
+    while (channelSyncNext < channelSyncTotal && cmdCount < CMD_QUEUE_SIZE - CHANNEL_SYNC_QUEUE_RESERVE) {
+      if (!requestChannel(channelSyncNext)) break;
+      ++channelSyncNext;
     }
-    requestMessages();
+    if (channelSyncNext >= channelSyncTotal) {
+      channelSyncActive = false;
+      requestMessages();
+    }
   }
 
   // Process all received notifications (ring-buffer drain).

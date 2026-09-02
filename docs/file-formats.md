@@ -355,7 +355,7 @@ subdirectory named after the BLE address with colons stripped
 │   ├── unread.bin            # Unread message counters
 │   ├── pin.bin               # BLE pairing PIN (4 bytes LE)
 │   ├── conv/                 # Conversation storage
-│   │   ├── ch_<N>/           # Channel message threads (N = 0–7)
+│   │   ├── ch_<N>/           # Channel message threads (N = 0–39)
 │   │   │   ├── meta.bin
 │   │   │   └── msgs/
 │   │   │       ├── 1         # MeshCoreMessage (268 bytes), filename = id
