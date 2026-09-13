@@ -24,8 +24,8 @@
 #include "SilentRestart.h"
 #include "activities/reader/QrDisplayActivity.h"
 #include "components/ThemeTabBar.h"
-#include "components/UiAppHelpers.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "thread/MeshCoreThreadActivity.h"
 #include "utils/MeshCoreContactUrlParser.h"
 #include "utils/MeshCoreDisplayUtils.h"
@@ -752,8 +752,8 @@ void MeshCoreHubActivity::render(RenderLock&&) {
   // both follow the active theme; MeshCore hosts its own GfxRendererFrame.
   const int16_t preferredTabHeight =
       mappedInput.hasTouch() ? theme_tab_bar::kTouchBarHeight : static_cast<int16_t>(metrics.tabBarHeight);
-  fui::GfxRendererFrame<theme_tab_bar::kMaxTabs> tabFrame(renderer, uiScaleSpec().smallFontId,
-                                                          uiScaleSpec().bodyFontId, uiScaleSpec().titleFontId);
+  fui::GfxRendererFrame<theme_tab_bar::kMaxTabs> tabFrame(renderer, uiScaleSpec().smallFontId, uiScaleSpec().bodyFontId,
+                                                          uiScaleSpec().titleFontId);
   const fui::ThemeTokens& tabTokens = refreshSharedUiThemeTokens(tabFrame.target);
   const int16_t tabBandHeight = theme_tab_bar::bandHeight(tabFrame.target, tabTokens, preferredTabHeight);
   theme_tab_bar::build(tabFrame.frame, tabFrame.target, tabTokens,

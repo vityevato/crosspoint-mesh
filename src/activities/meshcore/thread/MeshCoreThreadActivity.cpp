@@ -26,8 +26,8 @@
 #include "activities/reader/QrDisplayActivity.h"
 #include "activities/util/TextEntryHelpers.h"
 #include "components/ThemeTabBar.h"
-#include "components/UiAppHelpers.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 
 namespace fui = freeink::ui;
 
@@ -775,8 +775,8 @@ void MeshCoreThreadActivity::_renderNormal() {
   // needed now to size the content area.
   const int16_t preferredTabHeight =
       mappedInput.hasTouch() ? theme_tab_bar::kTouchBarHeight : static_cast<int16_t>(metrics.tabBarHeight);
-  fui::GfxRendererFrame<theme_tab_bar::kMaxTabs> tabFrame(renderer, uiScaleSpec().smallFontId,
-                                                          uiScaleSpec().bodyFontId, uiScaleSpec().titleFontId);
+  fui::GfxRendererFrame<theme_tab_bar::kMaxTabs> tabFrame(renderer, uiScaleSpec().smallFontId, uiScaleSpec().bodyFontId,
+                                                          uiScaleSpec().titleFontId);
   const fui::ThemeTokens& tabTokens = refreshSharedUiThemeTokens(tabFrame.target);
   const int16_t tabBandHeight = theme_tab_bar::bandHeight(tabFrame.target, tabTokens, preferredTabHeight);
 
