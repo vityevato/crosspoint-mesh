@@ -103,3 +103,173 @@ def patch_simulator_hal_clock(env):  # noqa: F811
 
 patch_simulator_hal(env)  # noqa: F821
 patch_simulator_hal_clock(env)  # noqa: F821
+
+
+# Simulator HalStorage stub: the upstream tree added the USB Drive surface
+# (UsbDriveState, prepareForDeepSleep) to lib/hal. The fetched simulator libdep
+# predates it, but src/activities/network/UsbDriveActivity.h and main.cpp
+# reference both, so re-inject the minimal surface. UsbDriveActivity.cpp is
+# excluded from the simulator build, so only prepareForDeepSleep() needs a body.
+HALSTORAGE_ENUM_ANCHOR = "class HalStorage {"
+HALSTORAGE_ENUM = """enum class UsbDriveState : uint8_t {
+  Unsupported,
+  WaitingForHost,
+  Connected,
+  Ejected,
+  Disconnected,
+  IoError,
+};
+
+class HalStorage {"""
+
+HALSTORAGE_READY_ANCHOR = "  bool ready() const;"
+HALSTORAGE_PREPARE_DECL = "  void prepareForDeepSleep();"
+HALSTORAGE_PREPARE_IMPL = "void HalStorage::prepareForDeepSleep() {}\n"
+
+
+def patch_simulator_hal_storage(env):  # noqa: F811
+    libdeps_root = os.path.join(env["PROJECT_DIR"], ".pio", "libdeps")  # noqa: F821
+    if not os.path.isdir(libdeps_root):
+        return
+
+    for env_dir in sorted(os.listdir(libdeps_root)):
+        header = os.path.join(libdeps_root, env_dir, "simulator", "src", "HalStorage.h")
+        source = os.path.join(libdeps_root, env_dir, "simulator", "src", "HalStorage.cpp")
+        if not os.path.isfile(header) or not os.path.isfile(source):
+            continue
+
+        with open(header, "r", encoding="utf-8") as f:
+            header_content = f.read()
+        changed = False
+        if "enum class UsbDriveState" not in header_content and HALSTORAGE_ENUM_ANCHOR in header_content:
+            header_content = header_content.replace(HALSTORAGE_ENUM_ANCHOR, HALSTORAGE_ENUM, 1)
+            changed = True
+        if HALSTORAGE_PREPARE_DECL not in header_content and HALSTORAGE_READY_ANCHOR in header_content:
+            header_content = header_content.replace(HALSTORAGE_READY_ANCHOR,
+                                                    HALSTORAGE_READY_ANCHOR + "\n" + HALSTORAGE_PREPARE_DECL, 1)
+            changed = True
+        if changed:
+            with open(header, "w", encoding="utf-8") as f:
+                f.write(header_content)
+            print("Patched simulator HalStorage.h with USB Drive surface: %s" % header)
+
+        with open(source, "r", encoding="utf-8") as f:
+            source_content = f.read()
+        if "HalStorage::prepareForDeepSleep" not in source_content:
+            source_content = source_content.rstrip("\n") + "\n\n" + HALSTORAGE_PREPARE_IMPL
+            with open(source, "w", encoding="utf-8") as f:
+                f.write(source_content)
+            print("Patched simulator HalStorage.cpp with prepareForDeepSleep(): %s" % source)
+
+
+patch_simulator_hal_storage(env)  # noqa: F821
+
+
+# Simulator BoardConfig stub: upstream grew X4 Classic and Paper Mono targets.
+# The simulator models X3/X4 only, so expose the new predicates as false.
+BOARDCONFIG_ANCHOR = "inline bool hasPwmFrontlight() { return isX4Pro(); }"
+BOARDCONFIG_ADDITIONS = """inline bool hasPwmFrontlight() { return isX4Pro(); }
+inline bool isX4Classic() { return false; }
+inline bool isPaperMono() { return false; }"""
+
+
+def patch_simulator_hal_boardconfig(env):  # noqa: F811
+    libdeps_root = os.path.join(env["PROJECT_DIR"], ".pio", "libdeps")  # noqa: F821
+    if not os.path.isdir(libdeps_root):
+        return
+
+    for env_dir in sorted(os.listdir(libdeps_root)):
+        header = os.path.join(libdeps_root, env_dir, "simulator", "src", "BoardConfig.h")
+        if not os.path.isfile(header):
+            continue
+        with open(header, "r", encoding="utf-8") as f:
+            content = f.read()
+        if "isX4Classic" in content or "isPaperMono" in content:
+            continue
+        if BOARDCONFIG_ANCHOR not in content:
+            print("WARNING: simulator BoardConfig.h anchor missing in %s" % header)
+            continue
+        content = content.replace(BOARDCONFIG_ANCHOR, BOARDCONFIG_ADDITIONS, 1)
+        with open(header, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("Patched simulator BoardConfig.h with X4 Classic / Paper Mono predicates: %s" % header)
+
+
+patch_simulator_hal_boardconfig(env)  # noqa: F821
+
+
+# Simulator HalGPIO stub: upstream collapsed verifyPowerButtonWakeup() to a
+# zero-argument call (the HAL keeps the press-hold state itself). The fetched
+# simulator libdep still exposes the older (duration, shortPress) form; add the
+# zero-argument overload. Host wakes are synthetic, so it always succeeds.
+HALGPIO_ANCHOR = """  bool verifyPowerButtonWakeup(uint16_t requiredDurationMs,
+                               bool shortPressAllowed);"""
+HALGPIO_ADDITION = """  bool verifyPowerButtonWakeup(uint16_t requiredDurationMs,
+                               bool shortPressAllowed);
+  bool verifyPowerButtonWakeup() const { return true; }"""
+
+
+def patch_simulator_hal_gpio(env):  # noqa: F811
+    libdeps_root = os.path.join(env["PROJECT_DIR"], ".pio", "libdeps")  # noqa: F821
+    if not os.path.isdir(libdeps_root):
+        return
+
+    for env_dir in sorted(os.listdir(libdeps_root)):
+        header = os.path.join(libdeps_root, env_dir, "simulator", "src", "HalGPIO.h")
+        if not os.path.isfile(header):
+            continue
+        with open(header, "r", encoding="utf-8") as f:
+            content = f.read()
+        if "verifyPowerButtonWakeup() const" in content:
+            continue
+        if HALGPIO_ANCHOR not in content:
+            print("WARNING: simulator HalGPIO.h anchor missing in %s" % header)
+            continue
+        content = content.replace(HALGPIO_ANCHOR, HALGPIO_ADDITION, 1)
+        with open(header, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("Patched simulator HalGPIO.h with zero-arg verifyPowerButtonWakeup(): %s" % header)
+
+
+patch_simulator_hal_gpio(env)  # noqa: F821
+
+
+# Simulator HalDisplay stub: upstream added combinesGrayscaleBase() (true only
+# for Paper Mono, which folds the grayscale base into the panel). The simulator
+# panels use the classic separate-base path, so return false.
+HALDISPLAY_H_ANCHOR = "  bool supportsStripGrayscale() const;"
+HALDISPLAY_C_ANCHOR = "bool HalDisplay::supportsStripGrayscale() const { return true; }"
+
+
+def patch_simulator_hal_display(env):  # noqa: F811
+    libdeps_root = os.path.join(env["PROJECT_DIR"], ".pio", "libdeps")  # noqa: F821
+    if not os.path.isdir(libdeps_root):
+        return
+
+    for env_dir in sorted(os.listdir(libdeps_root)):
+        header = os.path.join(libdeps_root, env_dir, "simulator", "src", "HalDisplay.h")
+        source = os.path.join(libdeps_root, env_dir, "simulator", "src", "HalDisplay.cpp")
+        if not os.path.isfile(header) or not os.path.isfile(source):
+            continue
+
+        with open(header, "r", encoding="utf-8") as f:
+            header_content = f.read()
+        if "combinesGrayscaleBase" not in header_content and HALDISPLAY_H_ANCHOR in header_content:
+            header_content = header_content.replace(
+                HALDISPLAY_H_ANCHOR, HALDISPLAY_H_ANCHOR + "\n  bool combinesGrayscaleBase() const;", 1)
+            with open(header, "w", encoding="utf-8") as f:
+                f.write(header_content)
+            print("Patched simulator HalDisplay.h with combinesGrayscaleBase(): %s" % header)
+
+        with open(source, "r", encoding="utf-8") as f:
+            source_content = f.read()
+        if "HalDisplay::combinesGrayscaleBase" not in source_content and HALDISPLAY_C_ANCHOR in source_content:
+            source_content = source_content.replace(
+                HALDISPLAY_C_ANCHOR,
+                HALDISPLAY_C_ANCHOR + "\nbool HalDisplay::combinesGrayscaleBase() const { return false; }", 1)
+            with open(source, "w", encoding="utf-8") as f:
+                f.write(source_content)
+            print("Patched simulator HalDisplay.cpp with combinesGrayscaleBase(): %s" % source)
+
+
+patch_simulator_hal_display(env)  # noqa: F821

@@ -13,6 +13,12 @@ usability over "swiss-army-knife" functionality.
 
 ## 2. Scope
 
+CrossPoint Mesh follows upstream CrossPoint in **not** being Xteink-only:
+the shared codebase runs across the ESP32 e-reader family (ESP32-C3,
+ESP32-S3, and adjacent variants). Every accepted change should keep clean,
+maintainable code and the reader core portable; device-specific code lives
+behind the HAL / SDK boundary.
+
 ### In-Scope
 
 *These are features that directly improve the primary purpose of the device.*

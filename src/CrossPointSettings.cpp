@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <string>
 
 #include "I18nKeys.h"
@@ -114,6 +115,12 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // T4 last-used language -- persisted so the keyboard reopens with the
   // same language the user was on when they last closed it.
   doc["t4LastLanguage"] = t4LastLanguage;
+
+  // A uint16_t mask, so it does not fit the uint8_t generic loop. Omitted while
+  // unconfigured, so the default keeps following the UI language.
+  if (keyboardLayouts != 0) {
+    doc["keyboardLayouts"] = keyboardLayouts;
+  }
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
@@ -245,6 +252,11 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   t4LastLanguage = doc["t4LastLanguage"] | 0;
   if (t4LastLanguage > 2) t4LastLanguage = 0;
 
+  // Absent means unconfigured, which is the default.
+  if (doc["keyboardLayouts"].is<uint16_t>()) {
+    keyboardLayouts = doc["keyboardLayouts"].as<uint16_t>();
+  }
+
   if (needsResave) {
     LOG_DBG("CPS", "Resaving settings to update format");
     requestResave();
@@ -299,6 +311,8 @@ float CrossPointSettings::getReaderLineCompression() const {
         return 1.0f;
       case WIDE:
         return 1.1f;
+      case EXTRA_WIDE:
+        return 1.2f;
     }
   }
 
@@ -313,6 +327,8 @@ float CrossPointSettings::getReaderLineCompression() const {
           return 1.0f;
         case WIDE:
           return 1.1f;
+        case EXTRA_WIDE:
+          return 1.2f;
       }
     case NOTOSANS:
       switch (lineSpacing) {
@@ -323,6 +339,8 @@ float CrossPointSettings::getReaderLineCompression() const {
           return 0.95f;
         case WIDE:
           return 1.0f;
+        case EXTRA_WIDE:
+          return 1.05f;
       }
   }
 }
@@ -347,6 +365,10 @@ int CrossPointSettings::getRefreshFrequency() const {
       return 15;
     case REFRESH_30:
       return 30;
+    case REFRESH_NEVER:
+      // Effectively disables the periodic full refresh; the page counter
+      // counts down from here and never reaches the threshold in practice.
+      return std::numeric_limits<int>::max();
   }
 }
 

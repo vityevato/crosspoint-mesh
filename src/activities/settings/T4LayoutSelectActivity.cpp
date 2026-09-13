@@ -56,7 +56,11 @@ void T4LayoutSelectActivity::loop() {
     return;
   }
 
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentHeight =
+      renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const int pageItems = GUI.getListPageItems(contentHeight, false);
 
   buttonNavigator.onNextRelease([this] {
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, totalItems);

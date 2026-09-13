@@ -23,6 +23,8 @@
 #include "MeshCoreSubtitle.h"
 #include "SilentRestart.h"
 #include "activities/reader/QrDisplayActivity.h"
+#include "components/ThemeTabBar.h"
+#include "components/UiAppHelpers.h"
 #include "components/UITheme.h"
 #include "thread/MeshCoreThreadActivity.h"
 #include "utils/MeshCoreContactUrlParser.h"
@@ -30,6 +32,8 @@
 #include "utils/MeshCoreHeapLog.h"
 #include "utils/MeshCoreMessageHeight.h"
 #include "utils/MeshCoreShareUrl.h"
+
+namespace fui = freeink::ui;
 
 #ifdef SIMULATOR
 #include <MeshCoreMockHotkeys.h>
@@ -734,21 +738,37 @@ void MeshCoreHubActivity::render(RenderLock&&) {
 
   const bool tabUnread[tabCount] = {contactsUnread, channelsUnread, false};
   char tabNames[tabCount][32] = {};
-  std::vector<TabInfo> tabs;
-  tabs.reserve(tabCount);
+  const char* tabLabels[tabCount] = {};
   for (int i = 0; i < tabCount; ++i) {
     if (tabUnread[i]) {
       snprintf(tabNames[i], sizeof(tabNames[i]), "%s %s", meshcore::DotSeparator, plainTabNames[i]);
     } else {
       snprintf(tabNames[i], sizeof(tabNames[i]), "%s", plainTabNames[i]);
     }
-    tabs.push_back({tabNames[i], currentTab == static_cast<Tab>(i)});
+    tabLabels[i] = tabNames[i];
   }
-  int tabBarTop = metrics.topPadding + metrics.headerHeight;
-  GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, selectedIndex == 0);
+  const int tabBarTop = metrics.topPadding + metrics.headerHeight;
+  // Draw the band through the same themed component as the Settings tabs so
+  // both follow the active theme; MeshCore hosts its own GfxRendererFrame.
+  const int16_t preferredTabHeight =
+      mappedInput.hasTouch() ? theme_tab_bar::kTouchBarHeight : static_cast<int16_t>(metrics.tabBarHeight);
+  fui::GfxRendererFrame<theme_tab_bar::kMaxTabs> tabFrame(renderer, uiScaleSpec().smallFontId,
+                                                          uiScaleSpec().bodyFontId, uiScaleSpec().titleFontId);
+  const fui::ThemeTokens& tabTokens = refreshSharedUiThemeTokens(tabFrame.target);
+  const int16_t tabBandHeight = theme_tab_bar::bandHeight(tabFrame.target, tabTokens, preferredTabHeight);
+  theme_tab_bar::build(tabFrame.frame, tabFrame.target, tabTokens,
+                       fui::Rect{0, static_cast<int16_t>(tabBarTop), static_cast<int16_t>(pageWidth), tabBandHeight},
+                       tabLabels, tabCount, static_cast<int>(currentTab), selectedIndex == 0, theme_tab_bar::kAction);
+  if (mappedInput.hasTouch()) {
+    tabFrame.input = touchSnapshotFrom(mappedInput);
+    const auto tabEvent = tabFrame.frame.finish();
+    if (tabEvent && tabEvent.value >= 0 && tabEvent.value < tabCount) {
+      switchTab(static_cast<Tab>(tabEvent.value));
+    }
+  }
 
   // Content area
-  int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
+  int contentTop = tabBarTop + tabBandHeight + metrics.verticalSpacing;
   int contentHeight =
       pageHeight - contentTop - metrics.buttonHintsHeight - metrics.topPadding - metrics.bottomSubtitleHeight;
   Rect contentRect(0, contentTop, pageWidth, contentHeight);

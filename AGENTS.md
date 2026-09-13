@@ -136,18 +136,24 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 │   ├── SilentRestart.h      # Silent restart helper
 │   ├── WifiCredentialStore.h/cpp # WiFi credential persistence
 │   ├── activities/          # Activity lifecycle, ActivityManager, all activities
+│   │   ├── UiListActivity.h/cpp    # FreeInkUI single-list base (touch + buttons)
+│   │   ├── UiTabListActivity.h/cpp # FreeInkUI tabbed-list base (ring navigation)
 │   │   ├── home/            # Home screen, file browser, recent books
 │   │   ├── reader/          # EPUB/TXT/XTC reading flows
 │   │   ├── settings/        # Settings menus, font download, OTA update
-│   │   ├── network/         # WiFi selection, web server activity
+│   │   ├── network/         # WiFi selection, web server, USB Drive activity
 │   │   ├── boot_sleep/      # Boot and deep sleep transitions
 │   │   ├── browser/         # OPDS book browser
 │   │   ├── meshcore/        # MeshCore BLE activities (hub, discover, scan, chat, thread)
-│   │   └── util/            # Keyboard entry, full-screen messages
+│   │   └── util/            # Keyboard entry (T4/touch), frontlight panel, messages
 │   ├── components/          # UI theme system, icons, themes
 │   │   ├── UITheme.h/cpp    # GUI singleton — orientation-aware rendering
+│   │   ├── ThemeTabBar.h    # Shared themed tab band (UiTabListActivity + MeshCore)
+│   │   ├── UiAppHost.h/cpp  # FreeInkApp hosting protocol (render target + routing)
+│   │   ├── UIThemeTokens.h  # ThemeMetrics → FreeInkUI ThemeTokens bridge
+│   │   ├── UIScale.h        # UI scale → font id mapping
 │   │   ├── icons/           # Icon headers (book, bookmark, cover, folder, wifi, …)
-│   │   └── themes/          # Lyra, Lyra3Covers, RoundedRaff themes
+│   │   └── themes/          # Lyra, RoundedRaff, Classic themes
 │   ├── images/              # Image data (logo, loading icon, moon icon)
 │   ├── simulator/           # Simulator stubs (NimBLE, FreeRTOS, MeshCore mock),
 │                            #   stdin automation + screenshot converter
@@ -196,8 +202,9 @@ platform. See [SCOPE.md](SCOPE.md) for feature boundaries.
 # Build firmware (default development environment)
 pio run
 
-# Build specific environment (gh_release, gh_release_rc, slim, simulator,
-# simulator_4)
+# Build specific environment (gh_release, gh_release_rc, slim, plus the
+# ESP32-S3 targets sticky, sticky-gh_release, x4pro, x4c, papermono, and the
+# simulator envs simulator / simulator_4)
 pio run -e gh_release
 
 # Build and run desktop simulator (no device required). There are two
@@ -803,3 +810,565 @@ I18N        // I18n::getInstance()
 - Each `std::function<>` adds ~2-4 KB per unique signature and
   heap-allocates. Prefer raw function pointers or
   `struct { void* ctx; void (*fn)(void*); }`.
+
+---
+
+# Merged Upstream Development Guide
+
+The sections below are ported from the upstream CrossPoint development guide and apply to the shared reader core. The fork-specific guidance above takes precedence where the two overlap.
+## AI Agent Identity and Cognitive Rules
+
+* Role: Senior Embedded Systems Engineer (ESP-IDF/Arduino-ESP32 specialized).
+* Primary Constraint: 380KB RAM is the hard ceiling. Stability is non-negotiable.
+* Evidence-Based Reasoning: Before proposing a change, you MUST cite the specific file path and line numbers that justify the modification.
+* Anti-Hallucination: Do not assume the existence of libraries or ESP-IDF functions. If you are unsure of an API's availability for the ESP32-C3 RISC-V target, check the freeink-sdk source or the FreeInk SDK docs (https://freeink.org/llms.txt for an LLM-readable index) first.
+* No Unfounded Claims: Do not claim performance gains or memory savings without explaining the technical mechanism (e.g., DRAM vs IRAM usage).
+* Resource Justification: You must justify any new heap allocation (new, malloc, std::vector) or explain why a stack/static alternative was rejected.
+* Verification: After suggesting a fix, instruct the user on how to verify it (e.g., monitoring heap via Serial or checking a specific cache file).
+
+---
+
+## Development Environment Awareness
+
+**CRITICAL**: Detect the host platform at session start to choose appropriate tools and commands.
+
+### Platform Detection
+
+```bash
+# Detect platform (run once per session)
+uname -s
+# Returns: MINGW64_NT-* (Windows Git Bash), Linux, Darwin (macOS)
+```
+
+**Detection Required**: Run `uname -s` at session start to determine platform
+
+### Platform-Specific Behaviors
+
+- **Windows (Git Bash)**: Unix commands, `C:\` paths in Windows but `/` in bash, limited glob (use `find`+`xargs`)
+- **Linux/WSL**: Full bash, Unix paths, native glob support
+
+**Cross-Platform Code Formatting**:
+
+```bash
+./bin/clang-format-fix -g
+```
+
+Never invoke or probe `clang-format` directly. The repository wrapper is the only sanctioned entry point.
+
+---
+
+## Platform and Hardware Constraints
+
+### Hardware Specs
+
+* MCUs: ESP32-C3 (single-core RISC-V @ 160MHz) and ESP32-S3 (`sticky`, dual-core Xtensa LX7)
+* RAM: ~380KB usable on ESP32-C3 (VERY LIMITED - primary project constraint)
+  * **NO PSRAM on C3**.
+  * **Single Buffer Mode**: Only ONE 48KB framebuffer (not double-buffered)
+* Flash: 16MB (Instruction storage and static data)
+* Display: 800x480 E-Ink (Slow refresh, monochrome, 1-2s full update)
+  * Framebuffer: 48,000 bytes (800 × 480 ÷ 8)
+* Storage: SD Card (Used for books and aggressive caching)
+
+### The Resource Protocol
+
+1. Stack Safety: Limit local function variables to < 256 bytes. The ESP32-C3 default stack is small; use std::unique_ptr or static pools for larger buffers.
+2. Heap Fragmentation: Avoid repeated new/delete in loops. Allocate buffers once during onEnter() and reuse them.
+3. Flash Persistence: Large constant data (UI strings, lookup tables) MUST be marked static const to stay in Flash (Instruction Bus), freeing DRAM.
+4. String Policy: Prohibit std::string and Arduino String in hot paths. Use std::string_view for read-only access and snprintf with fixed char[] buffers for construction.
+5. UI Strings: All user-facing text must use the `tr()` macro (e.g., `tr(STR_LOADING)`) for i18n support. Never hardcode UI strings directly. For the avoidance of doubt, logging messages (LOG_DBG/LOG_ERR) can be hardcoded, but user-facing text must use `tr()`.
+6. `constexpr` First: Compile-time constants and lookup tables must be `constexpr`, not just `static const`. This moves computation to compile time, enables dead-branch elimination, and guarantees flash placement. Use `static constexpr` for class-level constants.
+7. `std::vector` Pre-allocation: Always call `.reserve(N)` before any `push_back()` loop. Each growth event allocates a new block (2×), copies all elements, then frees the old one — three heap operations that fragment DRAM. When the final size is unknown, estimate conservatively.
+8. SD Persistence Throttling: Settings, state, credentials, and other `PersistableStore` JSON files live on SD under `/.crosspoint/` through `HalStorage`; SPIFFS is not mounted. Guard redundant writes and debounce progress saves to avoid serialization, SD I/O, and `storageMutex` cost.
+9. `new` is not nothrow on ESP32: With `-fno-exceptions`, bare `new` that fails calls `abort()` — it does NOT return `nullptr`. Always use `new (std::nothrow)` and null-check the result, or use `makeUniqueNoThrow<T>()` from `lib/Memory/Memory.h`. Never write bare `new` for any fallible allocation.
+
+---
+
+### Critical Build Flags
+
+These flags in `platformio.ini` fundamentally affect firmware behavior:
+
+```cpp
+-DEINK_DISPLAY_SINGLE_BUFFER_MODE=1  // Single framebuffer (saves 48KB RAM!)
+-DARDUINO_USB_MODE=1                 // Enable USB CDC
+-DARDUINO_USB_CDC_ON_BOOT=1          // Serial available immediately at boot
+-DXML_CONTEXT_BYTES=1024             // XML parser memory limit (EPUB parsing)
+-DUSE_UTF8_LONG_NAMES=1              // SD card long filename support
+-DMINIZ_NO_ZLIB_COMPATIBLE_NAMES=1   // Avoid zlib name conflicts
+-DXML_GE=0                           // Disable XML general entities (security)
+-DDESTRUCTOR_CLOSES_FILE=1           // FsFile destructor auto-closes (SdFat)
+```
+
+**DESTRUCTOR_CLOSES_FILE implications**:
+
+- SdFat's `FsBaseFile` destructor calls `close()` automatically when the object goes out of scope
+- **Do NOT add explicit `file.close()` calls** for local `FsFile` variables — the destructor handles it
+- Explicit `close()` is still required in these cases:
+  
+  1. **Close before delete**: Must close before `Storage.remove()` on the same path
+  
+  2. **Close before reopen**: Must close before reopening the same `FsFile` variable (e.g., write then reopen for read, or rewrite the same path)
+  
+  3. **Member variables**: `FsFile` members persist beyond any single function scope, so close at the intended release point (e.g., in `onExit()`)
+
+**SINGLE_BUFFER_MODE implications**:
+
+- Only ONE framebuffer exists (not double-buffered)
+- Grayscale rendering requires temporary buffer allocation (`renderer.storeBwBuffer()`)
+- Must call `renderer.restoreBwBuffer()` to free temporary buffers
+- See [lib/GfxRenderer/GfxRenderer.cpp:439-440](lib/GfxRenderer/GfxRenderer.cpp) for malloc usage
+### Error Handling Philosophy
+
+**Source**: [src/main.cpp:132-143](src/main.cpp), [lib/GfxRenderer/GfxRenderer.cpp:10](lib/GfxRenderer/GfxRenderer.cpp)
+
+**Pattern Hierarchy**:
+
+1. **LOG_ERR + return false** (90%): `LOG_ERR("MOD", "Failed: %s", reason); return false;`
+2. **LOG_ERR + fallback**: `LOG_ERR("MOD", "Unavailable"); useDefault();`
+3. **assert(false)**: Only for fatal "impossible" states (framebuffer missing)
+4. **ESP.restart()**: Only for recovery (OTA complete)
+
+**Rules**: NO exceptions, NO abort(), ALWAYS log before error return
+
+### Heap Buffer Allocation
+
+**Prefer `makeUniqueNoThrow` over `malloc`.** Both are nothrow (return `nullptr` on OOM rather than calling `abort()`), but `malloc` requires a manual `free` on every return path — a common source of leaks. `makeUniqueNoThrow<uint8_t[]>(size)` from `lib/Memory/Memory.h` frees automatically when it goes out of scope.
+
+**Preferred pattern**:
+
+```cpp
+#include <Memory.h>
+
+auto buffer = makeUniqueNoThrow<uint8_t[]>(bufferSize);
+if (!buffer) {
+  LOG_ERR("MODULE", "OOM: %d bytes", bufferSize);
+  return false;
+}
+
+processData(buffer.get(), bufferSize);
+// freed automatically — no manual free needed, no leak on early return
+```
+
+**`malloc` or `new (std::nothrow)` are still acceptable** when the buffer must be passed to a C API that takes ownership and frees it itself (e.g., certain SDK callbacks). In that case follow the manual pattern:
+
+```cpp
+auto* buffer = static_cast<uint8_t*>(malloc(bufferSize));  // or new (std::nothrow) uint8_t[bufferSize]
+if (!buffer) {
+  LOG_ERR("MODULE", "OOM: %d bytes", bufferSize);
+  return false;
+}
+sdkApiThatTakesOwnership(buffer, bufferSize);  // SDK calls free() / delete[]
+```
+
+**Rules**:
+
+- **Prefer `makeUniqueNoThrow`** — automatic cleanup eliminates leak risk on error paths
+- **ALWAYS check for nullptr** after any allocation and `LOG_ERR` before returning false
+- **Raw allocation only** when a C API takes ownership; document why in a comment
+
+**Examples in codebase**:
+
+- Memory utilities: [Memory.h](lib/Memory/Memory.h) (`makeUniqueNoThrow`)
+- Cover image buffers: [HomeActivity.cpp:166](src/activities/home/HomeActivity.cpp)
+- Bitmap rendering: [GfxRenderer.cpp:439-440](lib/GfxRenderer/GfxRenderer.cpp)
+
+### Heap Allocation with `new`: Always Use `makeUniqueNoThrow`
+
+**CRITICAL**: With `-fno-exceptions`, bare `new` on OOM calls `abort()` — it does NOT return `nullptr`. Always use `makeUniqueNoThrow` from `lib/Memory/Memory.h`, which wraps `new (std::nothrow)` and returns a `std::unique_ptr` that is null on OOM and automatically frees on scope exit.
+
+**Preferred pattern**:
+
+```cpp
+#include <Memory.h>
+
+auto obj = makeUniqueNoThrow<MyClass>(args);
+if (!obj) { LOG_ERR("MOD", "OOM: MyClass"); return false; }
+
+auto buf = makeUniqueNoThrow<uint8_t[]>(size);
+if (!buf) { LOG_ERR("MOD", "OOM: %d bytes", size); return false; }
+
+// Pass to C APIs via .get(); unique_ptr frees automatically on return
+someApi(buf.get(), size);
+```
+
+**`new (std::nothrow)` directly is acceptable** when the object must be passed to a C API that takes ownership and calls `delete` itself:
+
+```cpp
+auto* obj = new (std::nothrow) MyClass(args);
+if (!obj) { LOG_ERR("MOD", "OOM: MyClass"); return false; }
+sdkApiThatTakesOwnership(obj);  // SDK calls delete
+```
+
+**Rules**:
+
+- **Prefer `makeUniqueNoThrow`** — automatic cleanup eliminates leak risk on error paths
+- **NEVER use bare `new`** — always `makeUniqueNoThrow` or `new (std::nothrow)`
+- **ALWAYS `LOG_ERR` before returning false** on OOM
+- **Use `.get()`** to pass the raw pointer to C-style APIs; ownership stays with the `unique_ptr`
+- **`new (std::nothrow)` directly only** when a C API takes ownership; document why in a comment
+
+**Examples in codebase**:
+
+- Memory utilities: [Memory.h](lib/Memory/Memory.h) (`makeUniqueNoThrow`)
+
+---
+
+## Git Workflow and Repository Awareness
+
+### Repository Detection Protocol
+
+**CRITICAL**: ALWAYS verify repository context before git operations. This could be:
+
+- A **fork** with `origin` pointing to personal repo, `upstream` to main repo
+- A **direct clone** with `origin` pointing to main repo
+- Multiple collaborator remotes
+
+**Verification Commands** (run at session start):
+
+```bash
+# Check current branch
+git branch --show-current
+
+# Check all remotes
+git remote -v
+
+# Check working tree status
+git status --short
+```
+
+**Example Output** (forked repository):
+
+```text
+origin      https://github.com/<your-username>/crosspoint-reader.git (fetch/push)
+upstream    https://github.com/crosspoint-reader/crosspoint-reader.git (fetch/push)
+```
+
+### Git Operation Rules
+
+1. Integration branches and PR comparisons target `develop`, not `master` or the remote's symbolic HEAD.
+2. Never push to any remote or open/close a PR without explicit user approval. Complete local work and any requested local commit, then stop.
+3. If the user explicitly approves a push, inspect remotes again and use `fork` for the feature branch unless the user specifies otherwise.
+4. Never add Claude, Codex, or assistant self-attribution as a commit co-author or generated-by trailer.
+5. When a change supersedes or adapts another person's PR, verify the original human author from Git/GitHub and add that person as `Co-Authored-By`; skip bot authors.
+
+### Branch Naming Convention
+
+**For feature/fix branches**:
+
+```text
+feature/<short-description>       # New features
+fix/<issue-number>-<description>  # Bug fixes
+refactor/<component-name>         # Code refactoring
+docs/<topic>                      # Documentation updates
+```
+
+**Examples**:
+
+- `feature/sd-download-progress`
+- `fix/123-orientation-crash`
+- `refactor/hal-storage`
+
+### Commit Message Format
+
+**Pattern**:
+
+```text
+<type>: <short summary (50 chars max)>
+
+<optional detailed description>
+```
+
+**Types**: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`
+
+**Example**:
+
+```text
+feat: add real-time SD download progress bar
+
+Implements progress tracking for book downloads using
+UITheme progress bar component with heap-safe updates.
+
+Tested in all 4 orientations with 5MB+ files.
+```
+
+### When to Commit
+
+**DO commit when**:
+
+- User explicitly requests: "commit these changes"
+- Feature is complete and tested on device
+- Bug fix is verified working
+- Refactoring preserves all functionality
+- All tests pass (`pio run` succeeds)
+
+**DO NOT commit when**:
+
+- Changes are untested on actual hardware
+- Build fails or has warnings
+- Experimenting or debugging in progress
+- User hasn't explicitly requested commit
+- Files excluded by `.gitignore` would be included — always run `git status` and cross-check against `.gitignore` before staging (e.g., `*.generated.h`, `.pio/`, `compile_commands.json`, `platformio.local.ini`)
+
+**Rule**: **If uncertain, ASK before committing.**
+
+---
+
+## Generated Files and Build Artifacts
+
+### Files Generated by Build Scripts
+
+**NEVER manually edit these files** - they are regenerated automatically:
+
+1. **HTML Headers** (generated by `scripts/build_html.py`):
+   
+   - `src/network/html/*.generated.h`
+   
+   - **Source**: HTML templates in `data/html/` directory
+   
+   - **Triggered**: During PlatformIO `pre:` build step
+   
+   - **To modify**: Edit source HTML in `data/html/`, not generated headers
+
+2. **I18n Headers** (generated by `scripts/gen_i18n.py`):
+   
+   - `lib/I18n/I18nKeys.h`, `lib/I18n/I18nStrings.h`, `lib/I18n/I18nStrings.cpp`
+   
+   - **Source**: YAML translation files in `lib/I18n/translations/` (one per language)
+   
+   - **To modify**: Edit source YAML files, then run `python scripts/gen_i18n.py lib/I18n/translations lib/I18n/`
+   
+   - **Commit**: Source YAML files only. All three generated files (`I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp`) are in `.gitignore` and regenerated at build time.
+
+3. **Build Artifacts** (in `.gitignore`):
+   
+   - `.pio/` - PlatformIO build output
+   
+   - `build/` - Compiled binaries
+   
+   - `*.generated.h` - Any auto-generated headers
+   
+   - `compile_commands.json` - LSP/IDE metadata
+
+### Modifying Generated Content Workflow
+
+**To change HTML pages**:
+
+1. Edit source: `data/html/<pagename>.html`
+2. Build: `pio run` (auto-triggers `scripts/build_html.py`)
+3. Generated headers update: `src/network/html/<pagename>Html.generated.h`
+4. **Commit ONLY** source HTML, NOT generated `.generated.h` files
+
+**To add/modify translations (i18n)**:
+
+1. Edit or add YAML file: `lib/I18n/translations/<language>.yaml`
+   - Each file must contain: `_language_name`, `_language_code`, `_order`, `_bcp47`, and `STR_*` keys
+   - English (`english.yaml`) is the reference; missing keys in other languages fall back to English
+2. Run generator: `python scripts/gen_i18n.py lib/I18n/translations lib/I18n/`
+3. Generated files update: `I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp`
+4. **Commit** source YAML files only. All three generated files are in `.gitignore` and regenerated at build time.
+
+**To use translated strings in code**:
+
+```cpp
+#include <I18n.h>
+// Use tr() macro with StrId enum (defined in generated I18nKeys.h)
+renderer.drawText(FONT_UI, x, y, tr(STR_LOADING), true);
+```
+
+**To add custom fonts**:
+
+1. Place source fonts in `lib/EpdFont/fontsrc/` (gitignored)
+2. Run conversion script (see `lib/EpdFont/README`)
+3. Update global font objects in `src/main.cpp:40-115`
+4. Add font ID constant to `src/fontIds.h`
+
+---
+
+## Local Development Configuration
+
+### platformio.local.ini (Personal Overrides)
+
+**Purpose**: Personal development settings that should NEVER be committed.
+
+**Use Cases**:
+
+- Serial port configuration (varies by machine)
+- Debug flags for specific testing
+- Local build optimizations
+- Developer-specific paths
+
+**Example** `platformio.local.ini`:
+
+```ini
+# platformio.local.ini (gitignored)
+[env:default]
+upload_port = COM7              # Windows: COMx, Linux: /dev/ttyUSBx
+monitor_port = COM7
+
+build_flags =
+  ${base.build_flags}
+  -DMY_DEBUG_FLAG=1             # Personal debug flags
+  -DTEST_FEATURE_ENABLED=1
+```
+
+**Configuration Hierarchy**:
+
+1. `platformio.ini` - **Committed**, shared project settings
+2. `platformio.local.ini` - **Gitignored**, personal overrides
+3. Local file extends/overrides base config
+
+**Rules**:
+
+- **NEVER commit** `platformio.local.ini`
+- **NEVER put** personal info (serial ports, credentials) in main `platformio.ini`
+- Use `${base.build_flags}` to extend (not replace) base flags
+
+---
+
+## Testing and Verification Workflow
+
+### Testing Checklist
+
+**AI agent scope** (what you CAN verify):
+
+1. ✅ **Build**: Build once after the last code edit with the relevant `pio run` target. Do not clean by default, repeat a target that already passed, or rebuild after formatting/comment-only/documentation-only changes.
+2. ✅ **Quality**: `pio check` when relevant + `./bin/clang-format-fix -g`
+3. ✅ **Format**: Commit messages (`feat:`/`fix:`), no `.gitignore`-excluded files staged (e.g., `*.generated.h`, `.pio/`, `platformio.local.ini`)
+4. ✅ **CI**: Fix GitHub Actions failures before review
+5. ✅ **Code review**: Ensure orientation-aware logic is correct in all 4 modes by inspecting switch/case coverage
+
+**Human tester scope** (flag these for the user):
+6. 🔲 **Device**: Test on hardware
+7. 🔲 **Orientations**: Verify all 4 modes (Portrait/Inverted/Landscape CW/CCW)
+8. 🔲 **Heap**: `ESP.getFreeHeap()` > 50KB, no leaks
+9. 🔲 **Cache**: If EPUB modified, delete `.crosspoint/` and verify re-parse
+
+### CI/CD Pipeline Awareness
+
+**GitHub Actions** run automatically on pull requests:
+
+| Workflow      | File                                        | Purpose                |
+| ------------- | ------------------------------------------- | ---------------------- |
+| Build Check   | `.github/workflows/ci.yml`                  | Verifies code compiles |
+| Format Check  | `.github/workflows/pr-formatting-check.yml` | Validates clang-format |
+| Release Build | `.github/workflows/release.yml`             | Production releases    |
+| RC Build      | `.github/workflows/release_candidate.yml`   | Release candidates     |
+
+**Rules**:
+
+- **Fix CI failures BEFORE** requesting review
+- CI runs on: Push to PR, PR updates
+- Format check fails → Run `./bin/clang-format-fix -g`
+- Build check fails → Fix compile errors
+
+---
+
+## Serial Monitoring and Live Debugging
+
+### Serial Monitor Options
+
+1. **Enhanced**: `python3 scripts/debugging_monitor.py` (color-coded, recommended)
+2. **Standard**: `pio device monitor` (basic, no colors)
+3. **VS Code**: Monitor (🔌) button (IDE-integrated)
+
+### Live Debugging Patterns
+
+**Heap**: `LOG_DBG("MEM", "Free: %d", ESP.getFreeHeap());` (every 5s in loop)
+**Stack**: `uxTaskGetStackHighWaterMark(nullptr)` (< 512 bytes → increase stack)
+**Flush**: `logSerial.flush();` (force output before crash)
+
+**Port Detection**: Windows: `mode` | Linux: `ls /dev/ttyUSB* /dev/ttyACM*` or `dmesg | grep tty`
+
+---
+
+## Cache Management and Invalidation
+
+### Cache Structure on SD Card
+
+**Location**: `.crosspoint/` directory on SD card root
+
+**Structure**: `.crosspoint/epub_<hash>/{book.bin, progress.bin, cover.bmp, sections/*.bin}`
+
+**Hash**: `std::hash<std::string>{}(filepath)` → Moving/renaming file = new hash = lost progress
+
+### Cache Invalidation Rules
+
+**Cache is automatically invalidated when**:
+
+1. **File format version changes** (see `docs/file-formats.md`)
+   
+   - `book.bin` version number incremented
+   
+   - `section.bin` version number incremented
+2. **Render settings change**:
+   
+   - Font family or size (`SETTINGS.fontFamily`, `SETTINGS.fontSize`)
+   
+   - Line spacing (`SETTINGS.lineSpacing`)
+   
+   - Paragraph spacing (`SETTINGS.extraParagraphSpacing`)
+   
+   - Screen margins (`SETTINGS.screenMargin`)
+3. **Viewport dimensions change**:
+   
+   - Screen orientation change
+   
+   - Display resolution change
+4. **Book file modified**:
+   
+   - Moved, renamed, or content changed (new hash)
+
+**Manual Cache Clear** (safe operations):
+
+```bash
+# Delete ALL caches (forces full regeneration)
+rm -rf /path/to/sd/.crosspoint/
+
+# Delete specific book cache
+rm -rf /path/to/sd/.crosspoint/epub_<hash>/
+
+# Keep progress, delete only rendered sections
+rm -rf /path/to/sd/.crosspoint/epub_<hash>/sections/
+```
+
+**When to Clear Cache**:
+
+- EPUB parsing errors after code changes to `lib/Epub/`
+- Corrupt rendering (missing text, wrong layout)
+- Testing cache generation logic
+- After modifying:
+  - `lib/Epub/Epub/Section.cpp`
+  - `lib/Epub/Epub/BookMetadataCache.cpp`
+  - Render settings in `CrossPointSettings`
+
+### Cache File Format Versioning
+
+**Source**: `lib/Epub/Epub/Section.cpp`, `lib/Epub/Epub/BookMetadataCache.cpp`
+
+**Current Versions** (as of docs/file-formats.md):
+
+- `book.bin`: **Version 7** (metadata structure)
+- `section.bin`: **Version 25** (layout structure)
+
+**Version Increment Rules**:
+
+1. **ALWAYS increment version** BEFORE changing binary structure
+2. Version mismatch → Cache auto-invalidated and regenerated
+3. Document format changes in `docs/file-formats.md`
+
+**Example** (incrementing section format version):
+
+```cpp
+// lib/Epub/Epub/Section.cpp
+static constexpr uint8_t SECTION_FILE_VERSION = 26;  // Was 25, now 26
+
+// Add new field to structure
+struct PageLine {
+  // ... existing fields ...
+  uint16_t newField;  // New field added
+};
+```
+
+---
+
+Philosophy: We are building a dedicated e-reader, not a Swiss Army knife. If a feature adds RAM pressure without significantly improving the reading experience, it is Out of Scope.
