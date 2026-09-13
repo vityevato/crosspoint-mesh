@@ -25,7 +25,11 @@
 #include "ThreadScroller.h"
 #include "activities/reader/QrDisplayActivity.h"
 #include "activities/util/TextEntryHelpers.h"
+#include "components/ThemeTabBar.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
+
+namespace fui = freeink::ui;
 
 // Channel thread constructor
 MeshCoreThreadActivity::MeshCoreThreadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -767,9 +771,17 @@ void MeshCoreThreadActivity::_renderNormal() {
   int tabBarTop = metrics.topPadding + metrics.headerHeight;
   constexpr int tabCount = static_cast<int>(Tab::TAB_COUNT);
   const char* tabNames[tabCount] = {tr(STR_MESHCORE_DIRECT_MESSAGES), tr(STR_MESHCORE_MENU)};
+  // The themed tab band is drawn later, after the content, but its height is
+  // needed now to size the content area.
+  const int16_t preferredTabHeight =
+      mappedInput.hasTouch() ? theme_tab_bar::kTouchBarHeight : static_cast<int16_t>(metrics.tabBarHeight);
+  fui::GfxRendererFrame<theme_tab_bar::kMaxTabs> tabFrame(renderer, uiScaleSpec().smallFontId, uiScaleSpec().bodyFontId,
+                                                          uiScaleSpec().titleFontId);
+  const fui::ThemeTokens& tabTokens = refreshSharedUiThemeTokens(tabFrame.target);
+  const int16_t tabBandHeight = theme_tab_bar::bandHeight(tabFrame.target, tabTokens, preferredTabHeight);
 
   // Content area (drawn FIRST so header/tab-bar can overwrite any overflow)
-  int contentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
+  int contentTop = tabBarTop + tabBandHeight + metrics.verticalSpacing;
   int ch = contentHeight();
   Rect contentRect(0, contentTop, pageWidth, ch);
 
@@ -802,13 +814,17 @@ void MeshCoreThreadActivity::_renderNormal() {
   // Header (drawn after content to clean up any overflow)
   GUI.drawHeader(renderer, Rect(0, metrics.topPadding, pageWidth, metrics.headerHeight), threadName, headerSubtitle);
 
-  // Tab bar
-  std::vector<TabInfo> tabs;
-  tabs.reserve(tabCount);
-  for (int i = 0; i < tabCount; ++i) {
-    tabs.push_back({tabNames[i], currentTab == static_cast<Tab>(i)});
+  // Tab bar (themed component, same as the Settings tabs)
+  theme_tab_bar::build(tabFrame.frame, tabFrame.target, tabTokens,
+                       fui::Rect{0, static_cast<int16_t>(tabBarTop), static_cast<int16_t>(pageWidth), tabBandHeight},
+                       tabNames, tabCount, static_cast<int>(currentTab), selectedIndex == 0, theme_tab_bar::kAction);
+  if (mappedInput.hasTouch()) {
+    tabFrame.input = touchSnapshotFrom(mappedInput);
+    const auto tabEvent = tabFrame.frame.finish();
+    if (tabEvent && tabEvent.value >= 0 && tabEvent.value < tabCount) {
+      switchTab(static_cast<Tab>(tabEvent.value));
+    }
   }
-  GUI.drawTabBar(renderer, Rect(0, tabBarTop, pageWidth, metrics.tabBarHeight), tabs, selectedIndex == 0);
 
   // Button hints
   const char* btn2 = "";

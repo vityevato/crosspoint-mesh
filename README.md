@@ -6,7 +6,11 @@ Read EPUBs, manage your library, and stay connected to the MeshCore
 decentralized mesh network for off-grid communication — all from a
 single device. Community-built, fully hackable, free forever.
 
-**Now running on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
+### Now running on:
+- **ESP32C3-based** Xteink X4 and X3.
+- **ESP32S3-based** Xteink X4Pro, Seeed reTerminal Sticky, M5PaperMono
+
+Check [our Devices page](https://crosspointreader.com/devices) for the full list.
 
 [![Watch CrossPoint Mesh demo on YouTube](https://img.youtube.com/vi/4BtQzdU9oqg/maxresdefault.jpg)](https://www.youtube.com/watch?v=4BtQzdU9oqg)
 
@@ -14,15 +18,19 @@ single device. Community-built, fully hackable, free forever.
 
 ## What can CrossPoint do?
 
-- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
+- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, adaptive table layouts, native CJK ruby annotations, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
 
 - **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
+
+- **Touch reading**: follow EPUB links and look up words in the dictionary on touch-enabled devices.
 
 - **Screenshots.**
 
 - **Custom fonts**: install your favorite fonts on the SD card.
 
-- **Tilt page turn (X3 only)**.
+- **Tilt page turn (X3 and Sticky)**.
+
+- **USB Drive mode (X4Pro)**: access the SD card as USB mass storage.
 
 - **Library workflow**: folder browser, hidden-file toggle, long-press delete, recent books, SD-cache management.
 
@@ -38,9 +46,9 @@ single device. Community-built, fully hackable, free forever.
   - OPDS browser with saved servers (up to 8), search, pagination, and direct download
   - OTA update checks and installs from GitHub releases
 
-- **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
+- **Customization**: night mode, multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes including transparent overlays, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
 
-- **Localization**: 24 UI languages and counting. RTL support.
+- **Localization**: 34 UI languages and counting, including CJK font fallback and RTL support.
 
 - **MeshCore Client**: Built-in BLE client for the [MeshCore](https://meshcore.co.uk/) decentralized
   mesh network — communicate without internet access, even in remote areas.
@@ -104,6 +112,12 @@ single device. Community-built, fully hackable, free forever.
   to `/t4dicts/` on the SD card to enable them, or build your own (see
   [docs/t4-dictionary.md](docs/t4-dictionary.md)).
 
+- Web plugins.
+
+- Bluetooth pageturner.
+
+- Much more! stay tuned.
+
 ---
 
 ## USB-locked devices (Xteink Unlocker)
@@ -135,13 +149,13 @@ USB port or browser before assuming the device is locked. Only reach for the unl
 ### Web installer (recommended)
 
 1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), and choose an official CrossPoint release.
+2. Go to https://crosspointreader.com/#flash-tools, select your device (X3, X4, Xteink X4Pro, Seeed reTerminal Sticky, or M5PaperMono), and choose an official CrossPoint release.
 
 ### Web installer (specific version)
 
 1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
-3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
+2. Download the firmware file for your device from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), or compile yourself.
+3. Go to https://crosspointreader.com/#flash-tools, select your device, click "Custom .bin" and upload the firmware file.
 
 ### Revert to Official Firmware
 
@@ -155,7 +169,7 @@ To revert to the official firmware, you can also flash the latest official firmw
 pip install esptool
 ```
 
-2. Download `firmware.bin` from the [releases page](https://github.com/crosspoint-reader/crosspoint-reader/releases).
+2. Download the firmware file for your device from the [releases page](https://github.com/crosspoint-reader/crosspoint-reader/releases).
 3. Connect your device via USB-C.
 4. Find the device port. On Linux, run `dmesg` after connecting. On macOS:
 
@@ -163,13 +177,17 @@ pip install esptool
 log stream --predicate 'subsystem == "com.apple.iokit"' --info
 ```
 
-5. Flash:
+5. Flash an X3 or X4:
 
 ```bash
 esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 /path/to/firmware.bin
 ```
 
-Adjust `/dev/ttyACM0` to match your system.
+   Flash an Xteink X4Pro, Seeed reTerminal Sticky, or M5PaperMono:
+
+```bash
+esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 /path/to/firmware.bin
+```
 
 ### Manual
 
@@ -199,7 +217,7 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 - [Web server endpoints](./docs/webserver-endpoints.md)
 - [Project scope](./SCOPE.md)
 - [Contributing docs](./docs/contributing/README.md)
-- [Touch and UI development](./docs/contributing/touch-and-ui.md) - FreeInkUI components for new screens, the touch bridge for existing ones, and build envs for the non-Xteink touch devices
+- [Touch and UI development](./docs/contributing/touch-and-ui.md) - how to build new screens on the FreeInkUI activity bases (UiListActivity and friends), plus build envs for the non-Xteink touch devices
 
 ---
 
@@ -271,7 +289,7 @@ and the mock session lifecycle.
 
 ### Prerequisites
 
-- [pioarduino](https://github.com/pioarduino/pioarduino) or VS Code + pioarduino plugin
+- [pioarduino PlatformIO Core](https://github.com/pioarduino/platformio-core) or [VS Code + pioarduino IDE](https://github.com/pioarduino/pioarduino-vscode-ide)
 - Python 3.8+
 - `clang-format` 21
 - USB-C cable supporting data transfer
@@ -387,25 +405,19 @@ Everyone here is a volunteer, so please be respectful and patient.
 
 One of the best things about open source is that anyone can take the code in a different direction. If you need something outside CrossPoint's [scope](./SCOPE.md), check out the community forks:
 
-- [CrossInk](https://github.com/uxjulia/CrossInk) — Typography and reading tracking: Bionic Reading (bolds word stems to create fixation points), guide dots between words, improved paragraph indents, and replaces the default fonts with ChareInk/Lexend/Bitter.
+- [CrossInk](https://github.com/uxjulia/CrossInk) — UX focused with minimal reading stats and broader customizations for the reading experience.
 
-- [papyrix-reader](https://github.com/bigbag/papyrix-reader) — Adds FB2 and MD format support. Actively maintained with Arabic script support. Custom themes via SD card.
-
-- ~~[crosspet](https://github.com/trilwu/crosspet) — A Vietnamese fork that adds a Tamagotchi-style virtual chicken that grows based on your reading milestones (pages read, streaks, care). Also: Flashcards, Weather, Pomodoro timer, and mini-games.~~ (Unmaintained)
-
-- [crosspoint-reader-cjk](https://github.com/aBER0724/crosspoint-reader-cjk) — Purpose-built for Chinese, Japanese, and Korean reading.
+- [papyrix-reader](https://github.com/bigbag/papyrix-reader) — Adds FB2 and MD format support. Actively maintained with Arabic script support. Custom themes.
 
 - [inx](https://github.com/obijuankenobiii/inx) — Completely reimagines the user interface with tabbed navigation.
 
-- ~~[PlusPoint](https://github.com/ngxson/pluspoint-reader) — custom JS apps support.~~ (Unmaintained)
+- [Witch(hunt) Reader](https://github.com/jpirnay/witchhunt-reader) — More faithful CSS styling and background work for slightly snappier interaction. Weather information panel. Markdown support.
 
 - [crosspoint-reader-papers3](https://github.com/juicecultus/crosspoint-reader-papers3) — Crosspoint port for M5Stack Paper S3.
 
-- [t5s3-reader](https://github.com/ShallowGreen123/t5s3-reader) — Crosspoint port for LilyGo T5 ePaper S3 / T5S3 4.7-inch e-paper device.
+**Note:** Many of these features will make their way into CrossPoint over time. Each project chooses its own priorities and tradeoffs.
 
-**Note:** Many of these features will make their way into CrossPoint over time. We maintain a slower pace to ensure rock-solid stability and squash bugs before they reach your device.
-
-Want to build your own device? Be sure to check out the [de-link](https://github.com/iandchasse/de-link) project.
+Want to build your own device? Be sure to check out the [de-link](https://github.com/iandchasse/de-link) project or [OnePage Reader](https://github.com/MoveCall/onepage-reader).
 
 ---
 
