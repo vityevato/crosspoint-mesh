@@ -60,10 +60,7 @@ int SdCardFontManager::loadFile(const SdCardFontFileInfo& file, const char* fami
 }
 
 bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize) {
-  // Unload any previously loaded family first
-  if (!loadedFamilyName_.empty()) {
-    unloadAll(renderer);
-  }
+  unloadAll(renderer);
 
   const SdCardFontFileInfo* selected = family.findNearestSize(pointSize);
   if (!selected) {
@@ -112,6 +109,9 @@ void SdCardFontManager::unloadAll(GfxRenderer& renderer) {
 }
 
 int SdCardFontManager::getFontId(const std::string& familyName) const {
-  if (familyName != loadedFamilyName_ || loaded_.empty()) return 0;
-  return loaded_.front().fontId;
+  if (familyName != loadedFamilyName_ || loaded_.empty() || loadedPointSize_ == 0) return 0;
+  for (const auto& lf : loaded_) {
+    if (lf.familyName == familyName && lf.size == loadedPointSize_) return lf.fontId;
+  }
+  return 0;
 }
