@@ -85,6 +85,13 @@ python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
   --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" > ../builtinFonts/notosans_8_regular.h
 
+# Monochrome emoji fallback for MeshCore chat text (per-glyph fallback on the
+# chat UI font). Curated subset from emoji_ranges.py; single regular cut.
+python fontconvert.py emoji_10_regular 10 \
+  ../builtinFonts/source/NotoEmoji/NotoEmoji-Regular.ttf \
+  --2bit --compress --emoji-subset > ../builtinFonts/emoji_10_regular.h
+echo "Generated ../builtinFonts/emoji_10_regular.h"
+
 echo ""
 echo "Running compression verification..."
 python verify_compression.py ../builtinFonts/
