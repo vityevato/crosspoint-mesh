@@ -96,6 +96,15 @@ void MeshCoreHubActivity::onEnter() {
     LOG_ERR("MESH", "Failed to allocate pending file contacts buffer");
   }
 
+  // Pre-allocate the address book while the heap is still roomy: BLE init costs
+  // ~50 KB, and on a first-ever connect with an empty store the lazy growth path
+  // in handleContact() would otherwise run only after the link is up — when free
+  // heap no longer meets ensureContactsCapacity()'s reserve, silently dropping
+  // every streamed contact (empty list after a storage wipe).
+  if (!ensureContactsCapacity(MESHCORE_CONTACT_INITIAL_CAPACITY)) {
+    LOG_ERR("MESH", "Failed to pre-allocate contacts buffer");
+  }
+
   // Now scope the store to this companion's data directory
   if (hasAddr && addr[0] != '\0') {
     store.init(addr);
@@ -974,16 +983,19 @@ bool MeshCoreHubActivity::ensureContactsCapacity(uint16_t needed) {
   if (needed <= savedContactsCapacity) return savedContacts != nullptr;
   if (needed > MESHCORE_MAX_CONTACTS) return false;  // beyond the node/protocol cap
 
-  uint16_t newCap = (savedContactsCapacity == 0) ? 32 : savedContactsCapacity * 2;
+  uint16_t newCap = (savedContactsCapacity == 0) ? MESHCORE_CONTACT_INITIAL_CAPACITY : savedContactsCapacity * 2;
   if (newCap < needed) newCap = needed;
   if (newCap > MESHCORE_MAX_CONTACTS) newCap = MESHCORE_MAX_CONTACTS;
 
-  // Keep free heap above the reserve so the reconnect scan (30 KB guard) and the
-  // message store stay viable even with a large address book. Grow only when there
-  // is room; otherwise refuse new contacts (logged) instead of crashing.
-  if (ESP.getFreeHeap() < MESHCORE_CONTACT_HEAP_RESERVE) {
-    LOG_ERR("MESH", "ensureContactsCapacity: heap low (%d), capped at %d contacts", (int)ESP.getFreeHeap(),
-            (int)savedContactsCapacity);
+  // Keep the post-allocation free heap above the reserve so the reconnect scan and
+  // the message store stay viable even with a large address book. The allocation
+  // size is part of the check because a connected BLE session runs below the
+  // reserve; a flat free-heap gate would refuse every growth while connected.
+  const size_t allocBytes =
+      static_cast<size_t>(newCap) * (sizeof(MeshCoreContact) + sizeof(uint32_t) + sizeof(uint16_t));
+  if (ESP.getFreeHeap() < MESHCORE_CONTACT_HEAP_RESERVE + allocBytes) {
+    LOG_ERR("MESH", "ensureContactsCapacity: heap low (%d), need %u bytes for %d contacts, capped at %d",
+            (int)ESP.getFreeHeap(), (unsigned)allocBytes, (int)newCap, (int)savedContactsCapacity);
     return false;
   }
 

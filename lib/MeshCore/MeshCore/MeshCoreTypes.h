@@ -121,7 +121,14 @@ static constexpr uint16_t MESHCORE_SEND_CHAR_LIMIT = 140;
 // so the protocol ceiling for contacts is 510; 350 is the supported node cap.
 static constexpr uint16_t MESHCORE_MAX_CONTACTS = 350;
 static constexpr uint8_t MESHCORE_MAX_CHANNELS = 40;
-// RAM-budget guard: contacts are loaded into RAM so they only grow while free heap
-// stays above this reserve, keeping the reconnect scan (30 KB guard) and the message
-// store alive even with a large address book.
-static constexpr uint32_t MESHCORE_CONTACT_HEAP_RESERVE = 32000;
+// Initial in-RAM address book size, pre-allocated at hub entry while the heap is
+// still roomy (before BLE init consumes ~50 KB). Without it a first-ever connect
+// with an empty store would allocate lazily only after the link is up, when the
+// heap reserve below blocks the allocation and silently drops every contact.
+static constexpr uint16_t MESHCORE_CONTACT_INITIAL_CAPACITY = 32;
+// RAM-budget guard: contact growth is allowed only while the free heap minus the
+// new allocation itself stays above this reserve, keeping the reconnect scan
+// (MeshCoreScanActivity::MIN_SCAN_HEAP_BYTES, 20 KB) and the message store alive
+// even with a large address book. A connected BLE session runs at roughly 24 KB
+// free, so a flat free-heap gate at this value would refuse every growth.
+static constexpr uint32_t MESHCORE_CONTACT_HEAP_RESERVE = 20000;

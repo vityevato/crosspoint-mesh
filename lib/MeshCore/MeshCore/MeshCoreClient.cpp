@@ -248,12 +248,10 @@ void MeshCoreClient::doScan(uint32_t durationSec) {
   // copied into scanResults[]. NimBLEScan keeps every seen advertiser on the
   // heap until the next scan or BLE deinit; on the first-ever entry the scan
   // runs right before connect, so those retained frames (a few KB) would
-  // otherwise stay allocated and push free heap below
-  // MESHCORE_CONTACT_HEAP_RESERVE exactly when the contact list arrives,
-  // dropping every contact (observed as an empty list on first connect; the
-  // reconnect path skips the scan and therefore worked). Safe to clear here:
-  // `results` must not be touched after this call (it aliases the same
-  // devices), and no other code reads NimBLE scan results afterwards.
+  // otherwise stay allocated for the whole session and eat into the reserve the
+  // contact list and reconnect scan rely on. Safe to clear here: `results` must
+  // not be touched after this call (it aliases the same devices), and no other
+  // code reads NimBLE scan results afterwards.
   scan->clearResults();
 
   setState(BleConnectionState::DISCONNECTED);
