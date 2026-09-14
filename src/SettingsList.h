@@ -30,8 +30,11 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   if (registry) {
     const auto& families = registry->getFamilies();
     enumStringValues.reserve(families.size());
-    std::transform(families.begin(), families.end(), std::back_inserter(enumStringValues),
-                   [](const SdCardFontFamilyInfo& f) { return f.name; });
+    for (const auto& f : families) {
+      // The Emoji pack is a chat fallback, not a reading font.
+      if (SdCardFontRegistry::isEmojiFamilyName(f.name.c_str())) continue;
+      enumStringValues.push_back(f.name);
+    }
   }
 
   // Capture the SD font count for the lambdas
@@ -62,8 +65,11 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   if (registry) {
     const auto& families = registry->getFamilies();
     sdFamilyNames.reserve(families.size());
-    std::transform(families.begin(), families.end(), std::back_inserter(sdFamilyNames),
-                   [](const SdCardFontFamilyInfo& f) { return f.name; });
+    for (const auto& f : families) {
+      // The Emoji pack is a chat fallback, not a reading font.
+      if (SdCardFontRegistry::isEmojiFamilyName(f.name.c_str())) continue;
+      sdFamilyNames.push_back(f.name);
+    }
   }
 
   s.valueGetter = [sdFamilyNames]() -> uint8_t {

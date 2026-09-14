@@ -160,6 +160,13 @@ class MeshCoreClient {
   uint8_t getScanResultCount() const { return scanResultCount; }
   bool isScanning() const { return state == BleConnectionState::SCANNING; }
 
+  // Channel-list sync progress (post-connect GET_CHANNEL burst). While active,
+  // poll() is still refilling the request batches; done/total let the UI show
+  // a progress indicator.
+  bool isChannelSyncActive() const { return channelSyncActive; }
+  uint8_t getChannelSyncDone() const { return channelSyncNext; }
+  uint8_t getChannelSyncTotal() const { return channelSyncTotal; }
+
 #ifdef SIMULATOR
   NimBLEClient* getBleClient() const { return bleClient; }
 #endif
@@ -223,6 +230,19 @@ class MeshCoreClient {
   // loop and corrupts the ring buffer (dropped GET_CONTACTS, duplicated
   // GET_BATTERY observed on device).
   volatile bool initialRequestsPending = false;
+
+  // Channel-list sync cursor (see poll() in MeshCoreClient.cpp). GET_CHANNEL is
+  // issued for every companion channel (up to MESHCORE_MAX_CHANNELS), but the
+  // command queue is small, so requests are refilled in batches as the queue
+  // drains instead of enqueueing all of them at once. While this is active,
+  // poll() keeps the queue topped up and defers requestMessages() until the
+  // whole channel list has been requested.
+  uint8_t channelSyncNext = 0;
+  uint8_t channelSyncTotal = 0;
+  bool channelSyncActive = false;
+  // Slots left free in the command queue during channel sync so periodic
+  // commands (battery polls, mark-read, etc.) never starve.
+  static constexpr uint8_t CHANNEL_SYNC_QUEUE_RESERVE = 2;
 
   // Set by deinit() to signal doConnect() to skip bleClient cleanup.
   // Ownership of bleClient transfers back to deinit() when this is true.

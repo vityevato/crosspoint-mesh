@@ -204,6 +204,12 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   for (JsonObject fObj : familiesArr) {
     ManifestFamily family;
     family.name = fObj["name"] | "";
+
+    // The Emoji pack is a chat fallback, not a downloadable reading font:
+    // it is installed locally (web upload or manual SD copy) only and must
+    // never be offered in the on-device download list.
+    if (SdCardFontRegistry::isEmojiFamilyName(family.name.c_str())) continue;
+
     family.description = fObj["description"] | "";
 
     for (JsonVariant s : fObj["styles"].as<JsonArray>()) {
@@ -570,6 +576,9 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
   fontInstaller_.refreshRegistry();
   family.installed = true;
   family.hasUpdate = false;
+  // The reader-font pairing and the Emoji chat fallback both live in
+  // SdCardFontSystem — let it re-sync on the next ensureLoaded().
+  sdFontSystem.markRegistryDirty();
 
   {
     RenderLock lock(*this);
@@ -615,6 +624,9 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
     // state_ transition to hang the rebuild off), so it must set the flag
     // directly.
     rowsDirty_ = true;
+    // Deleting the Emoji pack must un-pair it from the chat fonts — let
+    // SdCardFontSystem re-sync on the next ensureLoaded().
+    sdFontSystem.markRegistryDirty();
   }
 
   requestUpdate();

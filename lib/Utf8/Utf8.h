@@ -74,3 +74,18 @@ inline bool utf8IsCombiningMark(const uint32_t cp) {
          || (cp >= 0x20D0 && cp <= 0x20FF)   // Combining Diacritical Marks for Symbols
          || (cp >= 0xFE20 && cp <= 0xFE2F);  // Combining Half Marks
 }
+
+// Returns true for codepoints the emoji fallback font (Noto Emoji subset)
+// may render when the primary font lacks them: pictographs, emoticons,
+// transport/map symbols and the misc symbol blocks. Text-font coverage
+// always wins — callers consult the fallback only when hasCodepoint() misses.
+inline bool utf8IsEmojiCodepoint(const uint32_t cp) {
+  return (cp >= 0x2600 && cp <= 0x27BF)        // misc symbols, dingbats
+         || (cp >= 0x2B00 && cp <= 0x2BFF)     // arrows, stars, geometric shapes
+         || (cp >= 0x1F000 && cp <= 0x1FAFF);  // emoji + supplements
+}
+
+// Invisible emoji sequence controls: ZWJ (U+200D) and VS16 (U+FE0F). They
+// carry no bitmap and must never advance the cursor or draw a replacement
+// box, otherwise every emoji sequence would gain stray glyphs.
+inline bool utf8IsEmojiControl(const uint32_t cp) { return cp == 0x200D || cp == 0xFE0F; }

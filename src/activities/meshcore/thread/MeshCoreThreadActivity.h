@@ -57,11 +57,13 @@ class MeshCoreThreadActivity final : public Activity {
   bool preventAutoSleep() override { return true; }
 
   /// Called by Hub when a delivery callback fires for this conversation.
-  /// Reloads visible messages from store and triggers a repaint.
+  /// Reloads visible messages from store and triggers a repaint, keeping the
+  /// in-RAM scroll position (status flips never move the view).
   void onDeliveryUpdate(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status);
 
   /// Called by Hub when the repeater heard-count for this channel changes.
-  /// Reloads visible messages from store and triggers a repaint.
+  /// Reloads visible messages from store and triggers a repaint, keeping the
+  /// in-RAM scroll position (heard-count flips never move the view).
   void onChannelHeardUpdate(uint8_t chIdx, uint8_t heardCount);
 
   /**

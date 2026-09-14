@@ -67,6 +67,7 @@ T4EntryActivity::T4EntryActivity(GfxRenderer& renderer, MappedInputManager& mapp
 void T4EntryActivity::onEnter() {
   LOG_DBG("T4", "onEnter: lang=%d mode=%d text='%s'", static_cast<int>(_lang), static_cast<int>(_mode),
           _initialText.c_str());
+  LOG_DBG("MEMM", "T4 onEnter:start free=%u largest=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   Activity::onEnter();
 
   // Allocate reusable render buffer on heap (512 bytes — too large for stack)
@@ -174,6 +175,7 @@ void T4EntryActivity::onEnter() {
 
 void T4EntryActivity::onExit() {
   LOG_DBG("T4", "onExit");
+  LOG_DBG("MEMM", "T4 onExit:start free=%u largest=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   saveUserLexicon();
   _inputEngine.setUserLexicon(nullptr);
   _lexicon.reset();

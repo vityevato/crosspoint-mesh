@@ -213,6 +213,7 @@ class NimBLEScan {
   void setWindow(uint16_t) {}
   bool isScanning() const { return scanning; }
   void stop() { scanning = false; }
+  void clearResults() {}  // no-op on simulator (mock rebuilds results per scan)
 
   NimBLEScanResults getResults(uint32_t durationMs, bool isContinue);
 

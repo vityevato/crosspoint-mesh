@@ -36,11 +36,19 @@ class EpdFontFamily {
     return (static_cast<uint8_t>(style) & TEXT_DECORATION_MASK) != 0;
   }
 
+  /// Set the same-pixel-size emoji fallback family on every style font of
+  /// this family (nullptr clears). The fallback font is consulted per glyph
+  /// for emoji codepoints the primary font lacks — see EpdFont::getGlyphWithEmojiFallback.
+  void setEmojiFallback(const EpdFontFamily* fallback);
+
+  /// Resolve the EpdFont for a style (bold/italic fall back to the closest
+  /// available variant). Public so GfxRenderer can pair glyphs with the font
+  /// that owns them when drawing emoji fallback glyphs.
+  const EpdFont* getFont(Style style) const;
+
  private:
   const EpdFont* regular;
   const EpdFont* bold;
   const EpdFont* italic;
   const EpdFont* boldItalic;
-
-  const EpdFont* getFont(Style style) const;
 };

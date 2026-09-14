@@ -24,7 +24,10 @@ parser.add_argument("--compress", dest="compress", action="store_true", help="Co
 parser.add_argument("--zopfli", dest="zopfli", action="store_true", help="Use Zopfli for the DEFLATE backend instead of zlib. Produces standard raw-DEFLATE streams (decoded unchanged by the on-device uzlib inflater), typically a few percent smaller than zlib -9, at the cost of much slower compression. Requires --compress and the 'zopfli' package.")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
+parser.add_argument("--emoji-subset", dest="emoji_subset", action="store_true", help="Add the curated monochrome emoji codepoint ranges from emoji_ranges.py (used for the built-in emoji_10 font).")
 args = parser.parse_args()
+
+from emoji_ranges import EMOJI_INTERVALS
 
 import freetype
 from fontTools.ttLib import TTFont
@@ -139,6 +142,8 @@ intervals = [
 add_ints = []
 if args.additional_intervals:
     add_ints = [tuple([int(n, base=0) for n in i.split(",")]) for i in args.additional_intervals]
+if args.emoji_subset:
+    add_ints.extend(EMOJI_INTERVALS)
 
 def norm_floor(val):
     return int(math.floor(val / (1 << 6)))
@@ -381,6 +386,13 @@ for i_start, i_end in intervals:
 
 # pipe seems to be a good heuristic for the "real" descender
 face = load_glyph(ord('|'))
+# Fonts without a pipe glyph (e.g. the emoji-only Noto Emoji subset) have no
+# obvious "descender probe" — fall back to any glyph we actually generated,
+# then to the raw face, so the final metrics prints still work.
+if face is None and all_glyphs:
+    face = load_glyph(all_glyphs[0][0].code_point)
+if face is None:
+    face = font_stack[0]
 
 glyph_data = []
 glyph_props = []
@@ -830,15 +842,16 @@ if compress:
         (0xFFFD, 0xFFFD),   # Replacement Character
     ]
 
-    # 16 KB cap: bounds the device's transient per-group malloc (prewarm temp
+    # 8 KB cap: bounds the device's transient per-group malloc (prewarm temp
     # buffer and hot-group fallback both allocate one contiguous block of
     # `uncompressedSize`). On the ESP32-C3, once NimBLE is initialised the heap
-    # is fragmented and the largest contiguous block can drop to ~31 KB, so a
-    # single dense script group (e.g. Cyrillic at 16-18 px is ~34-40 KB) could
-    # not be allocated and its glyphs rendered blank. Splitting at 16 KB keeps
-    # every group comfortably allocatable while costing only a few percent of
+    # is fragmented and the largest contiguous block can drop to ~15-21 KB, so
+    # a 16 KB group (e.g. Cyrillic) could not be allocated and its glyphs
+    # rendered blank (field crash: "Failed to allocate temp buffer (16304 bytes)
+    # for group 6" in the MeshCore thread). Splitting at 8 KB keeps every group
+    # allocatable with ~7 KB of headroom while costing only a few percent of
     # DEFLATE ratio (intra-group glyph redundancy dominates the 32 KB window).
-    GROUP_MAX_UNCOMPRESSED_BYTES = 16384
+    GROUP_MAX_UNCOMPRESSED_BYTES = 8192
 
     def get_script_group(code_point):
         for i, (start, end) in enumerate(SCRIPT_GROUP_RANGES):

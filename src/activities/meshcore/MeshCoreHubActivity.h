@@ -152,6 +152,31 @@ class MeshCoreHubActivity final : public Activity {
   bool _activitySweepPending = false;
   uint16_t _activitySweepIndex = 0;
   bool _channelActivityNeedsLoad = true;
+  // Chunked channel-activity load cursor (bounded SD reads per loop() pass).
+  uint8_t _channelActivityIndex = 0;
+
+  // List redraw debounce. Channel info (PKT_CHANNEL_INFO) and the initial
+  // message drain each deliver dozens of updates per (re)connect, and a full
+  // requestUpdate() per update would saturate the slow e-ink screen and leave
+  // the main loop no time for input. requestDebouncedUpdate() throttles the
+  // repaints to LIST_UPDATE_DEBOUNCE_MS; loop() flushes a trailing change
+  // once the burst settles.
+  uint32_t _listUpdateAtMs = 0;
+  bool _listUpdateQueued = false;
+  static constexpr uint32_t LIST_UPDATE_DEBOUNCE_MS = 500;
+
+  // "Reading messages…" toast bookkeeping: shown while the offline-queue
+  // drain is streaming messages, cleared after MESSAGE_DRAIN_IDLE_MS of
+  // silence in loop().
+  bool _msgDrainToastActive = false;
+  uint32_t _lastIncomingMsgMs = 0;
+  static constexpr uint32_t MESSAGE_DRAIN_IDLE_MS = 800;
+  // Channel-sync toast bookkeeping: progress text is re-shown only when the
+  // fetched-count actually changes (avoids redundant repaints). The last
+  // shown text is kept so the clear at sync end only fires when the toast is
+  // still ours (never wipes an unrelated toast shown in between).
+  uint8_t _channelSyncToastDone = 0xFF;
+  char _channelSyncToastText[48] = {};
 
   // Recently seen nodes (adverts) — transient, small fixed buffer.
   std::unique_ptr<MeshCoreContact[]> discoveredNodes;
@@ -258,4 +283,9 @@ class MeshCoreHubActivity final : public Activity {
 
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);
+
+  /** Throttled requestUpdate() for bursty list updates (channel info,
+   *  incoming message drain): repaints at most every LIST_UPDATE_DEBOUNCE_MS
+   *  with a trailing flush handled in loop(). */
+  void requestDebouncedUpdate();
 };

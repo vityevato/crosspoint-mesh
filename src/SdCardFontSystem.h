@@ -53,6 +53,16 @@ class SdCardFontSystem {
   // loaded are reused).
   void setupUiFallbacks(GfxRenderer& renderer);
 
+  // Pair the reader-size body font with the SD "Emoji" family at the same
+  // point size (per-glyph emoji fallback for MeshCore chats). No-op when the
+  // Emoji family is not installed or no SD family is loaded.
+  void setupEmojiFallback(GfxRenderer& renderer);
+
+  // Re-assert the built-in UI_10 -> EMOJI_10 pair. Idempotent; needed after
+  // SdCardFontManager::unloadAll() clears every emoji fallback, including
+  // the built-in one registered in main.cpp.
+  void setupBuiltinEmojiFallback(GfxRenderer& renderer);
+
   SdCardFontRegistry registry_;
   SdCardFontManager manager_;
   std::atomic<bool> registryDirty_{false};

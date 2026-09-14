@@ -244,6 +244,18 @@ void MeshCoreClient::doScan(uint32_t durationSec) {
     LOG_INF("MESH", "No MeshCore devices found");
   }
 
+  // Release the NimBLE-layer advertisement objects now that the results are
+  // copied into scanResults[]. NimBLEScan keeps every seen advertiser on the
+  // heap until the next scan or BLE deinit; on the first-ever entry the scan
+  // runs right before connect, so those retained frames (a few KB) would
+  // otherwise stay allocated and push free heap below
+  // MESHCORE_CONTACT_HEAP_RESERVE exactly when the contact list arrives,
+  // dropping every contact (observed as an empty list on first connect; the
+  // reconnect path skips the scan and therefore worked). Safe to clear here:
+  // `results` must not be touched after this call (it aliases the same
+  // devices), and no other code reads NimBLE scan results afterwards.
+  scan->clearResults();
+
   setState(BleConnectionState::DISCONNECTED);
 }
 
@@ -518,6 +530,9 @@ void MeshCoreClient::disconnect() {
   _pendingDm = {};
   initialRequestsPending = false;
   msgDrainCount = 0;
+  channelSyncActive = false;
+  channelSyncNext = 0;
+  channelSyncTotal = 0;
 
   if (state != BleConnectionState::DISCONNECTED) {
     setState(BleConnectionState::DISCONNECTED);
@@ -886,10 +901,29 @@ void MeshCoreClient::poll() {
       LOG_ERR("MESH", "Failed to queue battery request");
     }
     requestContacts();
-    for (uint8_t i = 0; i < companion.maxChannels && i < 8; ++i) {
-      requestChannel(i);
+    // Channel info is fetched over the whole companion channel range (up to
+    // MESHCORE_MAX_CHANNELS) in small batches as the command queue drains —
+    // see the refill loop below. The initial message drain (requestMessages)
+    // is deferred until the channel list has been fully requested.
+    channelSyncTotal = (companion.maxChannels > MESHCORE_MAX_CHANNELS) ? MESHCORE_MAX_CHANNELS : companion.maxChannels;
+    channelSyncNext = 0;
+    channelSyncActive = true;
+  }
+
+  // Channel-list sync: refill GET_CHANNEL requests in batches until the whole
+  // companion channel range has been queried. Bounded by the command queue so
+  // the burst never overflows it, and leaving CHANNEL_SYNC_QUEUE_RESERVE slots
+  // free for periodic commands (battery poll, mark-read, sends). Once complete,
+  // fire the deferred initial message drain.
+  if (channelSyncActive && rxChar) {
+    while (channelSyncNext < channelSyncTotal && cmdCount < CMD_QUEUE_SIZE - CHANNEL_SYNC_QUEUE_RESERVE) {
+      if (!requestChannel(channelSyncNext)) break;
+      ++channelSyncNext;
     }
-    requestMessages();
+    if (channelSyncNext >= channelSyncTotal) {
+      channelSyncActive = false;
+      requestMessages();
+    }
   }
 
   // Process all received notifications (ring-buffer drain).
