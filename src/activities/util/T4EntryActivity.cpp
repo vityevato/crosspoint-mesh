@@ -272,18 +272,21 @@ void T4EntryActivity::render(RenderLock&& lock) {
 // ══════════════════════════════════════════════════════════════════
 
 bool T4EntryActivity::handleLongPresses() {
-  // Back long-press → cancel
-  if (_backHeld && !_backLongHandled && mappedInput.isPressed(MappedInputManager::Button::Back) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+  // Back long-press → cancel. wasLongPressed() also suppresses the release that
+  // follows it: T4 exits while the button is still down, and without the
+  // suppression the release reaches the activity underneath (UiListActivity
+  // acts on wasReleased) and triggers an extra Back there.
+  if (_backHeld && !_backLongHandled && mappedInput.wasLongPressed(MappedInputManager::Button::Back, LONG_PRESS_MS)) {
     _backLongHandled = true;
     LOG_DBG("T4", "loop: long-press Back → cancel");
     onCancel();
     return true;
   }
 
-  // Confirm long-press → finish with result
-  if (_confirmHeld && !_confirmLongHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+  // Confirm long-press → finish with result. Same release suppression as Back:
+  // otherwise the release activates the row selected on the screen underneath.
+  if (_confirmHeld && !_confirmLongHandled &&
+      mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, LONG_PRESS_MS)) {
     _confirmLongHandled = true;
     LOG_DBG("T4", "loop: long-press Confirm → finish, mode=%d text='%s'", static_cast<int>(_mode),
             _inputEngine.getConfirmedText());
