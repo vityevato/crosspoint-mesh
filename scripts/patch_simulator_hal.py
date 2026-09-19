@@ -273,3 +273,51 @@ def patch_simulator_hal_display(env):  # noqa: F811
 
 
 patch_simulator_hal_display(env)  # noqa: F821
+
+
+# Simulator HalSystem stub: the mesh fork samples the heap from the main loop
+# for the panic report. The simulator has no RTC memory and no panic report, so
+# expose the call as a no-op.
+HALSYSTEM_H_ANCHOR = "void begin();"
+HALSYSTEM_H_ADDITION = """void begin();
+
+// Record the current heap state into RTC memory (mesh fork panic report).
+// The simulator has no RTC memory or panic report, so this is a no-op.
+void sampleHeap();"""
+HALSYSTEM_C_ANCHOR = "void HalSystem::begin() {}"
+HALSYSTEM_C_ADDITION = "void HalSystem::begin() {}\nvoid HalSystem::sampleHeap() {}"
+
+
+def patch_simulator_hal_system(env):  # noqa: F811
+    libdeps_root = os.path.join(env["PROJECT_DIR"], ".pio", "libdeps")  # noqa: F821
+    if not os.path.isdir(libdeps_root):
+        return
+
+    for env_dir in sorted(os.listdir(libdeps_root)):
+        header = os.path.join(libdeps_root, env_dir, "simulator", "src", "HalSystem.h")
+        source = os.path.join(libdeps_root, env_dir, "simulator", "src", "HalSystem.cpp")
+        if not os.path.isfile(header) or not os.path.isfile(source):
+            continue
+
+        with open(header, "r", encoding="utf-8") as f:
+            header_content = f.read()
+        if "sampleHeap" not in header_content and HALSYSTEM_H_ANCHOR in header_content:
+            header_content = header_content.replace(HALSYSTEM_H_ANCHOR, HALSYSTEM_H_ADDITION, 1)
+            with open(header, "w", encoding="utf-8") as f:
+                f.write(header_content)
+            print("Patched simulator HalSystem.h with sampleHeap(): %s" % header)
+        elif "sampleHeap" not in header_content:
+            print("WARNING: simulator HalSystem.h anchor missing in %s" % header)
+
+        with open(source, "r", encoding="utf-8") as f:
+            source_content = f.read()
+        if "HalSystem::sampleHeap" not in source_content and HALSYSTEM_C_ANCHOR in source_content:
+            source_content = source_content.replace(HALSYSTEM_C_ANCHOR, HALSYSTEM_C_ADDITION, 1)
+            with open(source, "w", encoding="utf-8") as f:
+                f.write(source_content)
+            print("Patched simulator HalSystem.cpp with sampleHeap(): %s" % source)
+        elif "HalSystem::sampleHeap" not in source_content:
+            print("WARNING: simulator HalSystem.cpp anchor missing in %s" % source)
+
+
+patch_simulator_hal_system(env)  # noqa: F821

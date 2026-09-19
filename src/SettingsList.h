@@ -196,13 +196,11 @@ inline std::vector<StrId> buildLongPressMenuValues() {
 // ACTION-type entries and entries without a key are device-only.
 //
 // The static list is constructed exactly once (master's optimization, #1086 +
-// #1636) so the per-entry SettingInfo cost is paid once; every call then copies
-// it. When an SdCardFontRegistry is supplied AND has SD card fonts installed,
-// the font-family entry is replaced in that copy with a registry-aware version.
-// The font-size entry is always rebuilt, since its options are point sizes read
-// from the active family rather than a fixed enum.
-inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
-                                                const std::vector<DictionaryEntry>* dictionaries = nullptr) {
+// #1636) so the per-entry SettingInfo cost is paid once. JSON persistence
+// iterates it directly — getSettingsList() below copies the whole list and
+// rebuilds the dynamic entries, which costs ~10 KB of temporary heap per call
+// and must not run on the low-heap settings save paths (see T4Prefs.h).
+inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     // Enum settings are persisted as numeric values. Assign these labels by enum
     // value so a reordered menu or enum cannot silently swap their behavior.
@@ -465,37 +463,42 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     }
     return v;
   }();
+  return baseList;
+}
 
-  std::vector<SettingInfo> v = baseList;
-  if (!BoardConfig::hasTouch()) {
+// Entries the current board hides from its settings UI. JSON persistence skips
+// them too, so settings.json stays board-specific.
+inline bool settingHiddenOnBoard(const StrId nameId) {
+  if (!BoardConfig::hasTouch() &&
+      (nameId == StrId::STR_TOUCH_READER_CONTROLS || nameId == StrId::STR_READER_MENU_STYLE)) {
     // The toolbar reader menu is touch-first chrome: button boards keep the
     // classic list menu, so the style choice is hidden along with the touch
     // controls.
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) {
-                             return s.nameId == StrId::STR_TOUCH_READER_CONTROLS ||
-                                    s.nameId == StrId::STR_READER_MENU_STYLE;
-                           }),
-            v.end());
+    return true;
   }
-  // The reader-menu gesture choice only makes sense where the menu stays
-  // reachable without the tap and the bottom edge is free (the capacitive
-  // Home key); everywhere else the bottom-edge up-swipe is Home and the
-  // center tap is the primary path, so the setting stays at its Tap default.
-  if (!BoardConfig::hasHomeKey()) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) { return s.nameId == StrId::STR_SHOW_READER_MENU; }),
-            v.end());
+  if (!BoardConfig::hasHomeKey() && nameId == StrId::STR_SHOW_READER_MENU) {
+    // The reader-menu gesture choice only makes sense where the menu stays
+    // reachable without the tap and the bottom edge is free (the capacitive
+    // Home key); everywhere else the bottom-edge up-swipe is Home and the
+    // center tap is the primary path, so the setting stays at its Tap default.
+    return true;
   }
-  if (BoardConfig::hasTouch()) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) {
-                             return s.nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION ||
-                                    s.nameId == StrId::STR_SUNLIGHT_FADING_FIX ||
-                                    s.nameId == StrId::STR_BACK_SHORT_TO_FILE_BROWSER;
-                           }),
-            v.end());
+  if (BoardConfig::hasTouch() &&
+      (nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION || nameId == StrId::STR_SUNLIGHT_FADING_FIX ||
+       nameId == StrId::STR_BACK_SHORT_TO_FILE_BROWSER)) {
+    return true;
   }
+  return false;
+}
+
+// Per-call copy with the board-specific entries removed and the dynamic
+// font-family / font-size / dictionary entries rebuilt. UI callers only; the
+// JSON persistence path uses getBaseSettingsList().
+inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
+                                                const std::vector<DictionaryEntry>* dictionaries = nullptr) {
+  std::vector<SettingInfo> v = getBaseSettingsList();
+  v.erase(std::remove_if(v.begin(), v.end(), [](const SettingInfo& s) { return settingHiddenOnBoard(s.nameId); }),
+          v.end());
   if (registry && registry->getFamilyCount() > 0) {
     auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_FAMILY; });
     if (it != v.end()) {

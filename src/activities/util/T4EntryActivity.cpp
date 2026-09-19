@@ -89,6 +89,19 @@ void T4EntryActivity::onEnter() {
   // while this activity is alive.
   _maxBlockH = maxLetterBlockHeight(renderer.getLineHeight(UI_12_FONT_ID));
 
+  // T4 preferences live in their own tiny file (see T4Prefs.h): they change on
+  // a keypress, sometimes while a MeshCore BLE session is up, and a full
+  // settings.json save in that state can abort on OOM. On the first run after
+  // the upgrade the file is missing — seed it from the legacy settings.json
+  // values so the user's choice survives.
+  t4::T4Prefs prefs;
+  if (t4::loadT4Prefs(prefs)) {
+    SETTINGS.t4UserMode = prefs.userMode;
+    SETTINGS.t4LastLanguage = prefs.lastLanguage;
+  } else {
+    t4::saveT4Prefs(t4::T4Prefs{SETTINGS.t4UserMode, SETTINGS.t4LastLanguage});
+  }
+
   // Restore the user's globally-persisted input mode preference.
   _userMode = static_cast<t4::T4Mode>(SETTINGS.t4UserMode);
 
@@ -259,18 +272,21 @@ void T4EntryActivity::render(RenderLock&& lock) {
 // ══════════════════════════════════════════════════════════════════
 
 bool T4EntryActivity::handleLongPresses() {
-  // Back long-press → cancel
-  if (_backHeld && !_backLongHandled && mappedInput.isPressed(MappedInputManager::Button::Back) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+  // Back long-press → cancel. wasLongPressed() also suppresses the release that
+  // follows it: T4 exits while the button is still down, and without the
+  // suppression the release reaches the activity underneath (UiListActivity
+  // acts on wasReleased) and triggers an extra Back there.
+  if (_backHeld && !_backLongHandled && mappedInput.wasLongPressed(MappedInputManager::Button::Back, LONG_PRESS_MS)) {
     _backLongHandled = true;
     LOG_DBG("T4", "loop: long-press Back → cancel");
     onCancel();
     return true;
   }
 
-  // Confirm long-press → finish with result
-  if (_confirmHeld && !_confirmLongHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+  // Confirm long-press → finish with result. Same release suppression as Back:
+  // otherwise the release activates the row selected on the screen underneath.
+  if (_confirmHeld && !_confirmLongHandled &&
+      mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, LONG_PRESS_MS)) {
     _confirmLongHandled = true;
     LOG_DBG("T4", "loop: long-press Confirm → finish, mode=%d text='%s'", static_cast<int>(_mode),
             _inputEngine.getConfirmedText());
@@ -292,7 +308,7 @@ bool T4EntryActivity::handleLongPresses() {
     // session.
     if (_inputType == InputType::Text) {
       SETTINGS.t4LastLanguage = static_cast<uint8_t>(_lang);
-      SETTINGS.saveToFile();
+      t4::saveT4Prefs(t4::T4Prefs{SETTINGS.t4UserMode, SETTINGS.t4LastLanguage});
     }
 
     // Save text before reset destroys it
@@ -351,7 +367,7 @@ bool T4EntryActivity::handleLongPresses() {
       togglePredictMultiTap();
       _userMode = _mode;  // Remember user's explicit choice
       SETTINGS.t4UserMode = static_cast<uint8_t>(_userMode);
-      SETTINGS.saveToFile();
+      t4::saveT4Prefs(t4::T4Prefs{SETTINGS.t4UserMode, SETTINGS.t4LastLanguage});
       requestUpdate();
     } else if (_inputType == InputType::Password) {
       // Right long-press → toggle password visibility.  The Right button is

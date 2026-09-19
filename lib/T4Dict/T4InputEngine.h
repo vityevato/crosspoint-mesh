@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Logging.h>
+#include <Memory.h>
 
 #include <cstdint>
 #include <cstring>
@@ -274,7 +275,7 @@ class T4InputEngine {
 // ── Template implementation (inline for Dict-dependent parts) ───────────
 
 template <typename Dict>
-T4InputEngine<Dict>::T4InputEngine() : _dict(std::make_unique<Dict>()) {}
+T4InputEngine<Dict>::T4InputEngine() : _dict(makeUniqueNoThrow<Dict>()) {}
 
 template <typename Dict>
 T4InputEngine<Dict>::~T4InputEngine() = default;
@@ -518,7 +519,12 @@ template <typename Dict>
 void T4InputEngine<Dict>::loadDictionaryForLanguage(T4Language lang) {
   const char* path = dictPathForLanguage(lang);
   if (!path) return;  // DIGIT mode has no dictionary
-  _dict = std::make_unique<Dict>();
+  _dict = makeUniqueNoThrow<Dict>();
+  if (!_dict) {
+    LOG_ERR("T4", "OOM: dictionary object");
+    setError("Failed to load dictionary");
+    return;
+  }
   if (!_dict->loadFromSD(path)) {
     setError("Failed to load dictionary");
     _dict.reset();

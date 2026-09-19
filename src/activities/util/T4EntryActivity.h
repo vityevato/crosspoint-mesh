@@ -9,6 +9,7 @@
 #include "T4Dictionary.h"
 #include "T4InputEngine.h"
 #include "T4Layout.h"
+#include "T4Prefs.h"
 #include "T4UserLexicon.h"
 #include "activities/Activity.h"
 
