@@ -64,8 +64,8 @@ uint8_t CrossPointSettings::sleepTimeoutEnumToMinutes(const uint8_t legacyValue)
 void CrossPointSettings::toJson(JsonDocument& doc) const {
   const CrossPointSettings& s = *this;
 
-  for (const auto& info : getSettingsList()) {
-    if (!info.key) continue;
+  for (const auto& info : getBaseSettingsList()) {
+    if (!info.key || settingHiddenOnBoard(info.nameId)) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -109,12 +109,11 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Stored as T4 layout code ("ru", ...) for stability across registry reorders.
   doc["t4AdditionalLayout"] = t4::getAdditionalLayoutCode(t4AdditionalLayout);
 
-  // T4 input mode preference -- changed by Right long-press in T4 keyboard.
-  doc["t4UserMode"] = t4UserMode;
-
-  // T4 last-used language -- persisted so the keyboard reopens with the
-  // same language the user was on when they last closed it.
-  doc["t4LastLanguage"] = t4LastLanguage;
+  // T4 input mode and last-used language live in their own file
+  // (/t4dicts/t4prefs.bin, see T4Prefs.h): they change on a keypress while
+  // MeshCore BLE may be connected — the state in which a full settings save can
+  // run the heap out. fromJson still reads the legacy keys below so the
+  // choice survives a one-time upgrade.
 
   // A uint16_t mask, so it does not fit the uint8_t generic loop. Omitted while
   // unconfigured, so the default keeps following the UI language.
@@ -129,8 +128,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
 
   auto clamp = [](uint8_t val, uint8_t maxVal, uint8_t def) -> uint8_t { return val < maxVal ? val : def; };
 
-  for (const auto& info : getSettingsList()) {
-    if (!info.key) continue;
+  for (const auto& info : getBaseSettingsList()) {
+    if (!info.key || settingHiddenOnBoard(info.nameId)) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -244,11 +243,14 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     t4AdditionalLayout = t4::additionalLayoutIndexForCode(doc["t4AdditionalLayout"].as<const char*>());
   }
 
-  // T4 input mode preference -- clamp to valid range (0 = Predict, 1 = Multi-tap).
+  // T4 input mode preference -- legacy key, migrated to /t4dicts/t4prefs.bin
+  // by T4EntryActivity. Read once so the choice survives the upgrade; no longer
+  // written by toJson(). Clamp to valid range (0 = Predict, 1 = Multi-tap).
   t4UserMode = doc["t4UserMode"] | 0;
   if (t4UserMode > 1) t4UserMode = 0;
 
-  // T4 last-used language -- clamp to valid range (0 = EN, 1 = Additional, 2 = Digit).
+  // T4 last-used language -- legacy key, migrated to /t4dicts/t4prefs.bin.
+  // Clamp to valid range (0 = EN, 1 = Additional, 2 = Digit).
   t4LastLanguage = doc["t4LastLanguage"] | 0;
   if (t4LastLanguage > 2) t4LastLanguage = 0;
 

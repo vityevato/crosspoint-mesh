@@ -625,6 +625,7 @@ void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
+  static unsigned long lastHeapSample = 0;
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   mappedInputManager.update();
@@ -659,6 +660,13 @@ void loop() {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
             ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
     lastMemPrint = millis();
+  }
+
+  // Rolling heap sample for the panic report: the MEM log above needs USB
+  // serial, so a crash on battery would otherwise leave no heap numbers.
+  if (millis() - lastHeapSample >= 1000) {
+    HalSystem::sampleHeap();
+    lastHeapSample = millis();
   }
 
   // Handle incoming serial commands,

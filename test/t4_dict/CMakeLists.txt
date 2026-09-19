@@ -41,12 +41,26 @@ target_include_directories(T4InputEngineTest PRIVATE
   ${REPO_ROOT}/lib/T4Dict
   ${REPO_ROOT}/lib
   ${REPO_ROOT}/lib/Logging
+  ${REPO_ROOT}/lib/Memory
 )
 target_link_libraries(T4InputEngineTest PRIVATE
   crosspoint_test_common
   GTest::gtest_main
 )
 gtest_discover_tests(T4InputEngineTest)
+
+# ── T4Prefs codec tests (pure — file I/O lives in T4Prefs.cpp) ──────────
+add_executable(T4PrefsTest
+  T4PrefsTest.cpp
+)
+target_include_directories(T4PrefsTest PRIVATE
+  ${REPO_ROOT}/lib/T4Dict
+)
+target_link_libraries(T4PrefsTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+gtest_discover_tests(T4PrefsTest)
 
 # ── T4UserLexicon tests (pure — no HalStorage, no dictionary) ────────────
 add_executable(T4UserLexiconTest

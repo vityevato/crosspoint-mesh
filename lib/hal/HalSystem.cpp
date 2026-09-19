@@ -16,12 +16,18 @@
 
 #define MAX_PANIC_STACK_DEPTH 32
 #define PANIC_CAPTURE_MAGIC 0x50414E49u
+#define HEAP_CAPTURE_MAGIC 0x48454150u
 
 RTC_NOINIT_ATTR char panicMessage[256];
 RTC_NOINIT_ATTR HalSystem::StackFrame panicStack[MAX_PANIC_STACK_DEPTH];
 // RTC_NOINIT is uninitialized on cold boot, so only this exact marker proves a
 // panic diagnostic was captured before the reset.
 RTC_NOINIT_ATTR volatile uint32_t panicCaptureMarker;
+// Rolling heap sample (see sampleHeap). Preserved across a panic reset so the
+// report shows the heap state just before the crash; the marker guards against
+// garbage on cold boot.
+RTC_NOINIT_ATTR HalSystem::HeapSnapshot panicHeapSnapshot;
+RTC_NOINIT_ATTR volatile uint32_t panicHeapMarker;
 
 extern "C" {
 
@@ -104,6 +110,13 @@ void begin() {
   }
 }
 
+void sampleHeap() {
+  panicHeapSnapshot.freeHeap = ESP.getFreeHeap();
+  panicHeapSnapshot.minFreeHeap = ESP.getMinFreeHeap();
+  panicHeapSnapshot.maxAllocHeap = ESP.getMaxAllocHeap();
+  panicHeapMarker = HEAP_CAPTURE_MAGIC;
+}
+
 void checkPanic() {
   if (isRebootFromPanic()) {
     auto panicInfo = getPanicInfo(true);
@@ -127,6 +140,7 @@ void checkPanic() {
 
 void clearPanic() {
   panicCaptureMarker = 0;
+  panicHeapMarker = 0;
   panicMessage[0] = '\0';
   for (size_t i = 0; i < MAX_PANIC_STACK_DEPTH; i++) {
     panicStack[i].sp = 0;
@@ -172,6 +186,13 @@ std::string getPanicInfo(bool full) {
     info += "\n\nReset reason: " + std::string(resetReasonName(esp_reset_reason()));
     info += "\n\nPanic reason: " + std::string(panicMessage);
     info += "\n\nLast logs:\n" + getLastLogs();
+    if (panicHeapMarker == HEAP_CAPTURE_MAGIC) {
+      // Last rolling sample from the main loop, not the exact crash instant —
+      // still the only heap number that survives a crash without USB serial.
+      info += "\n\nHeap (last sample): free=" + std::to_string(panicHeapSnapshot.freeHeap) +
+              " minFree=" + std::to_string(panicHeapSnapshot.minFreeHeap) +
+              " maxAlloc=" + std::to_string(panicHeapSnapshot.maxAllocHeap);
+    }
     info += "\n\nStack memory:\n";
 
     auto toHex = [](uint32_t value) {

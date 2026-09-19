@@ -558,3 +558,33 @@ Notes:
 - A truncated or corrupt file is treated as empty — no version migration
   and no automatic deletion.
 
+## `t4prefs.bin`
+
+T4 keyboard preferences, at `/t4dicts/t4prefs.bin`. Written by
+`T4EntryActivity` when the user cycles the language (long-press Left) or
+toggles Predict/Multi-tap (long-press Right).
+
+These two values used to live in `settings.json`. They change on a keypress,
+including while a MeshCore BLE session is connected — the state in which the
+heap is tightest — and a full settings save rebuilds the settings list
+(~10 KB of temporary heap), which could abort the firmware on OOM. A 3-byte
+sidecar costs no heap to write.
+
+### Version 1
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`T4_PREFS_VERSION = 1`) |
+| 1 | 1 | `userMode` — `T4Mode` value: 0 = Predict, 1 = Multi-tap |
+| 2 | 1 | `lastLanguage` — `T4Language` value: 0 = EN, 1 = Additional, 2 = Digit |
+
+Notes:
+
+- Out-of-range values are clamped to their defaults (0), matching how
+  `CrossPointSettings::fromJson` clamped the legacy JSON keys.
+- A missing, truncated, or version-mismatched file reads as "no
+  preferences"; `T4EntryActivity` then seeds it from the legacy
+  `settings.json` keys, so the user's choice survives the upgrade.
+- The legacy `t4UserMode` / `t4LastLanguage` keys are still read from
+  `settings.json` but are no longer written there.
+
