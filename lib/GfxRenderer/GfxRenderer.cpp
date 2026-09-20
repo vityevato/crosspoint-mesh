@@ -128,6 +128,7 @@ void GfxRenderer::begin() {
   panelWidthBytes = display.getDisplayWidthBytes();
   frameBufferSize = display.getBufferSize();
   bwBufferChunks.assign((frameBufferSize + BW_BUFFER_CHUNK_SIZE - 1) / BW_BUFFER_CHUNK_SIZE, nullptr);
+  LOG_DBG("MEM", "framebuffer: %u bytes (heap-backed)", static_cast<unsigned>(frameBufferSize));
 }
 
 void GfxRenderer::releaseFrameBufferForBuild() {
