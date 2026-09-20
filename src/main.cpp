@@ -39,6 +39,7 @@
 #include "images/LoadingIcon.h"
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
+#include "util/HeapLog.h"
 #include "util/ScreenshotUtil.h"
 
 #ifdef SIMULATOR
@@ -140,6 +141,7 @@ RTC_NOINIT_ATTR uint32_t silentRebootTarget;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
+constexpr uint32_t SILENT_REBOOT_TARGET_MESHCORE = 2;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -202,6 +204,19 @@ void silentRestartToReader() {
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader)");
+  renderer.clearScreen();
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToMeshCore() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  // No touch/WiFi shortcut here: only called from Home with WiFi off, so a
+  // plain software reset is safe (same as restartToHomeAfterStorageHandoff).
+  silentRebootTarget = SILENT_REBOOT_TARGET_MESHCORE;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=meshcore)");
   renderer.clearScreen();
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
@@ -328,6 +343,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.begin();
   activityManager.begin();
   LOG_DBG("MAIN", "Display initialized");
+  HEAP_STAGE("boot:display+renderer");  // includes the ~48 KB framebuffer
 
   // Initialize font decompressor for compressed reader fonts
   if (!fontDecompressor.init()) {
@@ -359,6 +375,11 @@ void setupDisplayAndFonts(bool seamless = false) {
   sdFontSystem.begin(renderer);
 
   LOG_DBG("MAIN", "Fonts setup");
+  HEAP_STAGE("boot:fonts");
+
+  // Boot stages ran partly before the SD log sink existed, so replay them now.
+  heap_log::flushStages();
+  heap_log::logLayout();
 }
 
 void setup() {
@@ -377,6 +398,7 @@ void setup() {
 #endif
 
   HalSystem::begin();
+  HEAP_STAGE("boot:HalSystem");
   // checkPanic() clears the watchdog capture marker after a successful SD
   // dump, so retain the boot classification for the later activity route.
   const bool rebootedFromPanic = HalSystem::isRebootFromPanic();
@@ -385,12 +407,13 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_MESHCORE) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
 
   gpio.begin();
   powerManager.begin();
+  HEAP_STAGE("boot:gpio+power");
 
   const auto wakeupReason = gpio.getWakeupReason();
   // Sample the wake hold now — a click wake is released within milliseconds of
@@ -408,6 +431,7 @@ void setup() {
 
   halTiltSensor.begin();
   halClock.begin();
+  HEAP_STAGE("boot:sensors+clock");
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
@@ -425,6 +449,7 @@ void setup() {
   }
 
   HalSystem::checkPanic();
+  HEAP_STAGE("boot:storage");
 
 #if LOG_LEVEL >= 2
   // Global SD card log (DEBUG LOG_LEVEL builds only) — routes all
@@ -467,6 +492,7 @@ void setup() {
   OPDS_STORE.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
+  HEAP_STAGE("boot:settings+stores");
 
   // Brightness and warmth are always restored. A normal wake starts with the
   // light off unless Restore Light on Wake is enabled; silent maintenance
@@ -575,6 +601,11 @@ void setup() {
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
     activityManager.goToReader(APP_STATE.openEpubPath);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_MESHCORE) {
+    // Heap-defrag reboot requested by Home's MeshCore entry: land directly in
+    // the hub on a fresh heap. goToMeshCore() itself never resets, so this
+    // cannot loop.
+    activityManager.goToMeshCore();
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale
@@ -656,10 +687,15 @@ void loop() {
 
   renderer.setFadingFix(SETTINGS.fadingFix);
 
-  if (Serial && millis() - lastMemPrint >= 10000) {
-    LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
-            ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
+  // Periodic heap sample. Deliberately NOT gated on `Serial`: the USB-CDC
+  // `operator bool()` is false on battery, which used to hide the whole trace
+  // from the SD log sink. Throttled to keep SD writes rare.
+  static constexpr uint32_t MEM_SAMPLE_INTERVAL_MS = 30000;
+  if (millis() - lastMemPrint >= MEM_SAMPLE_INTERVAL_MS) {
     lastMemPrint = millis();
+    char label[64];
+    snprintf(label, sizeof(label), "periodic [%s]", activityManager.currentActivityName());
+    HEAP_LOG(label);
   }
 
   // Rolling heap sample for the panic report: the MEM log above needs USB
