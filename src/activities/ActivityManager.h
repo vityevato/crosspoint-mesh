@@ -44,6 +44,9 @@ class ActivityManager {
 
   void exitActivity(const RenderLock& lock);
 
+  // Heap diagnostics: logs free/largest/block counts for an activity transition.
+  void logActivityHeap(const char* phase, const Activity& activity) const;
+
   // Pending activity to be launched on next loop iteration
   std::unique_ptr<Activity> pendingActivity;
   enum class PendingAction { None, Push, Pop, Replace };
@@ -111,6 +114,8 @@ class ActivityManager {
   bool requiresExclusiveStorageLoop() const;
   bool isReaderActivity() const;
   bool isMeshCoreActivity() const;
+  // Current screen name for heap diagnostics (see util/HeapLog.h).
+  const char* currentActivityName() const;
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

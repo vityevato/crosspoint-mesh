@@ -27,6 +27,7 @@
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "util/HeapLog.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -147,6 +148,7 @@ void ActivityManager::loop() {
         currentActivity = std::move(stackActivities.back());
         stackActivities.pop_back();
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
+        logActivityHeap("resume", *currentActivity);
         // Handle result if necessary
         if (currentActivity->resultHandler) {
           LOG_DBG("ACT", "Handling result for popped activity");
@@ -189,6 +191,7 @@ void ActivityManager::loop() {
 
       lock.unlock();  // onEnter may acquire its own lock
       currentActivity->onEnter();
+      logActivityHeap("enter", *currentActivity);
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
@@ -204,11 +207,28 @@ void ActivityManager::loop() {
   }
 }
 
+void ActivityManager::logActivityHeap(const char* phase, const Activity& activity) const {
+  char label[64];
+  snprintf(label, sizeof(label), "activity %s %s", phase, activity.name.c_str());
+  HEAP_LOG(label);
+}
+
+const char* ActivityManager::currentActivityName() const {
+  return currentActivity ? currentActivity->name.c_str() : "-";
+}
+
 void ActivityManager::exitActivity(const RenderLock& lock) {
   // Note: lock must be held by the caller
   if (currentActivity) {
+    // Copy the name out before reset(): the std::string dies with the activity.
+    char name[48];
+    snprintf(name, sizeof(name), "%s", currentActivity->name.c_str());
     currentActivity->onExit();
+    logActivityHeap("exit", *currentActivity);
     currentActivity.reset();
+    char label[64];
+    snprintf(label, sizeof(label), "activity destroy %s", name);
+    HEAP_LOG(label);
   }
 }
 
@@ -223,6 +243,7 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
     // No current activity, safe to launch immediately
     currentActivity = std::move(newActivity);
     currentActivity->onEnter();
+    logActivityHeap("enter", *currentActivity);
   }
 }
 

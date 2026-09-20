@@ -11,6 +11,7 @@
 #include "StatusMessageOverlay.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
+#include "util/HeapLog.h"
 
 struct Rect;
 
@@ -38,7 +39,14 @@ class MeshCoreThreadActivity;
 class MeshCoreHubActivity final : public Activity {
  public:
   explicit MeshCoreHubActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("MeshCoreHub", renderer, mappedInput) {}
+      : Activity("MeshCoreHub", renderer, mappedInput) {
+    // The hub object is constructed before onEnter(), so its cost (mostly the
+    // MeshCoreClient RX ring) is invisible in the Hub onEnter heap logs.
+    char label[96];
+    snprintf(label, sizeof(label), "hub ctor sizeof=%u client=%u store=%u", static_cast<unsigned>(sizeof(*this)),
+             static_cast<unsigned>(sizeof(MeshCoreClient)), static_cast<unsigned>(sizeof(MeshCoreMessageStore)));
+    HEAP_LOG(label);
+  }
 
   void onEnter() override;
   void onExit() override;

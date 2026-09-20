@@ -1,5 +1,6 @@
 #include "FontCacheManager.h"
 
+#include <Arduino.h>
 #include <FontDecompressor.h>
 #include <Logging.h>
 #include <SdCardFont.h>
@@ -45,10 +46,17 @@ void FontCacheManager::clearCache() {
 }
 
 void FontCacheManager::releaseSdFontCaches() {
+#ifdef ESP_PLATFORM  // host unit tests have no ESP heap to sample
+  const uint32_t freeBefore = ESP.getFreeHeap();
+#endif
   if (fontDecompressor_) fontDecompressor_->clearCache();
   for (auto& [id, font] : sdCardFonts_) {
     font->releaseResidentCaches();
   }
+#ifdef ESP_PLATFORM
+  LOG_DBG("MEM", "releaseSdFontCaches: freed=%d free=%u largest=%u", (int)(ESP.getFreeHeap() - freeBefore),
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#endif
 }
 
 void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask) {
@@ -179,9 +187,12 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
     groupStarts[group] = groupStarts[group - 1] + manager_->scanGroupCounts_[group - 1];
   }
 
-  // Each packed entry provides four bytes, enough for one UTF-8 codepoint.
-  // Encoding high groups first means a terminator can overwrite only a group
-  // that has already been prewarmed; unread lower groups remain intact.
+  // Phase 1 — encode every group in place. Each packed entry provides four
+  // bytes, enough for one UTF-8 codepoint, but the terminator needs one extra
+  // byte and can overwrite the first byte of the NEXT slice. Encoding high
+  // groups first means that next slice has already been encoded, so unread
+  // lower groups stay intact.
+  const char* encoded[SCAN_GROUP_COUNT] = {};
   for (int group = SCAN_GROUP_COUNT - 1; group >= 0; group--) {
     const uint16_t groupCount = manager_->scanGroupCounts_[group];
     if (groupCount == 0) continue;
@@ -194,10 +205,43 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
       output = appendUtf8Codepoint(output, codepoint);
     }
     *output = '\0';
+    encoded[group] = utf8Text;
+  }
 
-    const uint8_t fontSlot = static_cast<uint8_t>(group) / 4;
-    const uint8_t style = static_cast<uint8_t>(group) & 0x03;
-    manager_->prewarmCache(manager_->scanFontIds_[fontSlot], utf8Text, 1 << style);
+  // Phase 2 — prewarm the fonts with the largest compressed groups first. Every
+  // prewarm allocates a page slot that splits the heap's largest free block, so
+  // running a big-group font last left its ~8 KB temp buffer without a
+  // contiguous block (observed on device: largest 8180 vs group 8188).
+  uint8_t order[SCAN_GROUP_COUNT] = {};
+  uint32_t orderBytes[SCAN_GROUP_COUNT] = {};
+  uint8_t orderCount = 0;
+  for (uint8_t group = 0; group < SCAN_GROUP_COUNT; group++) {
+    if (!encoded[group]) continue;
+    order[orderCount] = group;
+    const auto fontIt = manager_->fontMap_.find(manager_->scanFontIds_[group / 4]);
+    const EpdFontData* data = (fontIt != manager_->fontMap_.end())
+                                  ? fontIt->second.getData(static_cast<EpdFontFamily::Style>(group & 0x03))
+                                  : nullptr;
+    orderBytes[orderCount] = FontDecompressor::maxGroupBytes(data);
+    orderCount++;
+  }
+  for (uint8_t i = 1; i < orderCount; i++) {
+    const uint8_t key = order[i];
+    const uint32_t keyBytes = orderBytes[i];
+    int8_t j = static_cast<int8_t>(i) - 1;
+    while (j >= 0 && orderBytes[j] < keyBytes) {
+      order[j + 1] = order[j];
+      orderBytes[j + 1] = orderBytes[j];
+      j--;
+    }
+    order[j + 1] = key;
+    orderBytes[j + 1] = keyBytes;
+  }
+  for (uint8_t i = 0; i < orderCount; i++) {
+    const uint8_t group = order[i];
+    const uint8_t fontSlot = group / 4;
+    const uint8_t style = group & 0x03;
+    manager_->prewarmCache(manager_->scanFontIds_[fontSlot], encoded[group], 1 << style);
   }
 
   manager_->scanCodepointCount_ = 0;

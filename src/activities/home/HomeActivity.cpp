@@ -19,6 +19,7 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "SilentRestart.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -362,4 +363,15 @@ void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
-void HomeActivity::onMeshCoreOpen() { activityManager.goToMeshCore(); }
+void HomeActivity::onMeshCoreOpen() {
+  // Always enter MeshCore on a freshly rebooted heap: the hub session (BLE,
+  // message store, font prewarm, SD-font arenas) runs with ~15-20 KB free, so
+  // any fragmentation carried over from Settings/font changes or reading shows
+  // up as failed prewarm allocations. The RTC target routes setup() straight
+  // back into the hub.
+#ifdef SIMULATOR
+  activityManager.goToMeshCore();  // ESP.restart() is a no-op in the simulator
+#else
+  silentRestartToMeshCore();
+#endif
+}

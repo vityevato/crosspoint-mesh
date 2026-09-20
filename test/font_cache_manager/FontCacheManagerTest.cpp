@@ -100,6 +100,32 @@ TEST(FontCacheManagerTest, PrewarmScopeMergesBuiltInStylesThatShareFontData) {
   EXPECT_STREQ("B", boldCall->text);
 }
 
+TEST(FontCacheManagerTest, PrewarmScopeOrdersBigGroupFontsFirst) {
+  EpdFontData bigData{reinterpret_cast<const void*>(1)};
+  EpdFontData smallData{reinterpret_cast<const void*>(1)};
+  const EpdFontFamily bigFamily(&bigData, nullptr, nullptr, nullptr);
+  const EpdFontFamily smallFamily(&smallData, nullptr, nullptr, nullptr);
+  const std::map<int, EpdFontFamily> builtinFonts{{10, bigFamily}, {20, smallFamily}};
+  const std::map<int, SdCardFont*> noSdFonts;
+  FontDecompressor decompressor;
+  FontCacheManager manager(builtinFonts, noSdFonts);
+  manager.setFontDecompressor(&decompressor);
+  FontDecompressor::maxGroupBytesOverrides()[&bigData] = 8188;
+  FontDecompressor::maxGroupBytesOverrides()[&smallData] = 128;
+
+  auto scope = manager.createPrewarmScope();
+  // Big-group font is recorded FIRST (slot 0): without size ordering the
+  // descending group-index walk would prewarm the later small-group font first.
+  manager.recordText("B", 10, EpdFontFamily::REGULAR);
+  manager.recordText("S", 20, EpdFontFamily::REGULAR);
+  scope.endScanAndPrewarm();
+
+  ASSERT_EQ(2, decompressor.prewarmCallCount);
+  EXPECT_EQ(&bigData, decompressor.prewarmCalls[0].fontData);
+  EXPECT_EQ(&smallData, decompressor.prewarmCalls[1].fontData);
+  FontDecompressor::maxGroupBytesOverrides().clear();
+}
+
 TEST(FontCacheManagerTest, PrewarmScopePreservesUniqueMultibyteCodepoints) {
   SdCardFont font;
   const std::map<int, EpdFontFamily> noBuiltinFonts;

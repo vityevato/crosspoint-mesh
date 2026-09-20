@@ -8,6 +8,7 @@
 #include "CrossPointSettings.h"
 #include "ReaderFontSizes.h"
 #include "fontIds.h"
+#include "util/HeapLog.h"
 
 namespace {
 
@@ -122,6 +123,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
             registryWasDirty ? " [registry dirty]" : "");
   }
 
+  const uint32_t freeBefore = ESP.getFreeHeap();
   if (!currentFamily.empty()) {
     manager_.unloadAll(renderer);
   }
@@ -140,12 +142,16 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
     SETTINGS.clearSdFontFamily();
   }
-
   // unloadAll() clears every emoji fallback (including the built-in pair)
   // whenever a family is reloaded — re-assert the built-in pairing and the
   // reader-size Emoji pairing for whichever font ended up active.
   setupBuiltinEmojiFallback(renderer);
   setupEmojiFallback(renderer);
+
+  char memLabel[64];
+  snprintf(memLabel, sizeof(memLabel), "sdFont load %s", wantedFamily);
+  HEAP_LOG(memLabel);
+  LOG_DBG("SDFS", "sdFont family load delta=%d bytes", (int)(ESP.getFreeHeap() - freeBefore));
 }
 
 void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {

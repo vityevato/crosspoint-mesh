@@ -1014,10 +1014,13 @@ bool MeshCoreHubActivity::ensureContactsCapacity(uint16_t needed) {
   }
   // Carried entries keep identity order; callers (re)build the real order later.
   for (uint16_t i = 0; i < savedContactCount; ++i) nextSort[i] = i;
+  const uint16_t oldCap = savedContactsCapacity;
   savedContacts = std::move(next);
   contactLastActivity = std::move(nextAct);
   contactSortIndex = std::move(nextSort);
   savedContactsCapacity = newCap;
+  LOG_DBG("MEMM", "contacts capacity %u -> %u (%u bytes), free=%u largest=%u", static_cast<unsigned>(oldCap),
+          static_cast<unsigned>(newCap), static_cast<unsigned>(allocBytes), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   return true;
 }
 

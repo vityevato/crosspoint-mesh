@@ -27,6 +27,11 @@ class FontDecompressor {
   // Returns the number of glyphs that couldn't be loaded (0 on full success).
   int prewarmCache(const EpdFontData* fontData, const char* utf8Text);
 
+  // Largest uncompressed group of a font (0 for uncompressed fonts). Used by
+  // FontCacheManager to prewarm the biggest-group fonts first, while the heap's
+  // largest free block is still intact.
+  static uint32_t maxGroupBytes(const EpdFontData* fontData);
+
   struct Stats {
     uint32_t cacheHits = 0;
     uint32_t cacheMisses = 0;
