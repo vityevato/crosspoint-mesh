@@ -55,6 +55,15 @@ bool FontDecompressor::ensureCapacity(uint8_t*& buf, uint32_t& capacity, uint32_
   return buf != nullptr;
 }
 
+uint32_t FontDecompressor::maxGroupBytes(const EpdFontData* fontData) {
+  if (!fontData || !fontData->groups) return 0;
+  uint32_t maxBytes = 0;
+  for (uint16_t g = 0; g < fontData->groupCount; g++) {
+    if (fontData->groups[g].uncompressedSize > maxBytes) maxBytes = fontData->groups[g].uncompressedSize;
+  }
+  return maxBytes;
+}
+
 uint16_t FontDecompressor::getGroupIndex(const EpdFontData* fontData, uint32_t glyphIndex) {
   // O(1) path for frequency-grouped fonts with glyphToGroup mapping
   if (fontData->glyphToGroup != nullptr) {
@@ -390,7 +399,23 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     neededGroups[j + 1] = key;
   }
 
-  // Step 3: Allocate page buffer and lookup table for this slot
+  // Step 3: Allocate ONE temp buffer for the largest needed group FIRST, while the
+  // largest free block is still intact. The page buffer below splits that block, so
+  // allocating it first left the temp malloc with a fragmented remainder (observed
+  // on device: largest 8180 vs group 8188 — 8 bytes short, every glyph in the group
+  // dropped). One buffer is reused for every group, so the per-group malloc/free
+  // churn is gone as well.
+  const uint32_t tempBytes = fontData->groups[neededGroups[0]].uncompressedSize;
+  uint8_t* tempBuf = static_cast<uint8_t*>(malloc(tempBytes));
+  if (!tempBuf) {
+    LOG_ERR("FDC", "Failed to allocate temp buffer (%u bytes) for group %u", tempBytes, neededGroups[0]);
+    return glyphCount;
+  }
+  if (tempBytes > stats.peakTempBytes) {
+    stats.peakTempBytes = tempBytes;
+  }
+
+  // Step 3b: Allocate page buffer and lookup table for this slot
   slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));
   slot.glyphs = static_cast<PageGlyphEntry*>(malloc(glyphCount * sizeof(PageGlyphEntry)));
   if (!slot.buffer || !slot.glyphs) {
@@ -398,6 +423,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     free(slot.buffer);
     free(slot.glyphs);
     slot = {};
+    free(tempBuf);
     return glyphCount;
   }
   stats.pageBufferBytes += totalBytes;
@@ -423,7 +449,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     slot.glyphs[j + 1] = key;
   }
 
-  // Step 3b: Pre-scan to compute each needed glyph's byte-aligned offset within its group.
+  // Step 3c: Pre-scan to compute each needed glyph's byte-aligned offset within its group.
   // This avoids recomputing aligned offsets per group during extraction in step 4.
   uint32_t groupAlignedTracker[128] = {};  // running byte-aligned offset for each needed group
 
@@ -493,7 +519,9 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     }
   }
 
-  // Step 4: For each unique group, decompress to temp buffer and extract needed glyphs
+  // Step 4: For each unique group, decompress into the shared temp buffer and
+  // extract needed glyphs. Groups are visited largest-first (sorted above), so the
+  // first decompress starts from the freshest heap state.
   uint32_t writeOffset = 0;
   int missed = 0;
 
@@ -501,24 +529,13 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     uint16_t groupIdx = neededGroups[g];
     const EpdFontGroup& group = fontData->groups[groupIdx];
 
-    auto* tempBuf = static_cast<uint8_t*>(malloc(group.uncompressedSize));
-    if (!tempBuf) {
-      LOG_ERR("FDC", "Failed to allocate temp buffer (%u bytes) for group %u", group.uncompressedSize, groupIdx);
-      missed++;
-      continue;
-    }
-    if (group.uncompressedSize > stats.peakTempBytes) {
-      stats.peakTempBytes = group.uncompressedSize;
-    }
-
     if (!decompressGroup(fontData, groupIdx, tempBuf, group.uncompressedSize)) {
-      free(tempBuf);
       missed++;
       continue;
     }
 
     // Extract needed glyphs directly from the byte-aligned temp buffer, compacting on the fly.
-    // alignedOffset was pre-computed in step 3b — no full-group compact scan needed.
+    // alignedOffset was pre-computed in step 3c — no full-group compact scan needed.
     for (uint16_t i = 0; i < slot.glyphCount; i++) {
       if (slot.glyphs[i].bufferOffset != UINT32_MAX) continue;  // already extracted
       if (getGroupIndex(fontData, slot.glyphs[i].glyphIndex) != groupIdx) continue;
@@ -528,9 +545,8 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
       slot.glyphs[i].bufferOffset = writeOffset;
       writeOffset += glyph.dataLength;
     }
-
-    free(tempBuf);
   }
+  free(tempBuf);
 
   LOG_DBG("FDC", "Prewarm: %u glyphs in %u bytes from %u groups (%d missed)", glyphCount, writeOffset, groupCount,
           missed);
