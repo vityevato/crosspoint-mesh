@@ -144,7 +144,10 @@ def patch_simulator_hal_storage(env):  # noqa: F811
         if "enum class UsbDriveState" not in header_content and HALSTORAGE_ENUM_ANCHOR in header_content:
             header_content = header_content.replace(HALSTORAGE_ENUM_ANCHOR, HALSTORAGE_ENUM, 1)
             changed = True
-        if HALSTORAGE_PREPARE_DECL not in header_content and HALSTORAGE_READY_ANCHOR in header_content:
+        # Newer simulator libdeps already define prepareForDeepSleep() inline
+        # right after ready(); injecting the old declaration would then be a
+        # redeclaration error, so skip when any form is already present.
+        if "prepareForDeepSleep()" not in header_content and HALSTORAGE_READY_ANCHOR in header_content:
             header_content = header_content.replace(HALSTORAGE_READY_ANCHOR,
                                                     HALSTORAGE_READY_ANCHOR + "\n" + HALSTORAGE_PREPARE_DECL, 1)
             changed = True
@@ -155,7 +158,9 @@ def patch_simulator_hal_storage(env):  # noqa: F811
 
         with open(source, "r", encoding="utf-8") as f:
             source_content = f.read()
-        if "HalStorage::prepareForDeepSleep" not in source_content:
+        # Only out-of-line stubs need the body; newer libdeps define it inline
+        # in the header (see the "prepareForDeepSleep()" guard above).
+        if HALSTORAGE_PREPARE_DECL in header_content and "HalStorage::prepareForDeepSleep" not in source_content:
             source_content = source_content.rstrip("\n") + "\n\n" + HALSTORAGE_PREPARE_IMPL
             with open(source, "w", encoding="utf-8") as f:
                 f.write(source_content)

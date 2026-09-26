@@ -107,6 +107,16 @@ class MeshCoreMessageStore {
   /// has no received messages; @p out is left untouched on failure.
   bool loadNewestReceivedDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out);
 
+  /// Loads the most recent outgoing (SENT) message in a channel conversation,
+  /// scanning backwards from the newest id. Returns false when nothing was
+  /// sent in this channel; @p out is left untouched on failure.
+  bool loadNewestSentChannelMessage(uint8_t channelIdx, MeshCoreMessage& out);
+
+  /// Loads the most recent outgoing (SENT) direct message to a contact,
+  /// scanning backwards from the newest id. Returns false when nothing was
+  /// sent to this contact; @p out is left untouched on failure.
+  bool loadNewestSentDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out);
+
   // Conversation metadata
   bool getChannelMeta(uint8_t channelIdx, ConvMeta& out);
   bool getDirectMeta(const uint8_t* pubkey32, ConvMeta& out);
@@ -181,6 +191,10 @@ class MeshCoreMessageStore {
   /// filler: see public overload docs.
   bool loadMessages(const char* convPath, uint32_t startId, uint8_t maxCount, uint16_t maxHeightPx, bool up,
                     MeshCoreMessage* out, uint8_t& loaded, MeshCoreMessage& filler);
+
+  /// Scan a conversation backwards from its newest id for the first message
+  /// with the given direction. Returns false when none exists.
+  bool loadNewestMessageByDirection(const char* convPath, MsgDirection direction, MeshCoreMessage& out);
 
   /// Read a single message by id from a conversation directory.
   bool readMessage(const char* convPath, uint32_t id, MeshCoreMessage& msg);

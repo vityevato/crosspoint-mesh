@@ -701,6 +701,9 @@ Opening a contact or channel shows the conversation in a two-tab view:
 
 For a **direct message**, the Menu offers:
 
+- **Repeat Last Message** — open the keyboard prefilled with the last
+  message you sent in this conversation. It is dimmed until you have
+  sent something.
 - **Toggle Favourite** — pin or unpin the contact at the top of the
   Contacts tab.
 - **Reset Path** — clear the stale route to a contact so messages re-route.
@@ -711,8 +714,13 @@ For a **direct message**, the Menu offers:
 - **Use Reader Font in Conversations** — toggle using the reader font for
   message text instead of the default UI font.
 
-For a **channel**, the Menu offers **Scroll to End**, **Clear
-Conversation**, and the **Use Reader Font in Conversations** toggle.
+For a **channel**, the Menu offers **Repeat Last Message**, **Reply to
+Last**, **Scroll to End**, **Clear Conversation**, and the **Use Reader
+Font in Conversations** toggle. **Repeat Last Message** refills the
+composer with the last message you sent. **Reply to Last** lists the
+channel's most recent senders, newest first, and opens the keyboard with
+a `@[Name] ` mention prefilled; it is dimmed while the channel has no
+incoming messages from others.
 
 > [!NOTE]
 > Long-press **Right/Down** or **Left/Up** cycles between the Messages and
