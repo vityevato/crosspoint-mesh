@@ -6,6 +6,7 @@
 #include <MeshCore/MeshCoreMessageStore.h>
 #include <MeshCore/MeshCoreTypes.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -47,13 +48,8 @@ void ThreadReply::refreshTargets(MeshCoreThreadActivity& act) {
       if (msg.direction != MsgDirection::RECEIVED || msg.senderName[0] == '\0') continue;
       // Skip the echo of our own channel messages.
       if (!selfName.empty() && selfName == msg.senderName) continue;
-      bool seen = false;
-      for (const auto& name : act._replyNames) {
-        if (name == msg.senderName) {
-          seen = true;
-          break;
-        }
-      }
+      const bool seen = std::any_of(act._replyNames.begin(), act._replyNames.end(),
+                                    [&](const std::string& name) { return name == msg.senderName; });
       if (seen) continue;
       act._replyNames.emplace_back(msg.senderName);
       if (act._replyNames.size() >= static_cast<size_t>(OptionPopup::MAX_OPTIONS)) break;
