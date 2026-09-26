@@ -78,14 +78,17 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
       StrId::STR_MESHCORE_SCROLL_TO_END,
       StrId::STR_MESHCORE_CLEAR_CONVERSATION,
   };
-  // DM actions after the Repeat slot and the dynamic favourite toggle slot.
+  // DM actions between the Repeat slot (0) and the trailing favourite (5)
+  // and Unlist (6) rows.
   static constexpr StrId kDmTitles[] = {
       StrId::STR_PATH_RESET,
       StrId::STR_MESHCORE_SCROLL_TO_END,
       StrId::STR_MESHCORE_CLEAR_CONVERSATION,
       StrId::STR_MESHCORE_SHARE_CONTACT,
-      StrId::STR_MESHCORE_REMOVE_CONTACT,
   };
+  constexpr int kFavouriteIdx = kDmActionCount - 2;
+  static_assert(kFavouriteIdx == static_cast<int>(sizeof(kDmTitles) / sizeof(kDmTitles[0])) + 1,
+                "kDmTitles must cover every DM row before the favourite toggle");
 
   int listSel = act.selectedIndex - 1;
   int actionSel = (listSel >= 0 && listSel < kActionCount) ? listSel : -1;
@@ -99,12 +102,13 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
           return I18n::getInstance().get(kChannelTitles[index]);
         }
         if (index == 0) return I18n::getInstance().get(StrId::STR_MESHCORE_REPEAT_LAST);
-        if (index == 1) {
+        if (index >= 1 && index < kFavouriteIdx) return I18n::getInstance().get(kDmTitles[index - 1]);
+        if (index == kFavouriteIdx) {
           // Favourite toggle shows the label of the *next* state.
           return act.contactIsFavourite() ? tr(STR_MESHCORE_REMOVE_FAVOURITE) : tr(STR_MESHCORE_ADD_FAVOURITE);
         }
-        if (index < 2 || index >= kDmActionCount) return {};
-        return I18n::getInstance().get(kDmTitles[index - 2]);
+        if (index == kDmActionCount - 1) return I18n::getInstance().get(StrId::STR_MESHCORE_REMOVE_CONTACT);
+        return {};
       },
       nullptr, nullptr, nullptr, false,
       [&](int index) -> bool {
@@ -114,14 +118,14 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
           // Reply needs at least one channel sender with a known name.
           return index == 1 && act._replyNames.empty();
         }
-        if (index == 2) {
+        if (index == 1) {
           if (!connected) return true;
           // Dim "Reset Path" when the contact has no learned path (0xFF).
           MeshCoreContact c;
           return !act.store.findContactByPubkey(act.contactPubkey, c) || c.pathLength == 0xFF;
         }
         // Favourite toggle and Unlist require a connected companion.
-        if (!connected) return (index == 1 || index == 6);
+        if (!connected) return (index == kFavouriteIdx || index == kDmActionCount - 1);
         return false;
       });
 
