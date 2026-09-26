@@ -1,5 +1,9 @@
 #pragma once
 #include <freertos/FreeRTOS.h>
+// vTaskDelay/task shims live in the simulator libdep's freertos/task.h; this
+// header must not define its own copy (they would collide in any TU that
+// includes both, e.g. through MeshCoreClient.h).
+#include <freertos/task.h>
 
 #include <chrono>
 #include <condition_variable>
@@ -23,11 +27,6 @@
 #ifndef pdMS_TO_TICKS
 #define pdMS_TO_TICKS(xTimeInMs) (static_cast<uint32_t>(xTimeInMs))
 #endif
-
-// vTaskDelay: sleep the calling thread for xTicksToDelay ticks.
-inline void vTaskDelay(uint32_t xTicksToDelay) {
-  std::this_thread::sleep_for(std::chrono::milliseconds(xTicksToDelay));
-}
 
 // A simple thread-safe queue that mirrors the FreeRTOS xQueue API shape.
 // Backed by std::queue<std::vector<uint8_t>> so items are stored by value

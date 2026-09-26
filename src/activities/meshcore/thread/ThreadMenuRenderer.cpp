@@ -58,8 +58,8 @@ bool ThreadMenuRenderer::renderConfirmPopup(MeshCoreThreadActivity& act) {
 void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& contentRect) {
   bool connected = (act.client.getState() == BleConnectionState::CONNECTED);
 
-  constexpr int kChannelActionCount = 2;
-  constexpr int kDmActionCount = 6;
+  constexpr int kChannelActionCount = 4;
+  constexpr int kDmActionCount = 7;
   int kActionCount = act.isChannel ? kChannelActionCount : kDmActionCount;
   bool hasSettings = act._menuSettings != nullptr;
 
@@ -73,10 +73,12 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
   const int listRowStep = GUI.getListRowStep(false);
 
   static constexpr StrId kChannelTitles[] = {
+      StrId::STR_MESHCORE_REPEAT_LAST,
+      StrId::STR_MESHCORE_REPLY_TO_LAST,
       StrId::STR_MESHCORE_SCROLL_TO_END,
       StrId::STR_MESHCORE_CLEAR_CONVERSATION,
   };
-  // DM actions after the first (dynamic favourite toggle) slot.
+  // DM actions after the Repeat slot and the dynamic favourite toggle slot.
   static constexpr StrId kDmTitles[] = {
       StrId::STR_PATH_RESET,
       StrId::STR_MESHCORE_SCROLL_TO_END,
@@ -96,24 +98,30 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
           if (index < 0 || index >= kChannelActionCount) return {};
           return I18n::getInstance().get(kChannelTitles[index]);
         }
-        if (index == 0) {
+        if (index == 0) return I18n::getInstance().get(StrId::STR_MESHCORE_REPEAT_LAST);
+        if (index == 1) {
           // Favourite toggle shows the label of the *next* state.
           return act.contactIsFavourite() ? tr(STR_MESHCORE_REMOVE_FAVOURITE) : tr(STR_MESHCORE_ADD_FAVOURITE);
         }
-        if (index < 1 || index >= kDmActionCount) return {};
-        return I18n::getInstance().get(kDmTitles[index - 1]);
+        if (index < 2 || index >= kDmActionCount) return {};
+        return I18n::getInstance().get(kDmTitles[index - 2]);
       },
       nullptr, nullptr, nullptr, false,
       [&](int index) -> bool {
-        if (act.isChannel) return false;
-        if (index == 1) {
+        // Repeat needs a sent message in this conversation (both modes).
+        if (index == 0) return act._lastSentText.empty();
+        if (act.isChannel) {
+          // Reply needs at least one channel sender with a known name.
+          return index == 1 && act._replyNames.empty();
+        }
+        if (index == 2) {
           if (!connected) return true;
           // Dim "Reset Path" when the contact has no learned path (0xFF).
           MeshCoreContact c;
           return !act.store.findContactByPubkey(act.contactPubkey, c) || c.pathLength == 0xFF;
         }
         // Favourite toggle and Unlist require a connected companion.
-        if (!connected) return (index == 0 || index == 5);
+        if (!connected) return (index == 1 || index == 6);
         return false;
       });
 

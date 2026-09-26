@@ -89,18 +89,17 @@ void ThreadMessenger::onSendComplete(MeshCoreThreadActivity& act, const Activity
 
   if (sent) {
     LOG_INF("MESH", "Message queued");
-    // Reload meta and batch-load from end
+    // Refresh meta from the store (the append above updated it), then reuse
+    // the Scroll-to-End path: it reloads the tail batch, pins the scroll to
+    // the bottom and saves the position, and switches the view to the
+    // Messages tab with the message area focused — so a message sent from
+    // the MENU tab (reply picker) lands on the just-sent message.
     if (isCh) {
       store.getChannelMeta(chIdx, act._meta);
     } else {
       store.getDirectMeta(pubkey, act._meta);
     }
-    act.loadMessages(act._meta.endId, true);
-    act._meta.positionPx = (act._meta.totalPx > static_cast<uint32_t>(act._contentAreaHeight))
-                               ? act._meta.totalPx - static_cast<uint32_t>(act._contentAreaHeight)
-                               : 0;
-    act._meta.positionId = (act._visibleCount > 0) ? act._visibleMsgs[0].id : act._meta.endId;
-    act.savePosition();
+    act.scrollToEnd();
   } else {
     LOG_ERR("MESH", "Failed to queue message");
     act.requestUpdate();

@@ -401,23 +401,39 @@ bool MeshCoreMessageStore::loadNewestChannelMessage(uint8_t channelIdx, MeshCore
   return readMessage(convPath, meta.endId, out);
 }
 
-bool MeshCoreMessageStore::loadNewestReceivedDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out) {
-  char convPath[64];
-  buildConvPath(pubkey32, convPath, sizeof(convPath));
-
+bool MeshCoreMessageStore::loadNewestMessageByDirection(const char* convPath, MsgDirection direction,
+                                                        MeshCoreMessage& out) {
   ConvMeta meta;
   if (!readMeta(convPath, meta) || meta.count == 0) return false;
 
-  // Scan backwards from the newest id for the last received message
+  // Scan backwards from the newest id for the last message in this direction
   for (uint32_t gid = meta.endId; gid >= meta.startId && gid != 0; --gid) {
     MeshCoreMessage msg;
     if (!readMessage(convPath, gid, msg)) continue;
-    if (msg.direction == MsgDirection::RECEIVED) {
+    if (msg.direction == direction) {
       out = msg;
       return true;
     }
   }
   return false;
+}
+
+bool MeshCoreMessageStore::loadNewestReceivedDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out) {
+  char convPath[64];
+  buildConvPath(pubkey32, convPath, sizeof(convPath));
+  return loadNewestMessageByDirection(convPath, MsgDirection::RECEIVED, out);
+}
+
+bool MeshCoreMessageStore::loadNewestSentChannelMessage(uint8_t channelIdx, MeshCoreMessage& out) {
+  char convPath[64];
+  buildConvPath(channelIdx, convPath, sizeof(convPath));
+  return loadNewestMessageByDirection(convPath, MsgDirection::SENT, out);
+}
+
+bool MeshCoreMessageStore::loadNewestSentDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out) {
+  char convPath[64];
+  buildConvPath(pubkey32, convPath, sizeof(convPath));
+  return loadNewestMessageByDirection(convPath, MsgDirection::SENT, out);
 }
 
 bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t id, MeshCoreMessage& msg) {

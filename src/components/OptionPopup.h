@@ -227,6 +227,12 @@ class OptionPopup {
     uiReady = true;
   }
 
+  // The dialog has no scrolling, so options past MAX_OPTIONS would render off
+  // screen anyway; a fixed cap keeps the DialogOption array on the stack and
+  // the interaction table small. Callers that build their own option list
+  // (e.g. the thread reply picker) use this as their scan/collection bound.
+  static constexpr int MAX_OPTIONS = 16;
+
   bool isActive() const { return active; }
 
   // Close without firing the callback (the surface under the popup is going
@@ -237,10 +243,7 @@ class OptionPopup {
   }
 
  private:
-  // The dialog has no scrolling, so options past MAX_OPTIONS would render off
-  // screen anyway; a fixed cap keeps the DialogOption array on the stack and
-  // the interaction table small. +1 slot for the chrome guard rect.
-  static constexpr int MAX_OPTIONS = 16;
+  // +1 slot for the chrome guard rect.
   static constexpr size_t INTERACTION_CAPACITY = MAX_OPTIONS + 1;
   static constexpr freeink::ui::ActionId ACTION_OPTION = 1;
   static constexpr freeink::ui::ActionId ACTION_CHROME = 2;

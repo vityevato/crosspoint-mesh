@@ -23,7 +23,9 @@
 #include "SdCardFontSystem.h"
 #include "ThreadMenuRenderer.h"
 #include "ThreadMessenger.h"
+#include "ThreadReply.h"
 #include "ThreadScroller.h"
+#include "Utf8.h"
 #include "activities/reader/QrDisplayActivity.h"
 #include "activities/util/TextEntryHelpers.h"
 #include "components/ThemeTabBar.h"
@@ -222,9 +224,32 @@ void MeshCoreThreadActivity::savePosition() {
 
 void MeshCoreThreadActivity::scrollToEnd() {
   _scroller->scrollToEnd();
+  // Leaving MENU: drop the menu settings (reloaded on the next MENU entry),
+  // matching switchTab()'s lifecycle.
+  if (currentTab == Tab::MENU) {
+    _menuSettings.reset();
+  }
   currentTab = Tab::MESSAGES;
   selectedIndex = 1;
   requestUpdate();
+}
+
+void MeshCoreThreadActivity::refreshLastSent() {
+  _lastSentText.clear();
+  MeshCoreMessage msg;
+  const bool found = isChannel ? store.loadNewestSentChannelMessage(channelIdx, msg)
+                               : store.loadNewestSentDirectMessage(contactPubkey, msg);
+  if (!found) return;
+
+  // Keep the cached text within the send limit; trim on a UTF-8 boundary so
+  // the prefilled composer never starts mid-codepoint. (The button keyboard
+  // clamps too, but the touch keyboard keeps the initial text as-is.)
+  size_t len = strnlen(msg.text, sizeof(msg.text));
+  if (len > MESHCORE_SEND_CHAR_LIMIT) {
+    len = static_cast<size_t>(utf8SafeTruncateBuffer(msg.text, MESHCORE_SEND_CHAR_LIMIT));
+  }
+  _lastSentText.assign(msg.text, len);
+  LOG_DBG("MESH", "Repeat last: %u bytes", static_cast<unsigned>(_lastSentText.size()));
 }
 
 void MeshCoreThreadActivity::clearConversation() {
@@ -427,6 +452,18 @@ bool MeshCoreThreadActivity::_loopConfirmPopup() {
 }
 
 void MeshCoreThreadActivity::_loopInput() {
+  // Open the reply picker on the Confirm *release*, never the press:
+  // OptionPopup selects on release, so opening it on the press would let the
+  // same release pick the focused option immediately.
+  if (_replyPickerPending) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      _replyPickerPending = false;
+      ThreadReply::openPicker(*this);
+    }
+    return;  // consume input until the opening press is released
+  }
+  // Reply picker is modal: it consumes all input until dismissed or selected.
+  if (_replyPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
   if (_loopInputBack()) return;
   if (_loopInputConfirm()) return;
   _loopInputNav();
@@ -466,7 +503,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
 
   if (currentTab == Tab::MENU) {
     // Action indices: 0..(actionCount-1) = menu actions, actionCount = settings toggle
-    int actionCount = isChannel ? 2 : 6;
+    int actionCount = isChannel ? 4 : 7;
     if (itemIdx >= actionCount) {
       // Settings toggle
       if (_menuSettings) {
@@ -479,13 +516,33 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
       return true;
     }
 
+    // Repeat Last is the first action in both the channel and DM menus.
+    if (itemIdx == 0) {
+      if (_lastSentText.empty()) {
+        _toast.show(tr(STR_MESHCORE_NO_LAST_MESSAGE), 3000);
+        requestUpdate();
+      } else {
+        sendMessage(_lastSentText.c_str());
+      }
+      return true;
+    }
+
     if (isChannel) {
-      // Channel menu: 0=Scroll to End, 1=Clear
+      // Channel menu: 1=Reply to Last, 2=Scroll to End, 3=Clear
       switch (itemIdx) {
-        case 0:  // Scroll to End
+        case 1:  // Reply to Last
+          // Held? wait for the release in _loopInput. Released within this
+          // tick? open now — the picker's handleInput already ran this tick.
+          if (mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+            _replyPickerPending = true;
+          } else {
+            ThreadReply::openPicker(*this);
+          }
+          return true;
+        case 2:  // Scroll to End
           scrollToEnd();
           return true;
-        case 1:  // Clear Conversation
+        case 3:  // Clear Conversation
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
@@ -493,10 +550,11 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           break;
       }
     } else {
-      // DM menu: 0=Toggle Favourite, 1=Reset Path, 2=Scroll to End, 3=Clear, 4=Share QR, 5=Unlist
+      // DM menu: 1=Toggle Favourite, 2=Reset Path, 3=Scroll to End, 4=Clear,
+      // 5=Share QR, 6=Unlist
       bool connected = (client.getState() == BleConnectionState::CONNECTED);
       switch (itemIdx) {
-        case 0: {  // Toggle Favourite (async — waits for companion PKT_OK)
+        case 1: {  // Toggle Favourite (async — waits for companion PKT_OK)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -527,7 +585,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           requestUpdate();
           return true;
         }
-        case 1: {  // Reset Path
+        case 2: {  // Reset Path
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -549,17 +607,17 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           requestUpdate();
           return true;
         }
-        case 2:  // Scroll to End
+        case 3:  // Scroll to End
           scrollToEnd();
           return true;
-        case 3:  // Clear Conversation
+        case 4:  // Clear Conversation
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
-        case 4:  // Share Contact (QR)
+        case 5:  // Share Contact (QR)
           shareContactQr();
           return true;
-        case 5: {  // Unlist Contact (async, waits for BLE)
+        case 6: {  // Unlist Contact (async, waits for BLE)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -665,6 +723,13 @@ void MeshCoreThreadActivity::switchTab(Tab tab) {
       meshcore_settings::load(*_menuSettings);
     }
   }
+  // Collect the MENU action caches on entry, so the enabled/dimmed state of
+  // "Repeat Last Message" (both modes) and "Reply to Last" (channels) is ready
+  // without per-render SD I/O.
+  if (tab == Tab::MENU) {
+    refreshLastSent();
+    if (isChannel) ThreadReply::refreshTargets(*this);
+  }
   currentTab = tab;
   selectedIndex = 0;
   requestUpdate();
@@ -675,7 +740,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU: {
-      int count = isChannel ? 2 : 6;  // Channel: 2 actions; DM: 6 (Favourite, Reset Path, ..., Unlist)
+      int count = isChannel ? 4 : 7;  // Channel: 4 actions; DM: 7 (Repeat, Favourite, ..., Unlist)
       if (_menuSettings) count += 1;  // +1 for the settings toggle
       return count;
     }
@@ -743,12 +808,13 @@ void MeshCoreThreadActivity::completeFavouriteOp(bool success) {
 
 // --- Message sending ---
 
-void MeshCoreThreadActivity::sendMessage() {
+void MeshCoreThreadActivity::sendMessage(const char* initialText) {
   ThreadMessenger messenger{client, store, isChannel, channelIdx, contactPubkey, threadName, _bodyFontId};
   char title[96];
   snprintf(title, sizeof(title), tr(STR_MESHCORE_SEND_TO), threadName);
   startActivityForResult(
-      textentry::makeEntryActivity(renderer, mappedInput, title, "", MESHCORE_SEND_CHAR_LIMIT, InputType::Text),
+      textentry::makeEntryActivity(renderer, mappedInput, title, initialText, MESHCORE_SEND_CHAR_LIMIT,
+                                   InputType::Text),
       [this, messenger](const ActivityResult& result) mutable { messenger.onSendComplete(*this, result); });
 }
 
@@ -764,6 +830,13 @@ void MeshCoreThreadActivity::render(RenderLock&&) {
     return;
   }
   if (_renderConfirmPopup()) return;
+  if (_replyPopup.isActive()) {
+    // Draw the MENU frame without pushing it, then let the popup paint its
+    // hints and dialog and refresh once (no double e-ink update).
+    _renderNormal(/*display=*/false);
+    _replyPopup.processRender(renderer, mappedInput);
+    return;
+  }
   _renderNormal();
 }
 
@@ -771,7 +844,7 @@ bool MeshCoreThreadActivity::_renderFontRebuildPopup() { return ThreadMenuRender
 
 bool MeshCoreThreadActivity::_renderConfirmPopup() { return ThreadMenuRenderer::renderConfirmPopup(*this); }
 
-void MeshCoreThreadActivity::_renderNormal() {
+void MeshCoreThreadActivity::_renderNormal(bool display) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -829,7 +902,9 @@ void MeshCoreThreadActivity::_renderNormal() {
   theme_tab_bar::build(tabFrame.frame, tabFrame.target, tabTokens,
                        fui::Rect{0, static_cast<int16_t>(tabBarTop), static_cast<int16_t>(pageWidth), tabBandHeight},
                        tabNames, tabCount, static_cast<int>(currentTab), selectedIndex == 0, theme_tab_bar::kAction);
-  if (mappedInput.hasTouch()) {
+  // Tab hit-testing is suspended while the reply popup is up: a tap in the
+  // dialog area must reach the popup, not switch tabs underneath it.
+  if (mappedInput.hasTouch() && !_replyPopup.isActive()) {
     tabFrame.input = touchSnapshotFrom(mappedInput);
     const auto tabEvent = tabFrame.frame.finish();
     if (tabEvent && tabEvent.value >= 0 && tabEvent.value < tabCount) {
@@ -846,13 +921,13 @@ void MeshCoreThreadActivity::_renderNormal() {
   } else if (currentTab == Tab::MESSAGES) {
     btn2 = tr(STR_MESHCORE_SEND);
   } else if (currentTab == Tab::MENU) {
-    int actionCount = isChannel ? 2 : 6;
+    int actionCount = isChannel ? 4 : 7;
     btn2 = (selectedIndex > 0 && selectedIndex - 1 >= actionCount) ? tr(STR_TOGGLE) : tr(STR_SELECT);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), btn2, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  renderer.displayBuffer();
+  if (display) renderer.displayBuffer();
 }
 
 void MeshCoreThreadActivity::renderMenu(const Rect& contentRect) { ThreadMenuRenderer::renderMenu(*this, contentRect); }

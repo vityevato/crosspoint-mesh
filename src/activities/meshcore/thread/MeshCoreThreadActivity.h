@@ -7,11 +7,14 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "../MeshCoreDisconnectPopup.h"
 #include "../MeshCoreSettings.h"
 #include "../StatusMessageOverlay.h"
 #include "activities/Activity.h"
+#include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
 struct Rect;
@@ -89,6 +92,7 @@ class MeshCoreThreadActivity final : public Activity {
 
   friend struct ThreadMessenger;
   friend struct ThreadMenuRenderer;
+  friend struct ThreadReply;
 
  private:
   enum class Tab : uint8_t { MESSAGES = 0, MENU, TAB_COUNT };
@@ -159,6 +163,20 @@ class MeshCoreThreadActivity final : public Activity {
   // Menu settings — loaded when MENU tab is opened, freed on tab switch or exit
   std::unique_ptr<MeshCoreSettings> _menuSettings;
 
+  // Reply picker (channel threads): recent senders, newest first, collected on
+  // MENU entry by ThreadReply::refreshTargets(). The popup overlays the MENU
+  // tab while active; _replyNames backs its options and the select callback.
+  OptionPopup _replyPopup;
+  std::vector<std::string> _replyNames;
+  /// True while the Confirm press that opens the picker is still held; the
+  /// picker itself opens on the release (see _loopInput).
+  bool _replyPickerPending = false;
+
+  // Text of the newest outgoing (SENT) message in this conversation, cached on
+  // MENU entry by refreshLastSent(). Empty means "Repeat Last Message" is
+  // dimmed — the user has not sent anything here yet.
+  std::string _lastSentText;
+
   int contentHeight() const;
 
   /**
@@ -184,13 +202,16 @@ class MeshCoreThreadActivity final : public Activity {
 
   /** Menu action: jump to end of conversation. */
   void scrollToEnd();
+  /** Menu action: cache the newest outgoing message for Repeat Last. */
+  void refreshLastSent();
   /** Menu action: clear all messages in this conversation. */
   void clearConversation();
   /** Menu action: show this contact's share QR (DM threads only). */
   void shareContactQr();
 
   void savePosition();
-  void sendMessage();
+  /** Open the send keyboard; @p initialText prefills it (reply mention). */
+  void sendMessage(const char* initialText = "");
 
   void _rebuildMessageHeights();
 
@@ -203,7 +224,9 @@ class MeshCoreThreadActivity final : public Activity {
   // ── render() decomposition ──
   bool _renderFontRebuildPopup();
   bool _renderConfirmPopup();
-  void _renderNormal();
+  /** @param display false draws the frame without pushing it to the panel
+   *         (the reply popup overlays it and refreshes once). */
+  void _renderNormal(bool display = true);
 
   /** Trampoline for StatusMessageOverlay subtitle provider. */
   static void provideSubtitle(const void* ctx, char* buf, size_t bufSize);
