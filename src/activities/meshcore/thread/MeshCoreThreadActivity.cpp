@@ -550,11 +550,43 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           break;
       }
     } else {
-      // DM menu: 1=Toggle Favourite, 2=Reset Path, 3=Scroll to End, 4=Clear,
-      // 5=Share QR, 6=Unlist
+      // DM menu: 1=Reset Path, 2=Scroll to End, 3=Clear, 4=Share QR,
+      // 5=Toggle Favourite, 6=Unlist
       bool connected = (client.getState() == BleConnectionState::CONNECTED);
       switch (itemIdx) {
-        case 1: {  // Toggle Favourite (async — waits for companion PKT_OK)
+        case 1: {  // Reset Path
+          if (!connected) {
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            break;
+          }
+          // Load the contact from the store to get current pathLength
+          MeshCoreContact found = {};
+          const bool haveContact = store.findContactByPubkey(contactPubkey, found);
+          bool hasPath = haveContact && (found.pathLength != 0xFF);
+          if (!hasPath) {
+            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+            requestUpdate();
+            break;
+          }
+          client.resetPath(found);
+          _toast.show(tr(STR_PATH_RESET), 3000);
+          currentTab = Tab::MESSAGES;
+          selectedIndex = 0;
+          requestUpdate();
+          return true;
+        }
+        case 2:  // Scroll to End
+          scrollToEnd();
+          return true;
+        case 3:  // Clear Conversation
+          _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
+          requestUpdate();
+          return true;
+        case 4:  // Share Contact (QR)
+          shareContactQr();
+          return true;
+        case 5: {  // Toggle Favourite (async — waits for companion PKT_OK)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -585,38 +617,6 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           requestUpdate();
           return true;
         }
-        case 2: {  // Reset Path
-          if (!connected) {
-            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-            requestUpdate();
-            break;
-          }
-          // Load the contact from the store to get current pathLength
-          MeshCoreContact found = {};
-          const bool haveContact = store.findContactByPubkey(contactPubkey, found);
-          bool hasPath = haveContact && (found.pathLength != 0xFF);
-          if (!hasPath) {
-            _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
-            requestUpdate();
-            break;
-          }
-          client.resetPath(found);
-          _toast.show(tr(STR_PATH_RESET), 3000);
-          currentTab = Tab::MESSAGES;
-          selectedIndex = 0;
-          requestUpdate();
-          return true;
-        }
-        case 3:  // Scroll to End
-          scrollToEnd();
-          return true;
-        case 4:  // Clear Conversation
-          _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
-          requestUpdate();
-          return true;
-        case 5:  // Share Contact (QR)
-          shareContactQr();
-          return true;
         case 6: {  // Unlist Contact (async, waits for BLE)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
@@ -740,7 +740,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU: {
-      int count = isChannel ? 4 : 7;  // Channel: 4 actions; DM: 7 (Repeat, Favourite, ..., Unlist)
+      int count = isChannel ? 4 : 7;  // Channel: 4 actions; DM: 7 (Repeat, ..., Favourite, Unlist)
       if (_menuSettings) count += 1;  // +1 for the settings toggle
       return count;
     }
