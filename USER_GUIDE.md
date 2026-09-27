@@ -704,12 +704,12 @@ For a **direct message**, the Menu offers:
 - **Repeat Last Message** — open the keyboard prefilled with the last
   message you sent in this conversation. It is dimmed until you have
   sent something.
-- **Toggle Favourite** — pin or unpin the contact at the top of the
-  Contacts tab.
 - **Reset Path** — clear the stale route to a contact so messages re-route.
 - **Scroll to End** — jump to the newest messages.
 - **Clear Conversation** — erase the local message history.
 - **Share Contact (QR)** — display the contact's link as a QR code.
+- **Toggle Favourite** — pin or unpin the contact at the top of the
+  Contacts tab.
 - **Unlist Contact** — remove the contact from the saved list.
 - **Use Reader Font in Conversations** — toggle using the reader font for
   message text instead of the default UI font.
