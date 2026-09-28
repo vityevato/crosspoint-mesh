@@ -10,10 +10,11 @@
 
 /**
  * Renders the Menu tab content within MeshCoreHubActivity.
- * Displays 8 secondary actions. Items that require a connected
+ * Displays 9 secondary actions. Items that require a connected
  * companion (Send Advert, Send Flood Advert, Save Advert to File,
- * Share Contact, Import Contacts, Disconnect) are dimmed when the
- * companion is disconnected.
+ * Share Contact, Import Contacts, GPS Tracking, Disconnect) are dimmed
+ * when the companion is disconnected. GPS Tracking is additionally
+ * dimmed when the companion has no detected GPS module.
  *
  *  Item indices (0-based, relative to menu list):
  *   0 = Discovery Nodes           (navigation)
@@ -23,13 +24,15 @@
  *   4 = Share Contact (QR)        (action, requires connected)
  *   5 = Import Contacts from File (action, requires connected)
  *   6 = Status                    (navigation)
- *   7 = Disconnect                (action, requires connected)
+ *   7 = GPS Tracking              (action, requires connected + GPS)
+ *   8 = Disconnect                (action, requires connected)
  */
 class MeshCoreMenuView {
  public:
-  static void render(const GfxRenderer& renderer, const Rect& contentRect, int selectedIndex, bool isConnected) {
-    // All 8 items are always present — no empty state needed.
-    constexpr int kItemCount = 8;
+  static void render(const GfxRenderer& renderer, const Rect& contentRect, int selectedIndex, bool isConnected,
+                     bool gpsAvailable, bool gpsEnabled) {
+    // All 9 items are always present — no empty state needed.
+    constexpr int kItemCount = 9;
 
     GUI.drawList(
         renderer, contentRect, kItemCount, selectedIndex - 1,
@@ -51,6 +54,8 @@ class MeshCoreMenuView {
             case 6:
               return tr(STR_MESHCORE_STATUS);
             case 7:
+              return tr(STR_MESHCORE_GPS_TRACKING);
+            case 8:
               return tr(STR_MESHCORE_DISCONNECT);
             default:
               return {};
@@ -58,13 +63,18 @@ class MeshCoreMenuView {
         },
         /*rowSubtitle*/ nullptr,
         /*rowIcon*/ nullptr,
-        /*rowValue*/ nullptr,
+        /*rowValue*/
+        [gpsAvailable, gpsEnabled](int index) -> std::string {
+          if (index != 7 || !gpsAvailable) return {};
+          return gpsEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+        },
         /*highlightValue*/ false,
         /*rowDimmed*/
-        [isConnected](int index) -> bool {
-          // Items 1, 2, 3, 4, 5, 7 require a connected companion
+        [isConnected, gpsAvailable](int index) -> bool {
+          if (index == 7) return !isConnected || !gpsAvailable;
           if (isConnected) return false;
-          return (index == 1 || index == 2 || index == 3 || index == 4 || index == 5 || index == 7);
+          // Items 1, 2, 3, 4, 5, 8 require a connected companion
+          return (index == 1 || index == 2 || index == 3 || index == 4 || index == 5 || index == 8);
         });
   }
 };

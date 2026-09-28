@@ -16,6 +16,7 @@
 class NimBLERemoteCharacteristic;
 void mockHandleAddUpdateContact(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len);
 void mockHandleRemoveContact(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len);
+void mockHandleSetCustomVar(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len);
 
 // Forward declarations with enough surface for MeshCoreClient
 class NimBLEUUID {
@@ -121,6 +122,12 @@ struct MockCompanion {
   uint8_t radioCr = 0;
   uint8_t maxContacts = 0;
   uint8_t maxChannels = 8;
+
+  // GPS simulation: `gps` = module detected (exposes the "gps" custom var),
+  // latitude/longitude are returned in self-telemetry. 0/0 means "no fix".
+  bool gps = false;
+  float latitude = 0;
+  float longitude = 0;
 
   MockContact contacts[MOCK_MAX_CONTACTS] = {};
   uint16_t contactCount = 0;
@@ -241,6 +248,11 @@ struct PendingEcho {
 
 inline PendingEcho sPendingEcho;
 
+// Mutable GPS-active state for the connected mock companion. Reset from the
+// companion config on every APP_START (connect) and toggled via
+// CMD_SET_CUSTOM_VAR "gps:0/1". MockCompanion itself is const config data.
+inline bool sMockGpsEnabled = false;
+
 class NimBLERemoteCharacteristic {
  public:
   using notify_callback = void (*)(NimBLERemoteCharacteristic*, uint8_t*, size_t, bool);
@@ -248,6 +260,7 @@ class NimBLERemoteCharacteristic {
   NimBLERemoteCharacteristic() = default;
 
   void setMockCompanion(const MockCompanion* c) { mockCompanion = c; }
+  const MockCompanion* getMockCompanion() const { return mockCompanion; }
 
   // When this characteristic doesn't have its own notify callback,
   // fall back to the linked source (e.g. rxChar uses txChar's callback).
@@ -291,6 +304,18 @@ class NimBLERemoteCharacteristic {
     }
     if (cmd == 0x14) {  // CMD_GET_BATTERY → PKT_BATTERY
       injectBattery();
+      return true;
+    }
+    if (cmd == 0x27 && len == 4) {  // CMD_SEND_TELEMETRY_REQ ('self') → LPP response
+      injectSelfTelemetry();
+      return true;
+    }
+    if (cmd == 0x28) {  // CMD_GET_CUSTOM_VARS → PKT_CUSTOM_VARS
+      injectCustomVars();
+      return true;
+    }
+    if (cmd == 0x29) {  // CMD_SET_CUSTOM_VAR → PKT_OK / error
+      mockHandleSetCustomVar(this, data, len);
       return true;
     }
     if (cmd == 0x03) {  // CMD_SEND_CHAN_MSG → PKT_MSG_SENT + schedule echo
@@ -406,6 +431,8 @@ class NimBLERemoteCharacteristic {
   void injectSelfInfo() {
     auto cb = effectiveNotifyCb();
     if (!cb || !mockCompanion) return;
+    // A new session starts from the configured GPS state.
+    sMockGpsEnabled = mockCompanion->gps;
     uint8_t buf[128] = {};
     size_t off = 0;
 
@@ -667,6 +694,78 @@ class NimBLERemoteCharacteristic {
     memcpy(buf + 1, &batteryMv, 2);  // mV LE
     cb(this, buf, 3, true);
     LOG_DBG("MOCK", "injectBattery: %d mV", batteryMv);
+  }
+
+  // Build and inject PKT_CUSTOM_VARS (0x15): [0x15]["name:value,..."].
+  // The companion only reports "gps" when a module was detected at boot.
+  void injectCustomVars() {
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
+
+    uint8_t buf[32] = {};
+    buf[0] = 0x15;  // PKT_CUSTOM_VARS
+    size_t off = 1;
+    if (mockCompanion->gps) {
+      const char* state = sMockGpsEnabled ? "gps:1" : "gps:0";
+      size_t n = strlen(state);
+      memcpy(buf + off, state, n);
+      off += n;
+    }
+    cb(this, buf, off, true);
+    LOG_DBG("MOCK", "injectCustomVars: %s", mockCompanion->gps ? (sMockGpsEnabled ? "gps:1" : "gps:0") : "(none)");
+  }
+
+  // Build and inject PUSH_CODE_TELEMETRY_RESPONSE (0x8B):
+  // [0x8B][reserved][pubkey prefix 6][LPP entries...]
+  // LPP entries: voltage (116, 2 B), optional GPS (136, 9 B), temperature
+  // (103, 2 B) — the voltage/temperature entries exercise the client's
+  // size-table scan. GPS is included only while the mock's GPS is enabled;
+  // latitude/longitude stay 0/0 when the JSON has no fix coordinates.
+  void injectSelfTelemetry() {
+    auto cb = effectiveNotifyCb();
+    if (!cb || !mockCompanion) return;
+
+    uint8_t buf[40] = {};
+    size_t off = 0;
+    buf[off++] = 0x8B;  // PUSH_CODE_TELEMETRY_RESPONSE
+    buf[off++] = 0;     // reserved
+    hexToBytes(mockCompanion->publicKey, buf + off, 6);
+    off += 6;
+
+    // Voltage (LPP 116), 0.01 V units.
+    const uint16_t mv = mockCompanion->batteryMv ? mockCompanion->batteryMv : 3700;
+    const uint16_t voltage = mv / 10;
+    buf[off++] = 1;  // TELEM_CHANNEL_SELF
+    buf[off++] = 116;
+    buf[off++] = static_cast<uint8_t>(voltage >> 8);
+    buf[off++] = static_cast<uint8_t>(voltage);
+
+    const bool gpsActive = mockCompanion->gps && sMockGpsEnabled;
+    if (gpsActive) {
+      const int32_t lat = static_cast<int32_t>(mockCompanion->latitude * 10000.0f);
+      const int32_t lon = static_cast<int32_t>(mockCompanion->longitude * 10000.0f);
+      buf[off++] = 1;  // TELEM_CHANNEL_SELF
+      buf[off++] = 136;
+      buf[off++] = static_cast<uint8_t>(lat >> 16);
+      buf[off++] = static_cast<uint8_t>(lat >> 8);
+      buf[off++] = static_cast<uint8_t>(lat);
+      buf[off++] = static_cast<uint8_t>(lon >> 16);
+      buf[off++] = static_cast<uint8_t>(lon >> 8);
+      buf[off++] = static_cast<uint8_t>(lon);
+      buf[off++] = 0;  // altitude (0.01 m units)
+      buf[off++] = 0;
+      buf[off++] = 0;
+    }
+
+    // Temperature (LPP 103), 0.1 C units (21.0 C).
+    buf[off++] = 1;
+    buf[off++] = 103;
+    buf[off++] = 0;
+    buf[off++] = 210;
+
+    cb(this, buf, off, true);
+    LOG_DBG("MOCK", "injectSelfTelemetry: gps=%d lat=%.4f lon=%.4f", (int)gpsActive, mockCompanion->latitude,
+            mockCompanion->longitude);
   }
 
   // Build and inject PKT_MSG_SENT (0x06, 10 bytes).

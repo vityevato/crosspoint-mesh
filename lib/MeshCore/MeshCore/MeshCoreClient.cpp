@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "MeshCoreClock.h"
+#include "MeshCoreGpsParse.h"
 #include "MeshCoreProtocol.h"
 
 // Nordic UART Service UUIDs
@@ -587,6 +588,34 @@ bool MeshCoreClient::requestBattery() {
   return ok;
 }
 
+bool MeshCoreClient::requestCustomVars() {
+  uint8_t buf[1];
+  size_t len = MeshProto::buildGetCustomVars(buf, sizeof(buf));
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_CUSTOM_VARS);
+  LOG_DBG("MESH", "requestCustomVars: %s (queue=%d/%d)", ok ? "queued" : "FAILED", cmdCount, CMD_QUEUE_SIZE);
+  return ok;
+}
+
+bool MeshCoreClient::setGpsEnabled(bool enabled) {
+  uint8_t buf[16];
+  size_t len = MeshProto::buildSetCustomVar(buf, sizeof(buf), "gps", enabled ? "1" : "0");
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
+  LOG_DBG("MESH", "setGpsEnabled(%d): %s (queue=%d/%d)", (int)enabled, ok ? "queued" : "FAILED", cmdCount,
+          CMD_QUEUE_SIZE);
+  return ok;
+}
+
+bool MeshCoreClient::requestSelfLocation() {
+  // Invalidate the cached fix first: if the request times out or the companion
+  // replies without GPS data, the previous position must not be reused.
+  companion.selfLocationValid = false;
+  uint8_t buf[4];
+  size_t len = MeshProto::buildSendTelemetryReq(buf, sizeof(buf));
+  bool ok = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_TELEMETRY_RESPONSE);
+  LOG_DBG("MESH", "requestSelfLocation: %s (queue=%d/%d)", ok ? "queued" : "FAILED", cmdCount, CMD_QUEUE_SIZE);
+  return ok;
+}
+
 bool MeshCoreClient::requestMessages() {
   lastMessagePollTime = millis();  // reset periodic poll timer
   uint8_t buf[1];
@@ -898,6 +927,11 @@ void MeshCoreClient::poll() {
     if (!requestBattery()) {
       LOG_ERR("MESH", "Failed to queue battery request");
     }
+    // GPS capability/state query (cheap, 1 byte). Placed after the battery
+    // request so the first repaint already has it once the reply lands.
+    if (!requestCustomVars()) {
+      LOG_ERR("MESH", "Failed to queue custom vars request");
+    }
     requestContacts();
     // Channel info is fetched over the whole companion channel range (up to
     // MESHCORE_MAX_CHANNELS) in small batches as the command queue drains —
@@ -1110,6 +1144,36 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
       MeshProto::parseBattery(data, len, companion);
       LOG_DBG("MESH", "Battery: %d mV", companion.batteryMv);
       break;
+
+    case MeshProto::PKT_CUSTOM_VARS: {
+      bool hasGps = false;
+      bool gpsEnabled = false;
+      if (MeshProto::parseGpsCustomVars(data, len, hasGps, gpsEnabled)) {
+        companion.customVarsReceived = true;
+        companion.hasGps = hasGps;
+        companion.gpsEnabled = gpsEnabled;
+        LOG_INF("MESH", "Custom vars: gps=%d enabled=%d", (int)hasGps, (int)gpsEnabled);
+      } else {
+        LOG_ERR("MESH", "Failed to parse custom vars (len=%d)", (int)len);
+      }
+      break;
+    }
+
+    case MeshProto::PKT_TELEMETRY_RESPONSE: {
+      double lat = 0, lon = 0, alt = 0;
+      bool hasGpsEntry = false;
+      if (MeshProto::parseTelemetryResponse(data, len, companion.publicKey, lat, lon, alt, hasGpsEntry) &&
+          hasGpsEntry) {
+        companion.selfLat = lat;
+        companion.selfLon = lon;
+        companion.selfAlt = alt;
+        companion.selfLocationValid = true;
+        LOG_INF("MESH", "Self location: %.6f,%.6f", lat, lon);
+      } else {
+        LOG_DBG("MESH", "Self telemetry without GPS entry (len=%d)", (int)len);
+      }
+      break;
+    }
 
     case MeshProto::PKT_CONTACT_START: {
       // The companion appends getNumContacts() (total, unfiltered) as 4 LE bytes.

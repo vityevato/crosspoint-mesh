@@ -58,8 +58,8 @@ bool ThreadMenuRenderer::renderConfirmPopup(MeshCoreThreadActivity& act) {
 void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& contentRect) {
   bool connected = (act.client.getState() == BleConnectionState::CONNECTED);
 
-  constexpr int kChannelActionCount = 4;
-  constexpr int kDmActionCount = 7;
+  constexpr int kChannelActionCount = 5;
+  constexpr int kDmActionCount = 8;
   int kActionCount = act.isChannel ? kChannelActionCount : kDmActionCount;
   bool hasSettings = act._menuSettings != nullptr;
 
@@ -73,18 +73,14 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
   const int listRowStep = GUI.getListRowStep(false);
 
   static constexpr StrId kChannelTitles[] = {
-      StrId::STR_MESHCORE_REPEAT_LAST,
-      StrId::STR_MESHCORE_REPLY_TO_LAST,
-      StrId::STR_MESHCORE_SCROLL_TO_END,
-      StrId::STR_MESHCORE_CLEAR_CONVERSATION,
+      StrId::STR_MESHCORE_REPEAT_LAST,        StrId::STR_MESHCORE_REPLY_TO_LAST, StrId::STR_MESHCORE_SCROLL_TO_END,
+      StrId::STR_MESHCORE_CLEAR_CONVERSATION, StrId::STR_MESHCORE_SEND_COORDS,
   };
-  // DM actions between the Repeat slot (0) and the trailing favourite (5)
-  // and Unlist (6) rows.
+  // DM actions between the Repeat slot (0) and the trailing favourite (6)
+  // and Unlist (7) rows.
   static constexpr StrId kDmTitles[] = {
-      StrId::STR_PATH_RESET,
-      StrId::STR_MESHCORE_SCROLL_TO_END,
-      StrId::STR_MESHCORE_CLEAR_CONVERSATION,
-      StrId::STR_MESHCORE_SHARE_CONTACT,
+      StrId::STR_PATH_RESET,           StrId::STR_MESHCORE_SCROLL_TO_END, StrId::STR_MESHCORE_CLEAR_CONVERSATION,
+      StrId::STR_MESHCORE_SEND_COORDS, StrId::STR_MESHCORE_SHARE_CONTACT,
   };
   constexpr int kFavouriteIdx = kDmActionCount - 2;
   static_assert(kFavouriteIdx == static_cast<int>(sizeof(kDmTitles) / sizeof(kDmTitles[0])) + 1,
@@ -114,9 +110,14 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
       [&](int index) -> bool {
         // Repeat needs a sent message in this conversation (both modes).
         if (index == 0) return act._lastSentText.empty();
+        const auto& comp = act.client.getCompanion();
+        const bool gpsReady = comp.hasGps && comp.gpsEnabled;
         if (act.isChannel) {
           // Reply needs at least one channel sender with a known name.
-          return index == 1 && act._replyNames.empty();
+          if (index == 1) return act._replyNames.empty();
+          // Send Coordinates needs a connected companion with GPS enabled.
+          if (index == 4) return !connected || !gpsReady;
+          return false;
         }
         if (index == 1) {
           if (!connected) return true;
@@ -124,6 +125,8 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
           MeshCoreContact c;
           return !act.store.findContactByPubkey(act.contactPubkey, c) || c.pathLength == 0xFF;
         }
+        // Send Coordinates needs a connected companion with GPS enabled.
+        if (index == 4) return !connected || !gpsReady;
         // Favourite toggle and Unlist require a connected companion.
         if (!connected) return (index == kFavouriteIdx || index == kDmActionCount - 1);
         return false;

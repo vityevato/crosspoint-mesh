@@ -135,13 +135,19 @@ class MeshCoreThreadActivity final : public Activity {
   // Async BLE operations (mirror Discovery's pattern): the UI shows a
   // persistent toast, then polls for the companion's PKT_OK/error before
   // committing any local state.
-  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT, SETTING_FAVOURITE };
+  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT, SETTING_FAVOURITE, SENDING_LOCATION };
   PendingOp _pendingOp = PendingOp::IDLE;
   uint32_t _pendingStartMs = 0;
   /// Target favourite state for an in-flight SETTING_FAVOURITE op.
   bool _pendingFavouriteTarget = false;
   void completeUnlistOp(bool success);
   void completeFavouriteOp(bool success);
+  /// Completion handler for SENDING_LOCATION: formats the fresh companion fix
+  /// as "lat,lon" and opens the composer prefilled, or toasts "no fix".
+  void completeLocationOp(bool success);
+  /// Shared menu action for channel and DM menus: validates GPS availability
+  /// and queues CMD_SEND_TELEMETRY_REQ ('self'). Returns true when handled.
+  bool startSendCoordinates();
 
   // Scroll state machine — created in onEnter, deleted in onExit.
   ThreadScroller* _scroller = nullptr;

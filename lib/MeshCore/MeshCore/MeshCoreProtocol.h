@@ -21,6 +21,9 @@ static constexpr uint8_t CMD_GET_BATTERY = 0x14;
 static constexpr uint8_t CMD_DEVICE_QUERY = 0x16;
 static constexpr uint8_t CMD_GET_CHANNEL = 0x1F;
 static constexpr uint8_t CMD_SET_CHANNEL = 0x20;
+static constexpr uint8_t CMD_SEND_TELEMETRY_REQ = 0x27;  // len==4 => request 'self' telemetry
+static constexpr uint8_t CMD_GET_CUSTOM_VARS = 0x28;
+static constexpr uint8_t CMD_SET_CUSTOM_VAR = 0x29;
 
 // Packet types (firmware -> app)
 static constexpr uint8_t PKT_OK = 0x00;
@@ -38,11 +41,13 @@ static constexpr uint8_t PKT_DEVICE_INFO = 0x0D;
 static constexpr uint8_t PKT_CONTACT_MSG_V3 = 0x10;
 static constexpr uint8_t PKT_CHANNEL_MSG_V3 = 0x11;
 static constexpr uint8_t PKT_CHANNEL_INFO = 0x12;
+static constexpr uint8_t PKT_CUSTOM_VARS = 0x15;  // reply to CMD_GET_CUSTOM_VARS
 static constexpr uint8_t PKT_ADVERTISEMENT = 0x80;
 static constexpr uint8_t PKT_ACK = 0x82;
 static constexpr uint8_t PKT_MSGS_WAITING = 0x83;
-static constexpr uint8_t PUSH_LOG_RX_DATA = 0x88;  // PUSH_CODE_LOG_RX_DATA: raw RX packet log
-static constexpr uint8_t PKT_NEW_ADVERT = 0x8A;    // PUSH_CODE_NEW_ADVERT: full contact
+static constexpr uint8_t PUSH_LOG_RX_DATA = 0x88;        // PUSH_CODE_LOG_RX_DATA: raw RX packet log
+static constexpr uint8_t PKT_NEW_ADVERT = 0x8A;          // PUSH_CODE_NEW_ADVERT: full contact
+static constexpr uint8_t PKT_TELEMETRY_RESPONSE = 0x8B;  // PUSH_CODE_TELEMETRY_RESPONSE: LPP payload
 
 // Raw LoRa packet header fields (for parsing PUSH_LOG_RX_DATA frames).
 // header byte = route(2 bits) | type(4 bits) | version(2 bits)
@@ -134,6 +139,16 @@ size_t buildGetMessage(uint8_t* out, size_t maxLen);
 
 // CMD_GET_BATTERY: 0x14
 size_t buildGetBattery(uint8_t* out, size_t maxLen);
+
+// CMD_GET_CUSTOM_VARS: 0x28 — replies with PKT_CUSTOM_VARS ("name:value,...")
+size_t buildGetCustomVars(uint8_t* out, size_t maxLen);
+
+// CMD_SET_CUSTOM_VAR: 0x29 + ASCII "<name>:<value>" (not NUL-terminated)
+size_t buildSetCustomVar(uint8_t* out, size_t maxLen, const char* name, const char* value);
+
+// CMD_SEND_TELEMETRY_REQ: 0x27 0x00 0x00 0x00 — 4-byte frame requests the
+// companion's own ('self') telemetry; replies with PKT_TELEMETRY_RESPONSE.
+size_t buildSendTelemetryReq(uint8_t* out, size_t maxLen);
 
 // --- Packet parsers ---
 // All return true on success, false on parse error.

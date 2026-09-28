@@ -45,7 +45,8 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
       - [3.9.4 Conversation Thread](#394-conversation-thread)
       - [3.9.5 Discovery Nodes](#395-discovery-nodes)
       - [3.9.6 Companion Status](#396-companion-status)
-      - [3.9.7 Emoji in Chats](#397-emoji-in-chats)
+      - [3.9.7 GPS Tracking](#397-gps-tracking)
+      - [3.9.8 Emoji in Chats](#398-emoji-in-chats)
     - [3.10 Text Entry (T4 Keyboard)](#310-text-entry-t4-keyboard)
   - [4. Reading Mode](#4-reading-mode)
     - [Page Turning](#page-turning)
@@ -652,13 +653,16 @@ Groups secondary actions that are used less frequently:
 | **Share Contact (QR)** | Displays a QR code of the companion's contact link so another device can add it. |
 | **Import Contacts from File** | Reads contact links from `/meshcore_contacts.txt` on the SD card and adds them to the companion. |
 | **Status** | Shows companion device info (see [3.9.6](#396-companion-status)). |
+| **GPS Tracking** | Turns the companion's GPS on or off; the current state (`On`/`Off`) is shown on the right. Requires a companion with a detected GPS module (see [3.9.7](#397-gps-tracking)). |
 | **Disconnect** | Shows a confirmation prompt, then disconnects from the companion. |
 
 > [!NOTE]
 > **Send Advert**, **Send Flood Advert**, **Save Advert to File**,
-> **Share Contact (QR)**, **Import Contacts from File**, and **Disconnect**
-> require the companion to be connected. When disconnected, these items
-> appear dimmed and pressing Confirm shows "Not connected".
+> **Share Contact (QR)**, **Import Contacts from File**, **GPS Tracking**,
+> and **Disconnect** require the companion to be connected. When
+> disconnected, these items appear dimmed and pressing Confirm shows
+> "Not connected". **GPS Tracking** is also dimmed when the companion has
+> no detected GPS module; pressing Confirm then shows "GPS not available".
 >
 > After sending an advert, the subtitle area shows a brief status message
 > ("Advert sent" or "Advert failed") that auto-clears after 5 seconds.
@@ -707,6 +711,10 @@ For a **direct message**, the Menu offers:
 - **Reset Path** — clear the stale route to a contact so messages re-route.
 - **Scroll to End** — jump to the newest messages.
 - **Clear Conversation** — erase the local message history.
+- **Send Current Coordinates** — asks the companion for its current GPS
+  position and opens the composer prefilled with `latitude,longitude`
+  (for example `55.755800,37.617300`). Requires GPS to be on
+  (see [3.9.7](#397-gps-tracking)).
 - **Share Contact (QR)** — display the contact's link as a QR code.
 - **Toggle Favourite** — pin or unpin the contact at the top of the
   Contacts tab.
@@ -715,12 +723,12 @@ For a **direct message**, the Menu offers:
   message text instead of the default UI font.
 
 For a **channel**, the Menu offers **Repeat Last Message**, **Reply to
-Last**, **Scroll to End**, **Clear Conversation**, and the **Use Reader
-Font in Conversations** toggle. **Repeat Last Message** refills the
-composer with the last message you sent. **Reply to Last** lists the
-channel's most recent senders, newest first, and opens the keyboard with
-a `@[Name] ` mention prefilled; it is dimmed while the channel has no
-incoming messages from others.
+Last**, **Scroll to End**, **Clear Conversation**, **Send Current
+Coordinates**, and the **Use Reader Font in Conversations** toggle.
+**Repeat Last Message** refills the composer with the last message you
+sent. **Reply to Last** lists the channel's most recent senders, newest
+first, and opens the keyboard with a `@[Name] ` mention prefilled; it is
+dimmed while the channel has no incoming messages from others.
 
 > [!NOTE]
 > Long-press **Right/Down** or **Left/Up** cycles between the Messages and
@@ -739,10 +747,50 @@ count.
 #### 3.9.6 Companion Status
 
 Shows the connected companion's details as a popup: **Name**, **Model**,
-**Firmware**, **Battery** voltage, and **Radio** configuration (frequency,
-bandwidth, spreading factor, coding rate). Press **Back** to close it.
+**Firmware**, **Battery** voltage, **Radio** configuration (frequency,
+bandwidth, spreading factor, coding rate), and **GPS** (see below).
+Press **Back** to close it.
 
-#### 3.9.7 Emoji in Chats
+The **GPS** line reports the companion's GPS state:
+
+- `On` — a GPS module is present and currently enabled.
+- `Off` — a GPS module is present but disabled.
+- `GPS not available` — no GPS module was detected on the companion.
+
+Opening Status also refreshes this state from the companion, so it
+reflects changes made on the companion device itself.
+
+#### 3.9.7 GPS Tracking
+
+CrossPoint can use the GPS of the connected companion. The feature is
+available only when the companion runs firmware with GPS support and has
+a GPS module attached and detected (for example a Seeed T1000-E).
+
+- **Turn GPS on/off** — Hub → **Menu** → **GPS Tracking**. The current
+  state (`On`/`Off`) is shown next to the item. The setting is stored on
+  the companion and survives reboots. The item is dimmed when the
+  companion has no detected GPS module.
+- **Send your current coordinates** — in a contact or channel thread,
+  open **Menu** → **Send Current Coordinates**. CrossPoint reads the
+  companion's current position and opens the composer prefilled with
+  `latitude,longitude` (for example `55.755800,37.617300`); edit the
+  text if needed, then send it like any other message.
+- **Waiting for a fix** — after GPS is turned on, the receiver needs
+  some time (seconds to a few minutes) to acquire satellites. While
+  CrossPoint waits for the companion's reply, the header shows
+  "Waiting for GPS fix…". If no position is available yet, the composer
+  does not open and the header shows "No GPS fix" — try again shortly.
+- **GPS is off** — if GPS is disabled, **Send Current Coordinates**
+  shows "GPS is off" instead of opening the composer. Enable GPS from
+  the Hub's Menu first.
+
+> [!NOTE]
+> Coordinates come from the companion's GPS. CrossPoint never uses its
+> own position and does not configure the companion's location, GPS
+> interval, or advert-location policy — use the full-featured smartphone
+> client for that.
+
+#### 3.9.8 Emoji in Chats
 
 Messages in MeshCore threads can contain emoji. They render as
 monochrome (black-and-white) pictographs on the e-ink screen.

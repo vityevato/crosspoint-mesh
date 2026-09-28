@@ -256,6 +256,39 @@ void MeshCoreHubActivity::loop() {
     requestUpdate();
   }
 
+  // GPS capability/state changes (custom-vars reply, or a toggle completing)
+  // repaint the menu row and the status popup.
+  {
+    const auto& comp = client.getCompanion();
+    if (comp.customVarsReceived != _lastCustomVarsReceived || comp.hasGps != _lastHasGps ||
+        comp.gpsEnabled != _lastGpsEnabled) {
+      _lastCustomVarsReceived = comp.customVarsReceived;
+      _lastHasGps = comp.hasGps;
+      _lastGpsEnabled = comp.gpsEnabled;
+      requestUpdate();
+    }
+  }
+
+  // GPS toggle in flight: wait for the companion's PKT_OK/error, then re-query
+  // the authoritative state (the companion applies start_gps()/stop_gps()
+  // before replying, so the custom-vars reply carries the committed value).
+  if (_gpsToggleInFlight) {
+    if (!client.isCommandPending()) {
+      _gpsToggleInFlight = false;
+      if (client.getLastCommandResult()) {
+        _toast.show(_gpsToggleTarget ? tr(STR_MESHCORE_GPS_TURNED_ON) : tr(STR_MESHCORE_GPS_TURNED_OFF), 5000);
+        client.requestCustomVars();
+      } else {
+        _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 5000);
+      }
+      requestUpdate();
+    } else if (millis() - _gpsToggleStartMs > 6000) {
+      _gpsToggleInFlight = false;
+      _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 5000);
+      requestUpdate();
+    }
+  }
+
   // Background contact-activity sweep: reads the newest received DM for each
   // saved contact in chunks so the main loop stays responsive (SD reads). Once
   // complete, contactSortIndex switches from identity to activity order.
@@ -555,7 +588,7 @@ void MeshCoreHubActivity::loop() {
           break;
         }
         case Tab::MENU: {
-          if (itemIdx >= 0 && itemIdx < 8) {
+          if (itemIdx >= 0 && itemIdx < 9) {
             bool connected = (client.getState() == BleConnectionState::CONNECTED);
             switch (itemIdx) {
               case 0:  // Discovery Nodes
@@ -599,11 +632,34 @@ void MeshCoreHubActivity::loop() {
               case 6:  // Status
                 if (client.getState() == BleConnectionState::CONNECTED) {
                   lastCompanion = client.getCompanion();
+                  // Refresh GPS capability/state: it can change on the
+                  // companion device without the app's involvement. The reply
+                  // repaints via the GPS-change check in loop().
+                  client.requestCustomVars();
                 }
                 showingStatus = true;
                 requestUpdate();
                 return;
-              case 7:  // Disconnect
+              case 7: {  // GPS Tracking (async — waits for companion PKT_OK)
+                if (!connected) {
+                  _toast.show(tr(STR_MESHCORE_NOT_CONNECTED), 5000);
+                } else if (!client.getCompanion().hasGps) {
+                  _toast.show(tr(STR_MESHCORE_GPS_NOT_AVAILABLE), 5000);
+                } else {
+                  const bool target = !client.getCompanion().gpsEnabled;
+                  if (client.setGpsEnabled(target)) {
+                    _gpsToggleInFlight = true;
+                    _gpsToggleTarget = target;
+                    _gpsToggleStartMs = millis();
+                    _toast.show(tr(STR_MESHCORE_SAVING), 0);  // persistent until the node replies
+                  } else {
+                    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 5000);
+                  }
+                }
+                requestUpdate();
+                return;
+              }
+              case 8:  // Disconnect
                 if (connected) {
                   showingDisconnectPopup = true;
                   requestUpdate();
@@ -687,7 +743,7 @@ int MeshCoreHubActivity::getListCountForCurrentTab() const {
     case Tab::CONTACTS:
       return savedContactCount;
     case Tab::MENU:
-      return 8;  // Always 8 menu items
+      return 9;  // Always 9 menu items
     default:
       return 0;
   }
@@ -869,7 +925,8 @@ void MeshCoreHubActivity::renderContactList(const Rect& contentRect) {
 
 void MeshCoreHubActivity::renderMenu(const Rect& contentRect) {
   bool isConnected = (client.getState() == BleConnectionState::CONNECTED);
-  MeshCoreMenuView::render(renderer, contentRect, selectedIndex, isConnected);
+  const auto& comp = client.getCompanion();
+  MeshCoreMenuView::render(renderer, contentRect, selectedIndex, isConnected, comp.hasGps, comp.gpsEnabled);
 }
 
 // --- Event handlers ---

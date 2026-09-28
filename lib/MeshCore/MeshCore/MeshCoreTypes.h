@@ -44,6 +44,22 @@ struct MeshCoreCompanion {
   uint8_t maxContacts = 0;      ///< Maximum number of contacts
   uint8_t maxChannels = 8;      ///< Maximum number of channels
   uint32_t blePin = 0;          ///< PIN displayed on the companion device (0 == no PIN)
+
+  // GPS capability/state, from CMD_GET_CUSTOM_VARS. The companion only emits
+  // the "gps" custom var when a GPS module was detected at boot.
+  bool customVarsReceived = false;  ///< True once CMD_GET_CUSTOM_VARS replied
+  bool hasGps = false;              ///< Companion has a detected GPS module
+  bool gpsEnabled = false;          ///< GPS is currently active on the companion
+
+  // Last self-telemetry location (CMD_SEND_TELEMETRY_REQ, 4-byte 'self' form).
+  // selfLocationValid is reset on every request and set only when the response
+  // carried an LPP GPS entry. Values are 0/0 until the receiver has a fix —
+  // the protocol carries no fix-validity flag. Stored as double so the LPP
+  // 4-decimal resolution prints cleanly with %.6f.
+  double selfLat = 0;              ///< Latitude in degrees
+  double selfLon = 0;              ///< Longitude in degrees
+  double selfAlt = 0;              ///< Altitude in meters
+  bool selfLocationValid = false;  ///< True when the last response had GPS data
 };
 
 struct MeshCoreContact {
