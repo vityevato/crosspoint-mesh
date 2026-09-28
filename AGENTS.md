@@ -595,6 +595,10 @@ renderer-coordinate math where the semantics are self-evident (e.g.,
 - Never hardcode `800` or `480`. Use `renderer.getScreenWidth()` and
   `renderer.getScreenHeight()`.
 - Use `renderer.getOrientedViewableTRBL()` for bezel margins.
+- **MeshCore activities** (`src/activities/meshcore/`) are
+  **portrait-only**. Target portrait layout exclusively — do not add
+  landscape/inverted variants. Verify MeshCore UI across all themes,
+  but always in portrait orientation.
 
 **UI components**:
 - Maximise use of existing `GUI.*` components (`drawList`, `drawHeader`,
@@ -1236,11 +1240,11 @@ build_flags =
 2. ✅ **Quality**: `pio check` when relevant + `./bin/clang-format-fix -g`
 3. ✅ **Format**: Commit messages (`feat:`/`fix:`), no `.gitignore`-excluded files staged (e.g., `*.generated.h`, `.pio/`, `platformio.local.ini`)
 4. ✅ **CI**: Fix GitHub Actions failures before review
-5. ✅ **Code review**: Ensure orientation-aware logic is correct in all 4 modes by inspecting switch/case coverage
+5. ✅ **Code review**: Ensure orientation-aware logic is correct in all 4 modes by inspecting switch/case coverage (MeshCore activities are portrait-only — review those in portrait, across all themes)
 
 **Human tester scope** (flag these for the user):
 6. 🔲 **Device**: Test on hardware
-7. 🔲 **Orientations**: Verify all 4 modes (Portrait/Inverted/Landscape CW/CCW)
+7. 🔲 **Orientations**: Verify all 4 modes (Portrait/Inverted/Landscape CW/CCW) — MeshCore activities: portrait only, across all themes
 8. 🔲 **Heap**: `ESP.getFreeHeap()` > 50KB, no leaks
 9. 🔲 **Cache**: If EPUB modified, delete `.crosspoint/` and verify re-parse
 

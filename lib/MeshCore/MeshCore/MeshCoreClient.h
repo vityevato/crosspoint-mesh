@@ -68,6 +68,17 @@ class MeshCoreClient {
   bool requestNewContacts();
   bool requestChannel(uint8_t idx);
   bool requestBattery();
+  /// Query the companion's custom sensor vars (PKT_CUSTOM_VARS). The reply
+  /// populates companion.hasGps / gpsEnabled / customVarsReceived.
+  bool requestCustomVars();
+  /// Enable/disable the companion's GPS tracking (CMD_SET_CUSTOM_VAR "gps:1"
+  /// / "gps:0"). The companion persists the setting in its own prefs.
+  bool setGpsEnabled(bool enabled);
+  /// Request the companion's own current telemetry (4-byte
+  /// CMD_SEND_TELEMETRY_REQ). On reply companion.selfLat/selfLon/selfAlt and
+  /// selfLocationValid are updated; selfLocationValid is reset here so a
+  /// stale value can never be mistaken for a fresh fix.
+  bool requestSelfLocation();
   bool requestMessages();
   bool sendChannelMessage(uint8_t channelIdx, const char* text);
   /// Send a direct message. contact is copied into the in-flight tracker.

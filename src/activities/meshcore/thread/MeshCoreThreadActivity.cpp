@@ -339,18 +339,34 @@ void MeshCoreThreadActivity::loop() {
 void MeshCoreThreadActivity::_loopBleStateMachine() {
   if (_pendingOp != PendingOp::IDLE && !client.isCommandPending()) {
     const bool success = client.getLastCommandResult();
-    if (_pendingOp == PendingOp::DELETING_CONTACT) {
-      completeUnlistOp(success);
-    } else {
-      completeFavouriteOp(success);
+    switch (_pendingOp) {
+      case PendingOp::DELETING_CONTACT:
+        completeUnlistOp(success);
+        break;
+      case PendingOp::SETTING_FAVOURITE:
+        completeFavouriteOp(success);
+        break;
+      case PendingOp::SENDING_LOCATION:
+        completeLocationOp(success);
+        break;
+      default:
+        break;
     }
   }
   if (_pendingOp != PendingOp::IDLE && (millis() - _pendingStartMs) > 10000) {
     LOG_ERR("MESH", "Async BLE timeout (no response after 10 s)");
-    if (_pendingOp == PendingOp::DELETING_CONTACT) {
-      completeUnlistOp(false);
-    } else {
-      completeFavouriteOp(false);
+    switch (_pendingOp) {
+      case PendingOp::DELETING_CONTACT:
+        completeUnlistOp(false);
+        break;
+      case PendingOp::SETTING_FAVOURITE:
+        completeFavouriteOp(false);
+        break;
+      case PendingOp::SENDING_LOCATION:
+        completeLocationOp(false);
+        break;
+      default:
+        break;
     }
   }
 
@@ -503,7 +519,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
 
   if (currentTab == Tab::MENU) {
     // Action indices: 0..(actionCount-1) = menu actions, actionCount = settings toggle
-    int actionCount = isChannel ? 4 : 7;
+    int actionCount = isChannel ? 5 : 8;
     if (itemIdx >= actionCount) {
       // Settings toggle
       if (_menuSettings) {
@@ -528,7 +544,8 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
     }
 
     if (isChannel) {
-      // Channel menu: 1=Reply to Last, 2=Scroll to End, 3=Clear
+      // Channel menu: 1=Reply to Last, 2=Scroll to End, 3=Clear,
+      // 4=Send Coordinates
       switch (itemIdx) {
         case 1:  // Reply to Last
           // Held? wait for the release in _loopInput. Released within this
@@ -546,12 +563,14 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
+        case 4:  // Send Coordinates
+          return startSendCoordinates();
         default:
           break;
       }
     } else {
-      // DM menu: 1=Reset Path, 2=Scroll to End, 3=Clear, 4=Share QR,
-      // 5=Toggle Favourite, 6=Unlist
+      // DM menu: 1=Reset Path, 2=Scroll to End, 3=Clear, 4=Send Coordinates,
+      // 5=Share QR, 6=Toggle Favourite, 7=Unlist
       bool connected = (client.getState() == BleConnectionState::CONNECTED);
       switch (itemIdx) {
         case 1: {  // Reset Path
@@ -583,10 +602,12 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
-        case 4:  // Share Contact (QR)
+        case 4:  // Send Coordinates
+          return startSendCoordinates();
+        case 5:  // Share Contact (QR)
           shareContactQr();
           return true;
-        case 5: {  // Toggle Favourite (async — waits for companion PKT_OK)
+        case 6: {  // Toggle Favourite (async — waits for companion PKT_OK)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -617,7 +638,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           requestUpdate();
           return true;
         }
-        case 6: {  // Unlist Contact (async, waits for BLE)
+        case 7: {  // Unlist Contact (async, waits for BLE)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -740,7 +761,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU: {
-      int count = isChannel ? 4 : 7;  // Channel: 4 actions; DM: 7 (Repeat, ..., Favourite, Unlist)
+      int count = isChannel ? 5 : 8;  // Channel: 5 actions; DM: 8 (Repeat, ..., Favourite, Unlist)
       if (_menuSettings) count += 1;  // +1 for the settings toggle
       return count;
     }
@@ -804,6 +825,50 @@ void MeshCoreThreadActivity::completeFavouriteOp(bool success) {
     _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
     requestUpdate();
   }
+}
+
+// ── Send Coordinates menu action ──
+// Validates GPS availability, then asks the companion for its current
+// telemetry (LPP). The reply is handled asynchronously in completeLocationOp().
+
+bool MeshCoreThreadActivity::startSendCoordinates() {
+  const bool connected = (client.getState() == BleConnectionState::CONNECTED);
+  const auto& comp = client.getCompanion();
+  if (!connected) {
+    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+  } else if (!comp.hasGps) {
+    _toast.show(tr(STR_MESHCORE_GPS_NOT_AVAILABLE), 3000);
+  } else if (!comp.gpsEnabled) {
+    _toast.show(tr(STR_MESHCORE_GPS_OFF), 3000);
+  } else if (!client.requestSelfLocation()) {
+    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+  } else {
+    _pendingOp = PendingOp::SENDING_LOCATION;
+    _pendingStartMs = millis();
+    _toast.show(tr(STR_MESHCORE_GPS_WAIT_FIX), 0);  // persistent until the node replies
+    requestUpdate();
+    return true;
+  }
+  requestUpdate();
+  return true;
+}
+
+void MeshCoreThreadActivity::completeLocationOp(bool success) {
+  _pendingOp = PendingOp::IDLE;
+  const auto& comp = client.getCompanion();
+  // The LPP payload carries no fix-validity flag: the companion returns its
+  // cached position, which is 0/0 until the receiver has a fix.
+  if (success && comp.selfLocationValid && (comp.selfLat != 0.0f || comp.selfLon != 0.0f)) {
+    char coords[32];
+    snprintf(coords, sizeof(coords), "%.6f,%.6f", comp.selfLat, comp.selfLon);
+    LOG_INF("MESH", "Send coordinates: %s", coords);
+    _toast.clear();       // drop the persistent "waiting for fix" toast
+    sendMessage(coords);  // opens the composer prefilled; send flow is unchanged
+    return;
+  }
+  LOG_ERR("MESH", "No GPS fix available (success=%d valid=%d)", (int)success, (int)comp.selfLocationValid);
+  _toast.show(tr(STR_MESHCORE_GPS_NO_FIX), 3000);
+  requestUpdate();
 }
 
 // --- Message sending ---

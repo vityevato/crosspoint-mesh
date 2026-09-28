@@ -37,13 +37,17 @@ class MeshCoreStatusView {
     snprintf(radioBuf, sizeof(radioBuf), "%.1f MHz BW %.0f kHz SF%d CR%d", comp.radioFreq, comp.radioBw, comp.radioSf,
              comp.radioCr);
 
-    const char* labels[] = {tr(STR_MESHCORE_STATUS_NAME), tr(STR_MESHCORE_STATUS_MODEL),
-                            tr(STR_MESHCORE_STATUS_FIRMWARE), tr(STR_BATTERY), tr(STR_MESHCORE_STATUS_RADIO)};
-    const char* values[] = {comp.name, comp.model, comp.version, battBuf, radioBuf};
-    constexpr int fieldCount = 5;
+    const char* labels[] = {tr(STR_MESHCORE_STATUS_NAME),     tr(STR_MESHCORE_STATUS_MODEL),
+                            tr(STR_MESHCORE_STATUS_FIRMWARE), tr(STR_BATTERY),
+                            tr(STR_MESHCORE_STATUS_RADIO),    tr(STR_MESHCORE_STATUS_GPS)};
+    const char* gpsValue = (!comp.customVarsReceived || !comp.hasGps)
+                               ? tr(STR_MESHCORE_GPS_NOT_AVAILABLE)
+                               : (comp.gpsEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
+    const char* values[] = {comp.name, comp.model, comp.version, battBuf, radioBuf, gpsValue};
+    constexpr int fieldCount = 6;
 
     // Build display lines: "label: value"
-    char lines[5][128];
+    char lines[6][128];
     for (int i = 0; i < fieldCount; i++) {
       snprintf(lines[i], sizeof(lines[i]), "%s: %s", labels[i], values[i]);
     }
