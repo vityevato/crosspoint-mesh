@@ -1,9 +1,9 @@
-#include "MeshCoreGpsParse.h"
-
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <vector>
+
+#include "MeshCoreGpsParse.h"
 
 namespace {
 
