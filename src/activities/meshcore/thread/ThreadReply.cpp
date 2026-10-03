@@ -16,6 +16,7 @@
 
 void ThreadReply::refreshTargets(MeshCoreThreadActivity& act) {
   act._replyNames.clear();
+  act._hasReplyTargets = false;
   if (!act.isChannel || act._meta.count == 0) return;
 
   auto batch = makeUniqueNoThrow<MeshCoreMessage[]>(OptionPopup::MAX_OPTIONS);
@@ -60,9 +61,15 @@ void ThreadReply::refreshTargets(MeshCoreThreadActivity& act) {
   }
 
   LOG_DBG("MESH", "Reply targets: %u", static_cast<unsigned>(act._replyNames.size()));
+  act._hasReplyTargets = !act._replyNames.empty();
 }
 
 void ThreadReply::openPicker(MeshCoreThreadActivity& act) {
+  // The list is released when a reply is selected (to hand the composer a
+  // cleaner heap); rebuild it lazily from the last known state.
+  if (act._replyNames.empty() && act._hasReplyTargets) {
+    refreshTargets(act);
+  }
   if (act._replyNames.empty()) {
     act._toast.show(tr(STR_MESHCORE_NO_REPLY_TARGETS), 3000);
     act.requestUpdate();
@@ -74,6 +81,9 @@ void ThreadReply::openPicker(MeshCoreThreadActivity& act) {
     // MeshCore reply mention: "@[Name] " (with trailing space) at the start.
     char mention[80];
     snprintf(mention, sizeof(mention), "@[%s] ", act._replyNames[idx].c_str());
+    // Release the target list while the composer activity is on top; the
+    // popup's own copy is released by OptionPopup on selection.
+    std::vector<std::string>().swap(act._replyNames);
     act.sendMessage(mention);
   });
   act.requestUpdate();

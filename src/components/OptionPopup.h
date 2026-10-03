@@ -79,6 +79,7 @@ class OptionPopup {
           // Tap released on an option: select it, fire, dismiss.
           selectedIndex = event.value;
           active = false;
+          releaseOptions();
           if (onSelectCallback) onSelectCallback(selectedIndex);
           requestUpdate();
           return true;
@@ -120,11 +121,13 @@ class OptionPopup {
       return true;
     } else if (input.wasReleased(MappedInputManager::Button::Confirm)) {
       active = false;
+      releaseOptions();
       if (onSelectCallback) onSelectCallback(selectedIndex);
       requestUpdate();
       return true;
     } else if (input.wasReleased(MappedInputManager::Button::Back)) {
       active = false;
+      releaseOptions();
       requestUpdate();
       return true;
     }
@@ -239,10 +242,17 @@ class OptionPopup {
   // away, e.g. its host screen closes from outside the popup's own input).
   void dismiss() {
     active = false;
+    releaseOptions();
     onSelectCallback = nullptr;
   }
 
  private:
+  // Release the option strings (and the backing vector) while keeping the
+  // popup reusable. Callbacks receive only the selected index and cannot
+  // observe ownedStrings, so clearing before firing is safe — and a callback
+  // that calls show() again keeps its fresh options.
+  void releaseOptions() { std::vector<std::string>().swap(ownedStrings); }
+
   // +1 slot for the chrome guard rect.
   static constexpr size_t INTERACTION_CAPACITY = MAX_OPTIONS + 1;
   static constexpr freeink::ui::ActionId ACTION_OPTION = 1;

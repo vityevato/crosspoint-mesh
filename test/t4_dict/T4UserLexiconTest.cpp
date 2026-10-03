@@ -201,6 +201,30 @@ TEST_F(T4UserLexiconTest, SerializeFailsOnUndersizedBuffer) {
   EXPECT_TRUE(lex.isDirty());
 }
 
+TEST_F(T4UserLexiconTest, SerializedSizeMatchesSerialize) {
+  ASSERT_TRUE(learn(lex, "wifi"));
+  ASSERT_TRUE(learn(lex, "жаргон", T4Language::ADDITIONAL));
+
+  const size_t expected = T4UserLexicon::kHeaderSize + (T4UserLexicon::kEntryHeaderSize + strlen("wifi")) +
+                          (T4UserLexicon::kEntryHeaderSize + strlen("жаргон"));
+  EXPECT_EQ(lex.serializedSize(), expected);
+  EXPECT_LT(lex.serializedSize(), T4UserLexicon::kMaxSerializedSize);
+
+  std::vector<uint8_t> buffer(T4UserLexicon::kMaxSerializedSize);
+  EXPECT_EQ(lex.serialize(buffer.data(), buffer.size()), lex.serializedSize());
+}
+
+TEST_F(T4UserLexiconTest, SerializedSizeEmptyIsHeaderOnly) {
+  EXPECT_EQ(lex.serializedSize(), T4UserLexicon::kHeaderSize);
+}
+
+TEST_F(T4UserLexiconTest, SerializeRejectsBufferBelowSerializedSize) {
+  ASSERT_TRUE(learn(lex, "wifi"));
+  std::vector<uint8_t> buffer(lex.serializedSize() - 1);
+  EXPECT_EQ(lex.serialize(buffer.data(), buffer.size()), 0u);
+  EXPECT_TRUE(lex.isDirty());
+}
+
 TEST_F(T4UserLexiconTest, LoadRejectsInvalidHeader) {
   std::vector<uint8_t> buffer(T4UserLexicon::kHeaderSize, 0);
   EXPECT_FALSE(lex.loadFromBuffer(buffer.data(), buffer.size()));

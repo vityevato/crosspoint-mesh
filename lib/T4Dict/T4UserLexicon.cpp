@@ -300,11 +300,16 @@ bool T4UserLexicon::loadFromBuffer(const uint8_t* data, size_t len) {
   return true;
 }
 
+size_t T4UserLexicon::serializedSize() const {
+  size_t needed = kHeaderSize;
+  for (uint16_t i = 0; i < _count; i++) needed += kEntryHeaderSize + _entries[i].wordLen;
+  return needed;
+}
+
 size_t T4UserLexicon::serialize(uint8_t* out, size_t cap) {
   if (!out) return 0;
 
-  size_t needed = kHeaderSize;
-  for (uint16_t i = 0; i < _count; i++) needed += kEntryHeaderSize + _entries[i].wordLen;
+  const size_t needed = serializedSize();
   if (cap < needed) return 0;
 
   const uint32_t magic = kMagic;

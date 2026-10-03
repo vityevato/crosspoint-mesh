@@ -50,6 +50,49 @@ inline bool readTrieNode(const uint8_t* nodePool, uint32_t nodeCount, uint32_t n
   return true;
 }
 
+/// Measure the String Pool span needed for up to @p wordCount
+/// null-terminated words, capped at @p maxBytes. Only complete words are
+/// counted: a word whose terminator falls beyond the cap is excluded, so the
+/// returned span never ends mid-word.
+/// @param readByte      callable returning the next byte (0..255) or -1 on
+///                      error/EOF.
+/// @param wordsThatFit  set to the number of complete words within the span.
+/// @return bytes occupied by complete words (0 when none fits).
+template <typename ReadByte>
+inline size_t measureCandidateSpan(ReadByte readByte, uint16_t wordCount, size_t maxBytes, uint16_t& wordsThatFit) {
+  size_t consumed = 0;
+  size_t completeBytes = 0;
+  wordsThatFit = 0;
+  while (wordsThatFit < wordCount && consumed < maxBytes) {
+    const int value = readByte();
+    if (value < 0) break;
+    ++consumed;
+    if (static_cast<char>(value) == '\0') {
+      completeBytes = consumed;
+      ++wordsThatFit;
+    }
+  }
+  return completeBytes;
+}
+
+/// Read up to @p wordCount null-terminated words into @p buf of @p bufSize
+/// bytes. Stops at the word count, at buffer capacity (a partial trailing
+/// word is dropped from the count), or on a read error.
+/// @return number of complete words written.
+template <typename ReadByte>
+inline uint16_t readCandidateSpan(ReadByte readByte, uint16_t wordCount, char* buf, size_t bufSize) {
+  size_t bytesRead = 0;
+  uint16_t wordsRead = 0;
+  while (wordsRead < wordCount && bytesRead < bufSize) {
+    const int value = readByte();
+    if (value < 0) break;
+    const char ch = static_cast<char>(value);
+    buf[bytesRead++] = ch;
+    if (ch == '\0') ++wordsRead;
+  }
+  return wordsRead;
+}
+
 /// Extract null-terminated candidate words from the String Pool.
 /// stringPool points to the start of the String Pool section (absolute
 /// str_offset is relative to file start; caller must subtract pool start).

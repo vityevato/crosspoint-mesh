@@ -174,6 +174,10 @@ class MeshCoreThreadActivity final : public Activity {
   // tab while active; _replyNames backs its options and the select callback.
   OptionPopup _replyPopup;
   std::vector<std::string> _replyNames;
+  /// True when the last refresh found at least one reply target. Kept after
+  /// _replyNames is released before opening the composer, so the MENU item
+  /// stays enabled and openPicker() can rebuild the list lazily.
+  bool _hasReplyTargets = false;
   /// True while the Confirm press that opens the picker is still held; the
   /// picker itself opens on the release (see _loopInput).
   bool _replyPickerPending = false;

@@ -1035,12 +1035,13 @@ void T4EntryActivity::loadUserLexicon() {
 void T4EntryActivity::saveUserLexicon() {
   if (!_lexicon || !_lexicon->isDirty()) return;
 
-  auto buffer = makeUniqueNoThrow<uint8_t[]>(t4::T4UserLexicon::kMaxSerializedSize);
+  const size_t size = _lexicon->serializedSize();
+  auto buffer = makeUniqueNoThrow<uint8_t[]>(size);
   if (!buffer) {
-    LOG_ERR("T4", "OOM: user lexicon save buffer");
+    LOG_ERR("T4", "OOM: user lexicon save buffer (%u bytes)", static_cast<unsigned>(size));
     return;
   }
-  const size_t written = _lexicon->serialize(buffer.get(), t4::T4UserLexicon::kMaxSerializedSize);
+  const size_t written = _lexicon->serialize(buffer.get(), size);
   if (written == 0) {
     LOG_ERR("T4", "Failed to serialize user lexicon");
     return;

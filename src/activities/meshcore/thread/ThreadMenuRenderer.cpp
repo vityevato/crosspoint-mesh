@@ -113,8 +113,9 @@ void ThreadMenuRenderer::renderMenu(MeshCoreThreadActivity& act, const Rect& con
         const auto& comp = act.client.getCompanion();
         const bool gpsReady = comp.hasGps && comp.gpsEnabled;
         if (act.isChannel) {
-          // Reply needs at least one channel sender with a known name.
-          if (index == 1) return act._replyNames.empty();
+          // Reply needs at least one channel sender with a known name. The
+          // flag survives releasing _replyNames before the composer opens.
+          if (index == 1) return !act._hasReplyTargets;
           // Send Coordinates needs a connected companion with GPS enabled.
           if (index == 4) return !connected || !gpsReady;
           return false;

@@ -55,16 +55,25 @@ class T4Dictionary {
   const char* getLangCode() const;
 
  private:
-  static constexpr size_t DEFAULT_CANDIDATE_BUF_SIZE = 4096;
+  /// Hard ceiling for one node's candidate span. Typical nodes need well
+  /// under 1 KB; the cap only bounds pathological ones and matches the old
+  /// fixed buffer size, so truncation behaviour at the cap is unchanged.
+  static constexpr size_t kMaxCandidateBytes = 4096;
+  /// Retry floor when the heap cannot serve the measured span. Halving down
+  /// to this size keeps a truncated candidate list alive on a tight heap.
+  static constexpr size_t kMinCandidateBytes = 64;
 
   HalFile _file;
   t4::T4TrieNode _currentNode{};
   std::unique_ptr<char[]> _candidateBuf;
-  size_t _candidateBufSize = 0;
+  size_t _candidateBufSize = 0;  // allocated capacity, kept across navigations
   uint16_t _candidateCount = 0;
   bool _loaded = false;
   char _langCode[3] = {};  // 2-char ISO code + null
 
   bool readNodeAtOffset(uint32_t offset, t4::T4TrieNode& out);
+  /// Drop the word list but keep the allocated buffer for reuse.
+  void clearCandidates();
+  /// Release the allocated buffer entirely.
   void freeCandidates();
 };

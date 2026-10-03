@@ -97,7 +97,7 @@ bool T4Dictionary::pressButton(uint8_t btn) {
   }
 
   // Clear previous candidates — new node means new candidates
-  freeCandidates();
+  clearCandidates();
 
   uint8_t idx = btn - 1;
   uint32_t childOff = _currentNode.child_offset[idx];
@@ -124,49 +124,80 @@ bool T4Dictionary::loadCandidates() {
     return _currentNode.word_count == 0;  // success if no words (intermediate node)
   }
 
-  freeCandidates();
-
-  // Allocate candidate buffer
-  size_t bufSize = DEFAULT_CANDIDATE_BUF_SIZE;
-  _candidateBuf = makeUniqueNoThrow<char[]>(bufSize);
-  if (!_candidateBuf) {
-    LOG_ERR("T4", "OOM: candidate buffer %d bytes", bufSize);
+  // Pass 1: measure the exact String Pool span for this node's words. Sizing
+  // the allocation to the real need (typically well under 1 KB) is what keeps
+  // candidate lookup alive on the BLE-fragmented MeshCore heap, where the old
+  // fixed 4096-byte request failed outright.
+  if (!_file.seekSet(_currentNode.str_offset)) {
+    LOG_ERR("T4", "Seek to offset %u failed", _currentNode.str_offset);
+    _candidateCount = 0;
     return false;
   }
-  _candidateBufSize = bufSize;
+  bool readError = false;
+  auto readByte = [this, &readError]() -> int {
+    const int value = _file.read();
+    if (value < 0) readError = true;
+    return value;
+  };
+  uint16_t measuredWords = 0;
+  const size_t needed = t4::measureCandidateSpan(readByte, _currentNode.word_count, kMaxCandidateBytes, measuredWords);
+  if (readError) {
+    LOG_ERR("T4", "Read error while measuring candidates");
+    _candidateCount = 0;
+    return false;
+  }
+  if (needed == 0) {
+    LOG_DBG("T4", "loadCandidates: no complete word within %u bytes", static_cast<unsigned>(kMaxCandidateBytes));
+    _candidateCount = 0;
+    return true;
+  }
 
-  // Read words from String Pool
-  _file.seekSet(_currentNode.str_offset);
-  size_t bytesRead = 0;
-  uint16_t wordsRead = 0;
-  char ch;
-  while (wordsRead < _currentNode.word_count && bytesRead < bufSize - 1) {
-    int r = _file.read();
-    if (r < 0) {
-      LOG_ERR("T4", "Read error at word %u", wordsRead);
-      freeCandidates();
-      return false;
+  // Grow (never shrink) the buffer to the measured span. On OOM retry with
+  // half the size so a truncated candidate list still beats no list at all;
+  // an existing smaller buffer is reused as-is in that case.
+  if (_candidateBufSize < needed) {
+    size_t want = needed;
+    std::unique_ptr<char[]> grown;
+    while (want > 0) {
+      grown = makeUniqueNoThrow<char[]>(want);
+      if (grown) break;
+      want = (want > kMinCandidateBytes) ? want / 2 : 0;
     }
-    ch = static_cast<char>(r);
-    if (ch == '\0') {
-      _candidateBuf[bytesRead++] = '\0';
-      ++wordsRead;
-    } else {
-      _candidateBuf[bytesRead++] = ch;
+    if (grown) {
+      _candidateBuf = std::move(grown);
+      _candidateBufSize = want;
+    } else if (!_candidateBuf) {
+      LOG_ERR("T4", "OOM: candidate buffer (need %u bytes)", static_cast<unsigned>(needed));
+      _candidateCount = 0;
+      return false;
     }
   }
 
-  _candidateCount = wordsRead;
-  LOG_DBG("T4", "loadCandidates: read %u words, %u bytes", wordsRead, bytesRead);
+  // Pass 2: read the words into the buffer.
+  if (!_file.seekSet(_currentNode.str_offset)) {
+    LOG_ERR("T4", "Seek to offset %u failed", _currentNode.str_offset);
+    _candidateCount = 0;
+    return false;
+  }
+  readError = false;
+  _candidateCount = t4::readCandidateSpan(readByte, _currentNode.word_count, _candidateBuf.get(), _candidateBufSize);
+  if (readError) {
+    LOG_ERR("T4", "Read error at word %u", _candidateCount);
+    _candidateCount = 0;
+    return false;
+  }
+  LOG_DBG("T4", "loadCandidates: read %u/%u words (measured %u words, need %u bytes, capacity %u)", _candidateCount,
+          _currentNode.word_count, measuredWords, static_cast<unsigned>(needed),
+          static_cast<unsigned>(_candidateBufSize));
 
 #if LOG_LEVEL >= 2
   // Log candidate words for debugging (compiled out in release)
-  if (wordsRead > 0 && _candidateBuf) {
+  if (_candidateCount > 0 && _candidateBuf) {
     char summary[256];
     size_t pos = 0;
     const char* p = _candidateBuf.get();
     uint16_t shown = 0;
-    while (shown < wordsRead && pos < sizeof(summary) - 4) {
+    while (shown < _candidateCount && pos < sizeof(summary) - 4) {
       size_t len = strlen(p);
       if (pos > 0) {
         summary[pos++] = ',';
@@ -179,7 +210,7 @@ bool T4Dictionary::loadCandidates() {
       ++shown;
     }
     summary[pos] = '\0';
-    LOG_DBG("T4", "candidates[%u]: %s", wordsRead, summary);
+    LOG_DBG("T4", "candidates[%u]: %s", _candidateCount, summary);
   }
 #endif
 
@@ -201,7 +232,7 @@ const char* T4Dictionary::getCandidate(uint16_t index) const {
 void T4Dictionary::reset() {
   LOG_DBG("T4", "reset (loaded=%d)", _loaded);
   if (!_loaded) return;
-  freeCandidates();
+  clearCandidates();
   readNodeAtOffset(t4::T4_TRIE_HEADER_SIZE, _currentNode);
 }
 
@@ -236,8 +267,13 @@ bool T4Dictionary::readNodeAtOffset(uint32_t offset, t4::T4TrieNode& out) {
   return true;
 }
 
+void T4Dictionary::clearCandidates() {
+  LOG_DBG("T4", "clearCandidates (was %u words, capacity %u)", _candidateCount, _candidateBufSize);
+  _candidateCount = 0;
+}
+
 void T4Dictionary::freeCandidates() {
-  LOG_DBG("T4", "freeCandidates (was %u words, %u bytes)", _candidateCount, _candidateBufSize);
+  LOG_DBG("T4", "freeCandidates (was %u words, capacity %u)", _candidateCount, _candidateBufSize);
   _candidateBuf.reset();
   _candidateBufSize = 0;
   _candidateCount = 0;
