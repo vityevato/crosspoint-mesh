@@ -83,7 +83,7 @@ class T4EntryActivity : public Activity {
 
   // Learn the words of the confirmed text. Words the field started with
   // are skipped — they were not typed by the user.
-  void learnIntoLexicon(const std::string& text);
+  void learnIntoLexicon(const char* text);
 
   // Shift/uppercase helpers
   void cycleShift();
@@ -213,6 +213,16 @@ class T4EntryActivity : public Activity {
 
   // Render buffer (heap-allocated in onEnter, reused across render calls)
   std::unique_ptr<char[]> _displayBuf;
+
+  // Keypress scratch for punctuation/mode-transition text edits. A fixed
+  // member replaces the std::string copies these paths used to make — they
+  // run on every keypress and must not allocate.
+  char _punctText[t4::T4InputEngine<>::kMaxTextLen + 1] = {};
+
+  // Copy the engine's confirmed text into @p dst (capacity kMaxTextLen + 1)
+  // and return its length. Fixed-buffer replacement for the std::string
+  // copies the keypress paths used to make.
+  size_t loadConfirmedText(char* dst) const;
 
   TextLineInfo _lines[kMaxTextLines] = {};
   char _hintText[256] = {};

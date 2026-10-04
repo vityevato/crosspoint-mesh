@@ -698,7 +698,7 @@ void T4EntryActivity::onComplete() {
     while (!result.empty() && result.back() == ' ') result.pop_back();
   }
   LOG_DBG("T4", "onComplete: mode=%d, result='%s'", static_cast<int>(_mode), result.c_str());
-  learnIntoLexicon(result);
+  learnIntoLexicon(result.c_str());
   setResult(KeyboardResult{std::move(result)});
   finish();
 }
@@ -753,20 +753,33 @@ bool T4EntryActivity::isAutoCapPunct(const char* punct, const t4::SentenceConfig
   return t4::isSentenceEndChar(cfg.endChars, punct, blen);
 }
 
+size_t T4EntryActivity::loadConfirmedText(char* dst) const {
+  constexpr size_t kMaxLen = decltype(_inputEngine)::kMaxTextLen;
+  const char* src = _inputEngine.getConfirmedText();
+  size_t len = strlen(src);
+  if (len > kMaxLen) len = kMaxLen;
+  memcpy(dst, src, len);
+  dst[len] = '\0';
+  return len;
+}
+
 void T4EntryActivity::handlePunctuation() {
   const char* candidate = _inputEngine.getCurrentCandidate();
   bool hasCandidate = candidate && candidate[0] != '\0';
 
-  // Work on a local mutable copy of engine text; sync back at the end.
-  std::string text(_inputEngine.getConfirmedText());
+  constexpr size_t kMaxLen = decltype(_inputEngine)::kMaxTextLen;
+
+  // Work on a member scratch copy of the engine text; sync back at the end.
+  char* text = _punctText;
+  size_t textLen = loadConfirmedText(text);
   LOG_DBG("T4", "handlePunct: mode=%d wjc=%d pIdx=%d hasCand=%d cand='%s' text='%s'", static_cast<int>(_mode),
-          _wordJustConfirmed, _punctIndex, hasCandidate, hasCandidate ? candidate : "(none)", text.c_str());
+          _wordJustConfirmed, _punctIndex, hasCandidate, hasCandidate ? candidate : "(none)", text);
 
   // MULTI_TAP: fix any cycling letter (no space — letters are already
   // individually confirmed by timeout or next press). Then apply punctuation.
   if (_mode == t4::T4Mode::MULTI_TAP) {
     _inputEngine.fixMultiTapLetter();
-    text = _inputEngine.getConfirmedText();
+    textLen = loadConfirmedText(text);
 
     if (_wordJustConfirmed && millis() - _lastConfirmMs <= decltype(_inputEngine)::kMultiTapTimeoutMs) {
       // Within timeout: cycle punctuation
@@ -778,14 +791,17 @@ void T4EntryActivity::handlePunctuation() {
       // the full entry would clip the preceding character's UTF-8 tail.
       uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
       const char* nextPunct = punctCycle()[nextIdx];
-      const size_t strippedLen = (text.length() >= _lastPunctLen) ? text.length() - _lastPunctLen : text.length();
+      const size_t strippedLen = (textLen >= _lastPunctLen) ? textLen - _lastPunctLen : textLen;
       const size_t usable = punctBytesWithin(strippedLen, nextPunct, textLimitBytes());
       if (usable > 0) {
-        if (text.length() >= _lastPunctLen) {
-          text.erase(text.length() - _lastPunctLen);
+        if (textLen >= _lastPunctLen) {
+          textLen -= _lastPunctLen;
+          text[textLen] = '\0';
         }
         _punctIndex = nextIdx;
-        text.append(nextPunct, usable);
+        memcpy(text + textLen, nextPunct, usable);
+        textLen += usable;
+        text[textLen] = '\0';
         _lastPunctLen = usable;
         // Sentence-ending punctuation → auto-cap next word (Text only).
         // Landing on a non-sentence-ending mark (e.g. ", " after cycling
@@ -807,21 +823,22 @@ void T4EntryActivity::handlePunctuation() {
       }
       _lastConfirmMs = millis();
       LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
-              text.c_str());
+              text);
     } else {
       // First confirm or timeout expired: add trailing space.  Refuse when
       // the field is at its limit so punctuation cannot exceed it.
-      if (text.length() < textLimitBytes()) {
-        text += ' ';
+      if (textLen < textLimitBytes()) {
+        text[textLen++] = ' ';
+        text[textLen] = '\0';
         _punctIndex = 0;
         _lastPunctLen = 1;
         _wordJustConfirmed = true;
         _candidateScrollX = 0;
         _lastConfirmMs = millis();
-        LOG_DBG("T4", "handlePunct: MULTI_TAP first confirm → text='%s'", text.c_str());
+        LOG_DBG("T4", "handlePunct: MULTI_TAP first confirm → text='%s'", text);
       }
     }
-    _inputEngine.setConfirmedText(text.c_str());
+    _inputEngine.setConfirmedText(text);
     requestUpdate();
     return;
   }
@@ -842,15 +859,18 @@ void T4EntryActivity::handlePunctuation() {
       // truncated to its glyph cannot clip the preceding character.
       uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
       const char* nextPunct = punctCycle()[nextIdx];
-      const size_t strippedLen = (text.length() >= _lastPunctLen) ? text.length() - _lastPunctLen : text.length();
+      const size_t strippedLen = (textLen >= _lastPunctLen) ? textLen - _lastPunctLen : textLen;
       // Only apply if it won't overflow the field limit
       const size_t usable = punctBytesWithin(strippedLen, nextPunct, textLimitBytes());
       if (usable > 0) {
-        if (text.length() >= _lastPunctLen) {
-          text.erase(text.length() - _lastPunctLen);
+        if (textLen >= _lastPunctLen) {
+          textLen -= _lastPunctLen;
+          text[textLen] = '\0';
         }
         _punctIndex = nextIdx;
-        text.append(nextPunct, usable);
+        memcpy(text + textLen, nextPunct, usable);
+        textLen += usable;
+        text[textLen] = '\0';
         _lastPunctLen = usable;
         // Sentence-ending punctuation → auto-cap next word (Text only).
         // Cycling onto a non-sentence-ending mark must cancel any pending
@@ -871,8 +891,8 @@ void T4EntryActivity::handlePunctuation() {
       }
       _lastConfirmMs = millis();
       LOG_DBG("T4", "handlePunct: PREDICT cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
-              text.c_str());
-      _inputEngine.setConfirmedText(text.c_str());
+              text);
+      _inputEngine.setConfirmedText(text);
       requestUpdate();
       return;
     }
@@ -892,12 +912,16 @@ void T4EntryActivity::handlePunctuation() {
 
     // Confirm only if the word plus its separator fits within the field
     // limit; otherwise leave the candidate unconfirmed (field at its cap).
-    std::string nextText = text;
-    if (!nextText.empty() && nextText.back() != ' ') nextText += ' ';
-    nextText += word;
-    if (nextText.length() > textLimitBytes()) {
+    const size_t wordLen = strlen(word);
+    const bool needSpace = (textLen > 0 && text[textLen - 1] != ' ');
+    const size_t extra = needSpace ? 1 : 0;
+    if (textLen + extra + wordLen > textLimitBytes() || textLen + extra + wordLen > kMaxLen) {
       return;
     }
+    if (needSpace) text[textLen++] = ' ';
+    memcpy(text + textLen, word, wordLen);
+    textLen += wordLen;
+    text[textLen] = '\0';
 
     // Consume the one-shot state: auto-cap and one-shot Shift last for a
     // single word; Caps Lock stays on until toggled off.
@@ -905,12 +929,11 @@ void T4EntryActivity::handlePunctuation() {
     _autoCapFromSentence = false;
     if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
 
-    text = std::move(nextText);
-
     // Reset predictor sequence for next word
     _inputEngine.confirmWord();
-    if (text.length() < textLimitBytes()) {
-      text += ' ';  // trailing space after confirmed word
+    if (textLen < textLimitBytes() && textLen < kMaxLen) {
+      text[textLen++] = ' ';  // trailing space after confirmed word
+      text[textLen] = '\0';
       _lastPunctLen = 1;
     } else {
       _lastPunctLen = 0;
@@ -919,17 +942,20 @@ void T4EntryActivity::handlePunctuation() {
     _wordJustConfirmed = true;
     _candidateScrollX = 0;
     _lastConfirmMs = millis();
-    LOG_DBG("T4", "handlePunct: PREDICT confirm '%s' → text='%s' autoCap=%d", word, text.c_str(), _autoCap);
+    LOG_DBG("T4", "handlePunct: PREDICT confirm '%s' → text='%s' autoCap=%d", word, text, _autoCap);
   } else if (!isTextInputFull()) {
     // No candidate: just append space
-    text += ' ';
-    _punctIndex = 0;
-    _lastPunctLen = 1;
-    _wordJustConfirmed = true;
-    _lastConfirmMs = millis();
-    LOG_DBG("T4", "handlePunct: PREDICT no-candidate → text='%s'", text.c_str());
+    if (textLen < kMaxLen) {
+      text[textLen++] = ' ';
+      text[textLen] = '\0';
+      _punctIndex = 0;
+      _lastPunctLen = 1;
+      _wordJustConfirmed = true;
+      _lastConfirmMs = millis();
+      LOG_DBG("T4", "handlePunct: PREDICT no-candidate → text='%s'", text);
+    }
   }
-  _inputEngine.setConfirmedText(text.c_str());
+  _inputEngine.setConfirmedText(text);
 }
 
 // ── Mode Transitions ─────────────────────────────────────────────────────
@@ -967,11 +993,14 @@ bool T4EntryActivity::togglePredictMultiTap() {
     LOG_DBG("T4", "togglePredictMultiTap: PREDICT→MULTI_TAP, cand='%s' seqLen=%u", cand ? cand : "(null)",
             _inputEngine.getSequenceLength());
     if (cand && cand[0] != '\0') {
-      std::string t(_inputEngine.getConfirmedText());
-      if (t.length() + strlen(cand) <= textLimitBytes()) {
-        t += cand;
+      char* t = _punctText;
+      const size_t len = loadConfirmedText(t);
+      const size_t candLen = strlen(cand);
+      if (len + candLen <= textLimitBytes() && len + candLen <= decltype(_inputEngine)::kMaxTextLen) {
+        memcpy(t + len, cand, candLen);
+        t[len + candLen] = '\0';
       }
-      _inputEngine.setConfirmedText(t.c_str());
+      _inputEngine.setConfirmedText(t);
     }
   }
 
@@ -1064,11 +1093,11 @@ void T4EntryActivity::saveUserLexicon() {
   LOG_INF("T4", "Saved user lexicon: %u words, %u bytes", _lexicon->getEntryCount(), static_cast<unsigned>(written));
 }
 
-void T4EntryActivity::learnIntoLexicon(const std::string& text) {
+void T4EntryActivity::learnIntoLexicon(const char* text) {
   // Password and URL fields never allocate a lexicon, so this is also the
   // guard that keeps secrets out of the store.
   if (!_lexicon) return;
-  const uint16_t learned = _lexicon->learnText(_lang, text.c_str(), _initialText.c_str());
+  const uint16_t learned = _lexicon->learnText(_lang, text, _initialText.c_str());
   LOG_DBG("T4", "learnIntoLexicon: learned %u words", learned);
 }
 
