@@ -39,6 +39,7 @@ FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
 void FontCacheManager::setFontDecompressor(FontDecompressor* d) { fontDecompressor_ = d; }
 
 void FontCacheManager::clearCache() {
+  prewarmCacheValid_ = false;
   if (fontDecompressor_) fontDecompressor_->clearCache();
   for (auto& [id, font] : sdCardFonts_) {
     font->clearCache();
@@ -67,6 +68,7 @@ void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t st
     if (missed > 0) {
       LOG_DBG("FCM", "prewarmCache(SD): %d glyph(s) not found (styleMask=0x%02X)", missed, styleMask);
     }
+    if (missed != 0) lastPrewarmMissed_ = true;
     return;
   }
 
@@ -82,6 +84,7 @@ void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t st
     if (missed > 0) {
       LOG_DBG("FCM", "prewarmCache: %d glyph(s) not cached for style %d", missed, i);
     }
+    if (missed != 0) lastPrewarmMissed_ = true;
   }
 }
 
@@ -168,7 +171,9 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
 
 FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manager_(&manager) {
   manager_->scanMode_ = ScanMode::Scanning;
-  manager_->clearCache();
+  // The cache is cleared in endScanAndPrewarm(), after the fingerprint check:
+  // an unchanged glyph set keeps the existing page slots, so the render does
+  // not need another ~8 KB group allocation on a fragmented heap.
   manager_->resetStats();
   manager_->scanCodepointCount_ = 0;
   manager_->scanFontCount_ = 0;
@@ -176,11 +181,59 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   memset(manager_->scanGroupCounts_, 0, sizeof(manager_->scanGroupCounts_));
 }
 
+uint32_t FontCacheManager::computeScanHash() const {
+  // FNV-1a over the resolved font slots and the sorted packed codepoints.
+  uint32_t hash = 2166136261u;
+  const auto mix = [&hash](uint32_t value) {
+    for (uint8_t byte = 0; byte < 4; byte++) {
+      hash ^= (value >> (byte * 8)) & 0xFF;
+      hash *= 16777619u;
+    }
+  };
+  mix(scanFontCount_);
+  for (uint8_t i = 0; i < scanFontCount_; i++) mix(static_cast<uint32_t>(scanFontIds_[i]));
+  mix(scanCodepointCount_);
+  for (uint16_t i = 0; i < scanCodepointCount_; i++) mix(scanCodepoints_[i]);
+  return hash;
+}
+
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
+  if (ended_) return;
+  ended_ = true;
   manager_->scanMode_ = ScanMode::None;
-  if (manager_->scanCodepointCount_ == 0) return;
+
+  const auto resetScanState = [this] {
+    manager_->scanCodepointCount_ = 0;
+    manager_->scanFontCount_ = 0;
+    memset(manager_->scanGroupCounts_, 0, sizeof(manager_->scanGroupCounts_));
+  };
+
+  if (manager_->scanCodepointCount_ == 0) {
+    keepCache_ = false;
+    resetScanState();
+    return;
+  }
 
   std::sort(manager_->scanCodepoints_, manager_->scanCodepoints_ + manager_->scanCodepointCount_);
+
+  // Same glyph set as the last successful prewarm: the page slots still hold
+  // exactly these glyphs, so keep them and skip both the prewarm and the
+  // per-render cache clear. This is what keeps text rendering when the heap
+  // is too fragmented for another group buffer (MeshCore thread after the
+  // reply/repeat flow: groups 8151/8116/8188 had no contiguous 8 KB run).
+  const uint32_t hash = manager_->computeScanHash();
+  if (manager_->prewarmCacheValid_ && hash == manager_->lastPrewarmHash_) {
+    keepCache_ = true;
+    LOG_DBG("FCM", "Prewarm skipped: unchanged glyph set (%u codepoints)",
+            static_cast<unsigned>(manager_->scanCodepointCount_));
+    resetScanState();
+    return;
+  }
+  keepCache_ = false;
+
+  // New glyph set: drop the previous page slots before rebuilding them.
+  manager_->clearCache();
+  manager_->lastPrewarmMissed_ = false;
 
   uint16_t groupStarts[SCAN_GROUP_COUNT] = {};
   for (uint8_t group = 1; group < SCAN_GROUP_COUNT; group++) {
@@ -244,20 +297,23 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
     manager_->prewarmCache(manager_->scanFontIds_[fontSlot], encoded[group], 1 << style);
   }
 
-  manager_->scanCodepointCount_ = 0;
-  manager_->scanFontCount_ = 0;
-  memset(manager_->scanGroupCounts_, 0, sizeof(manager_->scanGroupCounts_));
+  // Only a complete prewarm may be reused by the next identical render. The
+  // slots themselves are kept either way so that reuse is possible; a partial
+  // cache (misses) is retried on the next render instead of being skipped.
+  manager_->prewarmCacheValid_ = !manager_->lastPrewarmMissed_;
+  manager_->lastPrewarmHash_ = hash;
+  keepCache_ = true;
+  resetScanState();
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
-  if (active_) {
-    endScanAndPrewarm();  // no-op if already called
-    manager_->clearCache();
-  }
+  if (!active_) return;
+  endScanAndPrewarm();  // no-op if already called
+  if (!keepCache_) manager_->clearCache();
 }
 
 FontCacheManager::PrewarmScope::PrewarmScope(PrewarmScope&& other) noexcept
-    : manager_(other.manager_), active_(other.active_) {
+    : manager_(other.manager_), active_(other.active_), ended_(other.ended_), keepCache_(other.keepCache_) {
   other.active_ = false;
 }
 

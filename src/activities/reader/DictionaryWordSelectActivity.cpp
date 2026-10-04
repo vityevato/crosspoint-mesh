@@ -354,10 +354,14 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   // and push — skipping the two-pass page render entirely.
   if (popup == Popup::None && snapshotIdx >= 0 && !words.empty() && selected != snapshotIdx) {
     renderer.writeFramebufferRegion(snapshotX, snapshotY, snapshotW, snapshotH, snapshot.get());
-    // The full path's PrewarmScope cleared the glyph cache on exit; batch-load
-    // just the highlighted word's glyphs before drawing them white-on-black.
-    renderer.getFontCacheManager()->prewarmCache(
-        fontId, words[selected].text, static_cast<uint8_t>(1u << (static_cast<uint8_t>(words[selected].style) & 0x03)));
+    // Batch-load the highlighted word's glyphs before drawing them
+    // white-on-black. When the full path's prewarm is still valid, the word
+    // was part of its scan and the extra slot is unnecessary.
+    auto* fcm = renderer.getFontCacheManager();
+    if (fcm && !fcm->isPrewarmCacheValid()) {
+      fcm->prewarmCache(fontId, words[selected].text,
+                        static_cast<uint8_t>(1u << (static_cast<uint8_t>(words[selected].style) & 0x03)));
+    }
     if (drawHighlightWithSnapshot()) {
       drawHints();
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
