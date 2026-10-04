@@ -434,6 +434,24 @@ model.
   FreeRTOS patterns, cache formats, ISR safety, alignment), see
   [CLAUDE.md](CLAUDE.md).
 
+### Project Skills
+
+`.skills/` holds on-demand decision procedures that complement this file
+(index: `.skills/README.md`). Before starting work that matches one, read
+its `SKILL.md` and follow it, including the self-review checklist at the
+end. Load only what the task needs; do not restate skill contents here.
+
+- Allocating memory (`new`, `malloc`, `std::vector`, `std::string`,
+  buffers, caches) → `.skills/heap-discipline/SKILL.md`
+- Writing branching logic, state flags, modes, if/else ladders →
+  `.skills/control-flow-clarity/SKILL.md`
+- Touching storage, input, display, settings, i18n, rendering →
+  `.skills/hal-and-abstractions/SKILL.md`
+- Adding a feature, activity, lib, setting, or dependency →
+  `.skills/scope-discipline/SKILL.md`
+- Refactoring, cleaning up, or preparing a change for PR →
+  `.skills/refactor-for-review/SKILL.md`
+
 ## Code Guidelines
 
 ### System Design
