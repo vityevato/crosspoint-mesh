@@ -127,7 +127,8 @@ bool T4Dictionary::loadCandidates() {
   // Pass 1: measure the exact String Pool span for this node's words. Sizing
   // the allocation to the real need (typically well under 1 KB) is what keeps
   // candidate lookup alive on the BLE-fragmented MeshCore heap, where the old
-  // fixed 4096-byte request failed outright.
+  // fixed 4096-byte request failed outright. _bufferBudget caps the span when
+  // the activity has to run inside a smaller heap window.
   if (!_file.seekSet(_currentNode.str_offset)) {
     LOG_ERR("T4", "Seek to offset %u failed", _currentNode.str_offset);
     _candidateCount = 0;
@@ -140,14 +141,14 @@ bool T4Dictionary::loadCandidates() {
     return value;
   };
   uint16_t measuredWords = 0;
-  const size_t needed = t4::measureCandidateSpan(readByte, _currentNode.word_count, kMaxCandidateBytes, measuredWords);
+  const size_t needed = t4::measureCandidateSpan(readByte, _currentNode.word_count, _bufferBudget, measuredWords);
   if (readError) {
     LOG_ERR("T4", "Read error while measuring candidates");
     _candidateCount = 0;
     return false;
   }
   if (needed == 0) {
-    LOG_DBG("T4", "loadCandidates: no complete word within %u bytes", static_cast<unsigned>(kMaxCandidateBytes));
+    LOG_DBG("T4", "loadCandidates: no complete word within %u bytes", static_cast<unsigned>(_bufferBudget));
     _candidateCount = 0;
     return true;
   }
@@ -189,6 +190,14 @@ bool T4Dictionary::loadCandidates() {
   LOG_DBG("T4", "loadCandidates: read %u/%u words (measured %u words, need %u bytes, capacity %u)", _candidateCount,
           _currentNode.word_count, measuredWords, static_cast<unsigned>(needed),
           static_cast<unsigned>(_candidateBufSize));
+
+  if (_candidateCount < _currentNode.word_count) {
+    // The node has more words than the budget/heap could hold. Words keep
+    // their frequency order, so the best candidates survive; surface the
+    // truncation instead of degrading silently (93/598 was invisible in DBG).
+    LOG_INF("T4", "Candidate list truncated: %u/%u words (span %u bytes, buffer %u bytes)", _candidateCount,
+            _currentNode.word_count, static_cast<unsigned>(needed), static_cast<unsigned>(_candidateBufSize));
+  }
 
 #if LOG_LEVEL >= 2
   // Log candidate words for debugging (compiled out in release)
@@ -244,6 +253,12 @@ void T4Dictionary::close() {
   freeCandidates();
   _loaded = false;
   _langCode[0] = '\0';
+}
+
+void T4Dictionary::setBufferBudget(size_t maxBytes) {
+  if (maxBytes < kMinCandidateBytes) maxBytes = kMinCandidateBytes;
+  if (maxBytes > kMaxCandidateBytes) maxBytes = kMaxCandidateBytes;
+  _bufferBudget = maxBytes;
 }
 
 bool T4Dictionary::isLoaded() const { return _loaded; }

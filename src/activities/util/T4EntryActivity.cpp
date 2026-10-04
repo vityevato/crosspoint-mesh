@@ -122,6 +122,15 @@ void T4EntryActivity::onEnter() {
     _lang = t4::T4Language::DIGIT;
   }
 
+  // Keep the per-node candidate buffer within the heap window left by the BLE
+  // stack: at most a third of the largest free block, clamped to the
+  // dictionary's supported span.
+  uint32_t candidateBudget = ESP.getMaxAllocHeap() / kCandidateBudgetDivisor;
+  if (candidateBudget < T4Dictionary::kMinCandidateBytes) candidateBudget = T4Dictionary::kMinCandidateBytes;
+  if (candidateBudget > T4Dictionary::kMaxCandidateBytes) candidateBudget = T4Dictionary::kMaxCandidateBytes;
+  LOG_DBG("T4", "onEnter: candidate budget=%u bytes (largest=%u)", candidateBudget, ESP.getMaxAllocHeap());
+  _inputEngine.setCandidateBudget(candidateBudget);
+
   _inputEngine.setLanguage(_lang);
   _sentenceCfg = t4::getSentenceConfig(_lang);
 

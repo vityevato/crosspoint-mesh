@@ -30,6 +30,11 @@ class T4EntryActivity : public Activity {
   static constexpr unsigned long BACKSPACE_INITIAL_DELAY_MS = 500;
   static constexpr unsigned long BACKSPACE_REPEAT_MS = 150;
 
+  // Candidate-buffer budget: a third of the largest free block, clamped to
+  // the dictionary's supported span. Keeps the per-node word buffer small
+  // when BLE/MeshCore has already fragmented the heap.
+  static constexpr uint32_t kCandidateBudgetDivisor = 3;
+
   // Learned-word store, shared by every Text field (see docs/file-formats.md).
   static constexpr const char* USER_LEXICON_DIR = "/t4dicts";
   static constexpr const char* USER_LEXICON_PATH = "/t4dicts/user_words.bin";

@@ -33,6 +33,9 @@ class MockDictionary {
  public:
   MockDictionary() = default;
 
+  void setBufferBudget(uint32_t bytes) { bufferBudget = bytes; }
+  uint32_t bufferBudget = 0;
+
   bool loadFromSD(const char* path) {
     if (g_mockNoEnDict && path && strstr(path, "t4dicts/en.trie")) return false;
     // Build a minimal trie with CORRECT button mappings based on
@@ -149,6 +152,12 @@ class T4InputEngineTest : public ::testing::Test {
 
   T4InputEngine<MockDictionary> predictor;
 };
+
+TEST_F(T4InputEngineTest, ForwardsCandidateBudgetToDictionary) {
+  predictor.setCandidateBudget(2048);
+  ASSERT_NE(predictor.getDictionary(), nullptr);
+  EXPECT_EQ(predictor.getDictionary()->bufferBudget, 2048u);
+}
 
 // ── Predict mode: basic candidate lookup ────────────────────────────────
 
