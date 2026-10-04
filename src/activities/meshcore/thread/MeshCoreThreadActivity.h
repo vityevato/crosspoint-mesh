@@ -118,6 +118,12 @@ class MeshCoreThreadActivity final : public Activity {
   // empty space at the bottom of the viewport). id == 0 means no filler.
   MeshCoreMessage _fillerMsg = {};
 
+  // Reusable scratch for the MENU scans (refreshLastSent / refreshTargets).
+  // Scanning one message at a time replaces the old MeshCoreMessage[16] heap
+  // batch (~4.3 KB transient) whose allocation split the largest free block
+  // and starved the font prewarm after the reply/repeat flow.
+  MeshCoreMessage _scanMsg = {};
+
   // Cached conversation metadata (scroll state lives here)
   ConvMeta _meta = {};
 
@@ -149,8 +155,8 @@ class MeshCoreThreadActivity final : public Activity {
   /// and queues CMD_SEND_TELEMETRY_REQ ('self'). Returns true when handled.
   bool startSendCoordinates();
 
-  // Scroll state machine — created in onEnter, deleted in onExit.
-  ThreadScroller* _scroller = nullptr;
+  // Scroll state machine — created in onEnter, released in onExit.
+  std::unique_ptr<ThreadScroller> _scroller;
 
   // Confirmation popup state (shown before destructive menu actions)
   enum class ConfirmAction : uint8_t { NONE, CLEAR_CONVERSATION, REMOVE_CONTACT };
@@ -186,6 +192,10 @@ class MeshCoreThreadActivity final : public Activity {
   // MENU entry by refreshLastSent(). Empty means "Repeat Last Message" is
   // dimmed — the user has not sent anything here yet.
   std::string _lastSentText;
+
+  // Scratch for the contact-share URL built by shareContactQr(): a member
+  // instead of a 384-byte stack local (heap-discipline stack budget).
+  char _shareUrl[384] = {};
 
   int contentHeight() const;
 
