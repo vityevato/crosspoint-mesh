@@ -10,12 +10,14 @@ FontDecompressor::~FontDecompressor() { deinit(); }
 
 bool FontDecompressor::init() {
   clearCache();
+  clearFailedGroups();
   return true;
 }
 
 void FontDecompressor::deinit() {
   freePageBuffer();
   freeHotGroup();
+  clearFailedGroups();
 }
 
 void FontDecompressor::clearCache() {
@@ -38,11 +40,32 @@ void FontDecompressor::freeHotGroup() {
   hotGroupCapacity = 0;
   hotGroupFont = nullptr;
   hotGroupIndex = UINT16_MAX;
-  hotGroupFailedFont = nullptr;
-  hotGroupFailedIndex = UINT16_MAX;
   free(hotGlyphBuf);
   hotGlyphBuf = nullptr;
   hotGlyphBufCapacity = 0;
+}
+
+bool FontDecompressor::isGroupFailed(const EpdFontData* fontData, uint16_t groupIndex) const {
+  for (uint8_t i = 0; i < failedGroupCount; i++) {
+    if (failedGroups[i].font == fontData && failedGroups[i].group == groupIndex) return true;
+  }
+  return false;
+}
+
+void FontDecompressor::noteGroupFailed(const EpdFontData* fontData, uint16_t groupIndex) {
+  if (isGroupFailed(fontData, groupIndex)) return;
+  if (failedGroupCount < kMaxFailedGroups) {
+    failedGroups[failedGroupCount++] = {fontData, groupIndex};
+  }
+  // Retry watermark: remember the largest free block at failure time so the
+  // memo is only cleared once the heap has actually grown (see prewarmCache).
+  const uint32_t largest = ESP.getMaxAllocHeap();
+  if (largest > largestAtLastFailure) largestAtLastFailure = largest;
+}
+
+void FontDecompressor::clearFailedGroups() {
+  failedGroupCount = 0;
+  largestAtLastFailure = 0;
 }
 
 bool FontDecompressor::ensureCapacity(uint8_t*& buf, uint32_t& capacity, uint32_t needed) {
@@ -192,9 +215,9 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     return nullptr;
   }
 
-  // Skip groups already known to be unallocatable on the current heap. Avoids a malloc +
-  // error-log storm on every glyph of an oversized group; reset on prewarm / cache free.
-  if (hotGroupFailedFont == fontData && hotGroupFailedIndex == groupIndex) {
+  // Skip groups already known to be unallocatable at the current heap
+  // watermark; they are retried only once the largest free block grows.
+  if (isGroupFailed(fontData, groupIndex)) {
     stats.getBitmapTimeUs += micros() - tStart;
     return nullptr;
   }
@@ -209,9 +232,9 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     hotGroupIndex = UINT16_MAX;
     if (!ensureCapacity(hotGroup, hotGroupCapacity, group.uncompressedSize)) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
-      // Memoize the failure so the next glyph in this group skips the malloc + error-log storm.
-      hotGroupFailedFont = fontData;
-      hotGroupFailedIndex = groupIndex;
+      // Memoize per (font, group) so other failing groups in the same frame do
+      // not overwrite the entry and re-trigger the malloc + error-log storm.
+      noteGroupFailed(fontData, groupIndex);
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -272,10 +295,13 @@ int32_t FontDecompressor::findGlyphIndex(const EpdFontData* fontData, uint32_t c
 int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8Text) {
   if (!fontData || !fontData->groups || !utf8Text) return 0;
 
-  // Give the hot-group fallback one fresh allocation attempt for this page, clearing any
-  // failure memoized during a previous (possibly more fragmented) render.
-  hotGroupFailedFont = nullptr;
-  hotGroupFailedIndex = UINT16_MAX;
+  // Retry memoized hot-group failures only when the largest free block has
+  // grown since they were recorded: at the same fragmentation the malloc just
+  // fails again and re-logs on every glyph (the field log showed the same
+  // groups retried dozens of times per frame).
+  if (failedGroupCount == 0 || ESP.getMaxAllocHeap() > largestAtLastFailure) {
+    clearFailedGroups();
+  }
 
   // Allocate the next available slot (caller must call freePageBuffer/clearCache to reset)
   if (pageSlotCount >= MAX_PAGE_SLOTS) {
