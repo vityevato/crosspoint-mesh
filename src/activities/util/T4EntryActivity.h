@@ -90,7 +90,9 @@ class T4EntryActivity : public Activity {
   // Apply the active Shift/Caps state to a candidate word for display and
   // commit (Caps → whole word, Shift/auto-cap → first letter only). Pure:
   // reads state but does not consume the one-shot Shift / auto-cap.
-  std::string applyWordCase(const char* word) const;
+  // Writes the result into @p out (NUL-terminated) and returns its length,
+  // or 0 when @p word is empty or the result does not fit in @p cap.
+  size_t applyWordCase(const char* word, char* out, size_t cap) const;
 
   // ── Render helpers (called from render()) ─────────────────────────────
 
@@ -193,8 +195,31 @@ class T4EntryActivity : public Activity {
   // changes (cycleLanguage, setLanguage); never null.
   const t4::SentenceConfig* _sentenceCfg;
 
-  // Render buffer (heap-allocated, reused across render calls)
+  // Render scratch (no heap allocation on the render path).
+  //
+  // _displayBuf holds the composed text field for one render and _lines
+  // caches its wrapped line boundaries. The mode hint is wrapped only when
+  // its content or available width changes (_hintCache*) and stored as
+  // offsets into _hintText, so render() itself never allocates.
+  static constexpr int kDisplayBufSize = 512;
+  static constexpr int kMaxTextLines = 30;
+  static constexpr int kMaxHintLines = 6;
+
+  struct TextLineInfo {
+    int startIdx;
+    int endIdx;
+    bool hardBreak;
+  };
+
+  // Render buffer (heap-allocated in onEnter, reused across render calls)
   std::unique_ptr<char[]> _displayBuf;
+
+  TextLineInfo _lines[kMaxTextLines] = {};
+  char _hintText[256] = {};
+  uint16_t _hintLineStart[kMaxHintLines] = {};
+  uint8_t _hintLineCount = 0;
+  int16_t _hintCacheMode = -1;
+  int _hintCacheWidth = -1;
 
   // Learned words, merged into the predictions. Null for password and URL
   // input, which neither read from nor write to the lexicon.
