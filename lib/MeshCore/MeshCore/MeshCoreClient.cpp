@@ -56,6 +56,17 @@ struct InFlightScope {
   ~InFlightScope() { flag = false; }
 };
 
+/// Heap diagnostics for the BLE bring-up. NimBLEDevice::init() spends ~50 KB in
+/// one call (controller + host pools + host task), so log free/largest around
+/// each step to attribute the spend in /system.log (grep tag "MEMM").
+void logBleHeap(const char* step) {
+  LOG_DBG("MEMM", "%s free=%u largest=%u", step, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+}
+
+/// BLE worker task stack. Reviewed against the measured high-water mark
+/// (logged when the worker exits) before any size change.
+constexpr uint32_t BLE_WORKER_STACK_BYTES = 4096;
+
 }  // namespace
 
 MeshCoreClient::MeshCoreClient() = default;
@@ -69,7 +80,13 @@ bool MeshCoreClient::init() {
   }
   sInstance = this;
 
+  logBleHeap("BLE init:before");
+  // Scan duplicate filter list: 100 devices by default is far more than the
+  // MeshCore scan needs (it looks for one known companion among the results).
+  // Must be set before NimBLEDevice::init(); range 10..1000.
+  NimBLEDevice::setScanDuplicateCacheSize(20);
   NimBLEDevice::init("CrossPoint");
+  logBleHeap("BLE init:after NimBLEDevice::init");
   NimBLEDevice::setMTU(512);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
@@ -85,6 +102,7 @@ bool MeshCoreClient::init() {
   // Without this, all GATT writes and notification subscriptions are silently rejected.
   NimBLEDevice::setSecurityAuth(true, true, true);          // bonding, MITM, SC
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY);  // we input the passkey
+  logBleHeap("BLE init:after security");
 
   // Create worker task and queue for blocking BLE operations
   workQueue = xQueueCreate(2, sizeof(WorkItem));
@@ -94,7 +112,7 @@ bool MeshCoreClient::init() {
     sInstance = nullptr;
     return false;
   }
-  if (xTaskCreate(workerTaskFunc, "BleWorker", 4096, this, 1, &workerTaskHandle) != pdPASS) {
+  if (xTaskCreate(workerTaskFunc, "BleWorker", BLE_WORKER_STACK_BYTES, this, 1, &workerTaskHandle) != pdPASS) {
     LOG_ERR("MESH", "Failed to create BLE worker task");
     vQueueDelete(workQueue);
     workQueue = nullptr;
@@ -102,6 +120,7 @@ bool MeshCoreClient::init() {
     sInstance = nullptr;
     return false;
   }
+  logBleHeap("BLE init:after worker task");
 
   LOG_INF("MESH", "BLE initialized");
   return true;
@@ -1520,6 +1539,10 @@ void MeshCoreClient::workerTaskFunc(void* param) {
   }
 
   self->workerRunning = false;
+  // Smallest free-stack figure over the whole session (bytes on ESP-IDF);
+  // feeds the next BLE_WORKER_STACK_BYTES review.
+  LOG_DBG("MEMM", "BleWorker stack high-water: %u B free of %u", (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+          (unsigned)BLE_WORKER_STACK_BYTES);
   vTaskDelete(nullptr);
 }
 

@@ -972,6 +972,7 @@ class NimBLEDevice {
   static void deinit(bool) {}
   static void setMTU(uint16_t) {}
   static void setPower(int) {}
+  static void setScanDuplicateCacheSize(uint16_t) {}  // no-op on simulator
   static void setSecurityAuth(bool, bool, bool) {}
   static void setSecurityIOCap(uint8_t) {}
   static void injectPassKey(NimBLEConnInfo&, uint32_t) {}
