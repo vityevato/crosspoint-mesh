@@ -846,6 +846,7 @@ void MeshCoreThreadActivity::completeFavouriteOp(bool success) {
 // telemetry (LPP). The reply is handled asynchronously in completeLocationOp().
 
 bool MeshCoreThreadActivity::startSendCoordinates() {
+  MESHCORE_LOG_HEAP("Menu sendCoordinates:start");
   const bool connected = (client.getState() == BleConnectionState::CONNECTED);
   const auto& comp = client.getCompanion();
   if (!connected) {
@@ -860,9 +861,11 @@ bool MeshCoreThreadActivity::startSendCoordinates() {
     _pendingOp = PendingOp::SENDING_LOCATION;
     _pendingStartMs = millis();
     _toast.show(tr(STR_MESHCORE_GPS_WAIT_FIX), 0);  // persistent until the node replies
+    MESHCORE_LOG_HEAP("Menu sendCoordinates:request");
     requestUpdate();
     return true;
   }
+  MESHCORE_LOG_HEAP("Menu sendCoordinates:rejected");
   requestUpdate();
   return true;
 }
@@ -876,11 +879,13 @@ void MeshCoreThreadActivity::completeLocationOp(bool success) {
     char coords[32];
     snprintf(coords, sizeof(coords), "%.6f,%.6f", comp.selfLat, comp.selfLon);
     LOG_INF("MESH", "Send coordinates: %s", coords);
-    _toast.clear();       // drop the persistent "waiting for fix" toast
+    _toast.clear();  // drop the persistent "waiting for fix" toast
+    MESHCORE_LOG_HEAP("Menu sendCoordinates:complete");
     sendMessage(coords);  // opens the composer prefilled; send flow is unchanged
     return;
   }
   LOG_ERR("MESH", "No GPS fix available (success=%d valid=%d)", (int)success, (int)comp.selfLocationValid);
+  MESHCORE_LOG_HEAP("Menu sendCoordinates:no-fix");
   _toast.show(tr(STR_MESHCORE_GPS_NO_FIX), 3000);
   requestUpdate();
 }
