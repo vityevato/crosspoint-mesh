@@ -232,8 +232,9 @@ class OptionPopup {
 
   // The dialog has no scrolling, so options past MAX_OPTIONS would render off
   // screen anyway; a fixed cap keeps the DialogOption array on the stack and
-  // the interaction table small. Callers that build their own option list
-  // (e.g. the thread reply picker) use this as their scan/collection bound.
+  // the interaction table small. Callers with their own smaller bounds (e.g.
+  // the thread reply picker's MESHCORE_MAX_RECENT_SENDERS) enforce them before
+  // calling show().
   static constexpr int MAX_OPTIONS = 16;
 
   bool isActive() const { return active; }

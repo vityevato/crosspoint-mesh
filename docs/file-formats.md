@@ -398,12 +398,15 @@ subdirectory named after the BLE address with colons stripped
 │   ├── conv/                 # Conversation storage
 │   │   ├── ch_<N>/           # Channel message threads (N = 0–39)
 │   │   │   ├── meta.bin
+│   │   │   ├── senders.bin   # Recent-sender cache (reply picker)
+│   │   │   ├── lastsent.bin  # Last outgoing text (Repeat Last cache)
 │   │   │   └── msgs/
 │   │   │       ├── 1         # MeshCoreMessage (268 bytes), filename = id
 │   │   │       ├── 2
 │   │   │       └── ...
 │   │   └── dm_<hexprefix>/   # Direct message threads (12-char hex)
 │   │       ├── meta.bin
+│   │       ├── lastsent.bin
 │   │       └── msgs/
 │   │           └── ...
 ```
@@ -479,6 +482,36 @@ defaults to 0, which the thread activity detects as a mismatch and uses
 to trigger a one-time height rebuild (meta lines are measured with the
 system font's line height since v3). Version 1 files are not readable
 and are treated as missing.
+
+### `senders.bin` — version 1
+
+Recent-sender cache for the channel reply picker, at
+`conv/ch_<N>/senders.bin` (channel threads only). Names are stored
+newest first and are capped at 8. Maintained on message arrival (a new
+sender moves to the front) and built once with a bounded backward scan
+when the file is missing (threads created before the cache existed).
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`SENDERS_FILE_VERSION = 1`) |
+| 1 | 1 | Count (`uint8_t`, 0–8) |
+| 2 | 64× | Names, newest first (fixed 64-byte slots) |
+
+### `lastsent.bin` — version 1
+
+Most recent outgoing text in the conversation, at
+`conv/<ch_N|dm_hex>/lastsent.bin`. Written on every outgoing message so
+the MENU entry does not scan the thread for "Repeat Last Message".
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`LAST_SENT_FILE_VERSION = 1`) |
+| 1 | 2 | Text length in bytes (`uint16_t`, little-endian) |
+| 3 | N | Text (UTF-8, up to 184 bytes) |
+
+Both caches are best-effort: a cache write failure never fails message
+storage, and a missing or unreadable cache is rebuilt or treated as
+empty.
 
 ### `msgs/` — per-file message storage
 
