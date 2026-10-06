@@ -28,6 +28,11 @@ class FontCacheManager {
   bool isScanning() const;
   void recordText(const char* text, int fontId, EpdFontFamily::Style style);
 
+  /// True when the last two-pass prewarm completed without misses and its page
+  /// slots are still resident. Direct prewarm calls can skip glyphs that were
+  /// part of that scan.
+  bool isPrewarmCacheValid() const { return prewarmCacheValid_; }
+
   // The FontDecompressor pointer, needed by GfxRenderer::getGlyphBitmap()
   FontDecompressor* getDecompressor() const { return fontDecompressor_; }
 
@@ -45,6 +50,11 @@ class FontCacheManager {
    private:
     FontCacheManager* manager_;
     bool active_ = true;
+    bool ended_ = false;
+    /// True when endScanAndPrewarm() found the same glyph set as the last
+    /// successful prewarm: the page slots are still valid and the destructor
+    /// must not clear them.
+    bool keepCache_ = false;
   };
   PrewarmScope createPrewarmScope();
 
@@ -55,6 +65,17 @@ class FontCacheManager {
 
   enum class ScanMode : uint8_t { None, Scanning };
   ScanMode scanMode_ = ScanMode::None;
+
+  // Cache-reuse fingerprint: hash of the scan's resolved font slots and sorted
+  // packed codepoints. When a render scans the same set again, the page slots
+  // still hold exactly those glyphs, so the prewarm (and its ~8 KB group
+  // buffer) is skipped instead of re-allocating on a fragmented heap.
+  uint32_t computeScanHash() const;
+  uint32_t lastPrewarmHash_ = 0;
+  bool prewarmCacheValid_ = false;
+  /// Set when any prewarm in the current scope failed or missed glyphs, so a
+  /// partial cache is never mistaken for a complete one.
+  bool lastPrewarmMissed_ = false;
 
   // A render pass touches at most a handful of font ids. Codepoints are packed
   // with a compact font slot and resolved style, then grouped for prewarming.

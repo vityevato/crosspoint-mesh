@@ -79,14 +79,26 @@ class FontDecompressor {
   uint8_t* hotGroup = nullptr;  // owned; freed in freeHotGroup()/dtor
   uint32_t hotGroupCapacity = 0;
 
-  // Memoizes a hot-group allocation failure. Without it, a single group that cannot be
-  // allocated on the current (e.g. BLE-fragmented) heap makes every glyph in that group
-  // re-attempt the large (~34 KB) malloc and re-emit an error log — hundreds of failing
-  // mallocs + SD-backed writes per frame, stalling the loop ~800 ms and starving BLE
-  // polling. When set, the fallback returns nullptr (missing glyph) immediately. Reset on
-  // every prewarm and on any cache free, so a later, less fragmented heap is retried once.
-  const EpdFontData* hotGroupFailedFont = nullptr;
-  uint16_t hotGroupFailedIndex = UINT16_MAX;
+  // Memoizes hot-group allocation failures per (font, group) pair. A single
+  // slot thrashed when several groups failed in turn (the field log alternated
+  // groups 0/10/11), so every glyph re-attempted the large malloc and re-emitted
+  // an error log — dozens of failing mallocs + SD-backed writes per frame,
+  // stalling the loop and starving BLE polling. Entries are cleared only when
+  // the heap grows past largestAtLastFailure, so a fragmented heap is not
+  // retried once per frame. The fallback returns nullptr (missing glyph) while
+  // memoized.
+  static constexpr uint8_t kMaxFailedGroups = 8;
+  struct FailedGroup {
+    const EpdFontData* font = nullptr;
+    uint16_t group = UINT16_MAX;
+  };
+  FailedGroup failedGroups[kMaxFailedGroups] = {};
+  uint8_t failedGroupCount = 0;
+  uint32_t largestAtLastFailure = 0;
+
+  bool isGroupFailed(const EpdFontData* fontData, uint16_t groupIndex) const;
+  void noteGroupFailed(const EpdFontData* fontData, uint16_t groupIndex);
+  void clearFailedGroups();
 
   // Scratch buffer for compacting a single glyph from the hot group.
   // Valid until the next getBitmap() call. Same ownership/OOM contract as hotGroup.

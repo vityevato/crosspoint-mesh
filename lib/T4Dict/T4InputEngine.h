@@ -49,6 +49,11 @@ class T4InputEngine {
   /// Last error message, or "" if no error.
   const char* getLastError() const;
 
+  /// Upper bound for the per-node candidate buffer (bytes). Forwarded to the
+  /// dictionary whenever one is loaded, so the keyboard stays inside the heap
+  /// window left by BLE/MeshCore. 0 keeps the dictionary default.
+  void setCandidateBudget(uint32_t bytes);
+
   // ── Mode ──────────────────────────────────────────────────────────
 
   /// Switch input mode. Preserves language and confirmed text.
@@ -197,6 +202,7 @@ class T4InputEngine {
   T4Language _lang = T4Language::EN;
   T4Mode _mode = T4Mode::PREDICT;
   uint16_t _maxTextLen = kMaxTextLen;
+  uint32_t _candidateBudget = 0;  // 0 = dictionary default
 
   // Predict state
   uint8_t _sequence[kMaxSeqLen + 1] = {};
@@ -525,10 +531,17 @@ void T4InputEngine<Dict>::loadDictionaryForLanguage(T4Language lang) {
     setError("Failed to load dictionary");
     return;
   }
+  if (_candidateBudget > 0) _dict->setBufferBudget(_candidateBudget);
   if (!_dict->loadFromSD(path)) {
     setError("Failed to load dictionary");
     _dict.reset();
   }
+}
+
+template <typename Dict>
+void T4InputEngine<Dict>::setCandidateBudget(uint32_t bytes) {
+  _candidateBudget = bytes;
+  if (_dict && bytes > 0) _dict->setBufferBudget(bytes);
 }
 
 template <typename Dict>

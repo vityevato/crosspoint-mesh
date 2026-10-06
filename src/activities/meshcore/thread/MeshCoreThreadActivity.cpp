@@ -115,9 +115,9 @@ void MeshCoreThreadActivity::onEnter() {
   _contentAreaHeight = contentHeight();
 
   // Create scroll state machine (all fields are now set)
-  _scroller = new (std::nothrow)
-      ThreadScroller{_meta,          _visibleMsgs,       _visibleCount, _fillerMsg, _accHeight, _firstVisibleId,
-                     _lastVisibleId, _contentAreaHeight, store,         isChannel,  channelIdx, contactPubkey};
+  _scroller = makeUniqueNoThrow<ThreadScroller>(_meta, _visibleMsgs, _visibleCount, _fillerMsg, _accHeight,
+                                                _firstVisibleId, _lastVisibleId, _contentAreaHeight, store, isChannel,
+                                                channelIdx, contactPubkey);
   if (!_scroller) {
     LOG_ERR("MESH", "OOM: ThreadScroller");
     return;
@@ -162,8 +162,7 @@ void MeshCoreThreadActivity::onExit() {
   memset(_visibleMsgs, 0, sizeof(_visibleMsgs));
   _visibleCount = 0;
   _menuSettings.reset();
-  delete _scroller;
-  _scroller = nullptr;
+  _scroller.reset();
   Activity::onExit();
 }
 
@@ -235,11 +234,15 @@ void MeshCoreThreadActivity::scrollToEnd() {
 }
 
 void MeshCoreThreadActivity::refreshLastSent() {
+  MESHCORE_LOG_HEAP("Menu refreshLastSent:before");
   _lastSentText.clear();
-  MeshCoreMessage msg;
+  MeshCoreMessage& msg = _scanMsg;
   const bool found = isChannel ? store.loadNewestSentChannelMessage(channelIdx, msg)
                                : store.loadNewestSentDirectMessage(contactPubkey, msg);
-  if (!found) return;
+  if (!found) {
+    MESHCORE_LOG_HEAP("Menu refreshLastSent:after");
+    return;
+  }
 
   // Keep the cached text within the send limit; trim on a UTF-8 boundary so
   // the prefilled composer never starts mid-codepoint. (The button keyboard
@@ -250,6 +253,7 @@ void MeshCoreThreadActivity::refreshLastSent() {
   }
   _lastSentText.assign(msg.text, len);
   LOG_DBG("MESH", "Repeat last: %u bytes", static_cast<unsigned>(_lastSentText.size()));
+  MESHCORE_LOG_HEAP("Menu refreshLastSent:after");
 }
 
 void MeshCoreThreadActivity::clearConversation() {
@@ -280,16 +284,24 @@ void MeshCoreThreadActivity::shareContactQr() {
     if (foundContact.name[0] != '\0') name = foundContact.name;
   }
 
-  char url[384] = {};
-  if (meshcore::buildMeshCoreContactShareUrl(name, contactPubkey, nodeType, url, sizeof(url)) == 0) {
+  // Build the URL in the activity's scratch buffer (a 384-byte stack local
+  // would blow the heap-discipline stack budget).
+  if (meshcore::buildMeshCoreContactShareUrl(name, contactPubkey, nodeType, _shareUrl, sizeof(_shareUrl)) == 0) {
     _toast.show(tr(STR_MESHCORE_SHARE_FAILED), 3000);
     requestUpdate();
     return;
   }
-  LOG_DBG("MESH", "Thread share QR URL: %s", url);
-  startActivityForResult(
-      std::make_unique<QrDisplayActivity>(renderer, mappedInput, std::string(url), tr(STR_MESHCORE_SHARE_CONTACT)),
-      [this](const ActivityResult&) { requestUpdate(); });
+  LOG_DBG("MESH", "Thread share QR URL: %s", _shareUrl);
+  MESHCORE_LOG_HEAP("shareContactQr:before QR activity");
+  auto qrActivity = makeUniqueNoThrow<QrDisplayActivity>(renderer, mappedInput, std::string(_shareUrl),
+                                                         tr(STR_MESHCORE_SHARE_CONTACT));
+  if (!qrActivity) {
+    LOG_ERR("MESH", "OOM: QR display activity");
+    _toast.show(tr(STR_MESHCORE_SHARE_FAILED), 3000);
+    requestUpdate();
+    return;
+  }
+  startActivityForResult(std::move(qrActivity), [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void MeshCoreThreadActivity::scrollDownByMessage() {
@@ -339,18 +351,34 @@ void MeshCoreThreadActivity::loop() {
 void MeshCoreThreadActivity::_loopBleStateMachine() {
   if (_pendingOp != PendingOp::IDLE && !client.isCommandPending()) {
     const bool success = client.getLastCommandResult();
-    if (_pendingOp == PendingOp::DELETING_CONTACT) {
-      completeUnlistOp(success);
-    } else {
-      completeFavouriteOp(success);
+    switch (_pendingOp) {
+      case PendingOp::DELETING_CONTACT:
+        completeUnlistOp(success);
+        break;
+      case PendingOp::SETTING_FAVOURITE:
+        completeFavouriteOp(success);
+        break;
+      case PendingOp::SENDING_LOCATION:
+        completeLocationOp(success);
+        break;
+      default:
+        break;
     }
   }
   if (_pendingOp != PendingOp::IDLE && (millis() - _pendingStartMs) > 10000) {
     LOG_ERR("MESH", "Async BLE timeout (no response after 10 s)");
-    if (_pendingOp == PendingOp::DELETING_CONTACT) {
-      completeUnlistOp(false);
-    } else {
-      completeFavouriteOp(false);
+    switch (_pendingOp) {
+      case PendingOp::DELETING_CONTACT:
+        completeUnlistOp(false);
+        break;
+      case PendingOp::SETTING_FAVOURITE:
+        completeFavouriteOp(false);
+        break;
+      case PendingOp::SENDING_LOCATION:
+        completeLocationOp(false);
+        break;
+      default:
+        break;
     }
   }
 
@@ -503,7 +531,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
 
   if (currentTab == Tab::MENU) {
     // Action indices: 0..(actionCount-1) = menu actions, actionCount = settings toggle
-    int actionCount = isChannel ? 4 : 7;
+    int actionCount = isChannel ? 5 : 8;
     if (itemIdx >= actionCount) {
       // Settings toggle
       if (_menuSettings) {
@@ -528,7 +556,8 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
     }
 
     if (isChannel) {
-      // Channel menu: 1=Reply to Last, 2=Scroll to End, 3=Clear
+      // Channel menu: 1=Reply to Last, 2=Scroll to End, 3=Clear,
+      // 4=Send Coordinates
       switch (itemIdx) {
         case 1:  // Reply to Last
           // Held? wait for the release in _loopInput. Released within this
@@ -546,12 +575,14 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
+        case 4:  // Send Coordinates
+          return startSendCoordinates();
         default:
           break;
       }
     } else {
-      // DM menu: 1=Reset Path, 2=Scroll to End, 3=Clear, 4=Share QR,
-      // 5=Toggle Favourite, 6=Unlist
+      // DM menu: 1=Reset Path, 2=Scroll to End, 3=Clear, 4=Send Coordinates,
+      // 5=Share QR, 6=Toggle Favourite, 7=Unlist
       bool connected = (client.getState() == BleConnectionState::CONNECTED);
       switch (itemIdx) {
         case 1: {  // Reset Path
@@ -583,10 +614,12 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           _confirmAction = ConfirmAction::CLEAR_CONVERSATION;
           requestUpdate();
           return true;
-        case 4:  // Share Contact (QR)
+        case 4:  // Send Coordinates
+          return startSendCoordinates();
+        case 5:  // Share Contact (QR)
           shareContactQr();
           return true;
-        case 5: {  // Toggle Favourite (async — waits for companion PKT_OK)
+        case 6: {  // Toggle Favourite (async — waits for companion PKT_OK)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -617,7 +650,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
           requestUpdate();
           return true;
         }
-        case 6: {  // Unlist Contact (async, waits for BLE)
+        case 7: {  // Unlist Contact (async, waits for BLE)
           if (!connected) {
             _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
             requestUpdate();
@@ -727,8 +760,10 @@ void MeshCoreThreadActivity::switchTab(Tab tab) {
   // "Repeat Last Message" (both modes) and "Reply to Last" (channels) is ready
   // without per-render SD I/O.
   if (tab == Tab::MENU) {
+    MESHCORE_LOG_HEAP("Menu enter:before caches");
     refreshLastSent();
     if (isChannel) ThreadReply::refreshTargets(*this);
+    MESHCORE_LOG_HEAP("Menu enter:after caches");
   }
   currentTab = tab;
   selectedIndex = 0;
@@ -740,7 +775,7 @@ int MeshCoreThreadActivity::getListCountForCurrentTab() const {
     case Tab::MESSAGES:
       return 0;  // Messages tab has no list navigation — uses page nav instead
     case Tab::MENU: {
-      int count = isChannel ? 4 : 7;  // Channel: 4 actions; DM: 7 (Repeat, ..., Favourite, Unlist)
+      int count = isChannel ? 5 : 8;  // Channel: 5 actions; DM: 8 (Repeat, ..., Favourite, Unlist)
       if (_menuSettings) count += 1;  // +1 for the settings toggle
       return count;
     }
@@ -806,16 +841,78 @@ void MeshCoreThreadActivity::completeFavouriteOp(bool success) {
   }
 }
 
+// ── Send Coordinates menu action ──
+// Validates GPS availability, then asks the companion for its current
+// telemetry (LPP). The reply is handled asynchronously in completeLocationOp().
+
+bool MeshCoreThreadActivity::startSendCoordinates() {
+  MESHCORE_LOG_HEAP("Menu sendCoordinates:start");
+  const bool connected = (client.getState() == BleConnectionState::CONNECTED);
+  const auto& comp = client.getCompanion();
+  if (!connected) {
+    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+  } else if (!comp.hasGps) {
+    _toast.show(tr(STR_MESHCORE_GPS_NOT_AVAILABLE), 3000);
+  } else if (!comp.gpsEnabled) {
+    _toast.show(tr(STR_MESHCORE_GPS_OFF), 3000);
+  } else if (!client.requestSelfLocation()) {
+    _toast.show(tr(STR_MESHCORE_SYNC_FAILED), 3000);
+  } else {
+    _pendingOp = PendingOp::SENDING_LOCATION;
+    _pendingStartMs = millis();
+    _toast.show(tr(STR_MESHCORE_GPS_WAIT_FIX), 0);  // persistent until the node replies
+    MESHCORE_LOG_HEAP("Menu sendCoordinates:request");
+    requestUpdate();
+    return true;
+  }
+  MESHCORE_LOG_HEAP("Menu sendCoordinates:rejected");
+  requestUpdate();
+  return true;
+}
+
+void MeshCoreThreadActivity::completeLocationOp(bool success) {
+  _pendingOp = PendingOp::IDLE;
+  const auto& comp = client.getCompanion();
+  // The LPP payload carries no fix-validity flag: the companion returns its
+  // cached position, which is 0/0 until the receiver has a fix.
+  if (success && comp.selfLocationValid && (comp.selfLat != 0.0f || comp.selfLon != 0.0f)) {
+    char coords[32];
+    snprintf(coords, sizeof(coords), "%.6f,%.6f", comp.selfLat, comp.selfLon);
+    LOG_INF("MESH", "Send coordinates: %s", coords);
+    _toast.clear();  // drop the persistent "waiting for fix" toast
+    MESHCORE_LOG_HEAP("Menu sendCoordinates:complete");
+    sendMessage(coords);  // opens the composer prefilled; send flow is unchanged
+    return;
+  }
+  LOG_ERR("MESH", "No GPS fix available (success=%d valid=%d)", (int)success, (int)comp.selfLocationValid);
+  MESHCORE_LOG_HEAP("Menu sendCoordinates:no-fix");
+  _toast.show(tr(STR_MESHCORE_GPS_NO_FIX), 3000);
+  requestUpdate();
+}
+
 // --- Message sending ---
 
 void MeshCoreThreadActivity::sendMessage(const char* initialText) {
-  ThreadMessenger messenger{client, store, isChannel, channelIdx, contactPubkey, threadName, _bodyFontId};
+  // Release the reply-target list before the composer opens (same as the
+  // reply picker's select callback): the MENU caches must not stay live in
+  // the heap the keyboard allocates from, or their freed blocks cannot
+  // coalesce back into the large run the font prewarm needs. _hasReplyTargets
+  // stays set, so the MENU item remains enabled and the picker rebuilds the
+  // list lazily.
+  std::vector<std::string>().swap(_replyNames);
+  MESHCORE_LOG_HEAP("sendMessage:before composer");
   char title[96];
   snprintf(title, sizeof(title), tr(STR_MESHCORE_SEND_TO), threadName);
-  startActivityForResult(
-      textentry::makeEntryActivity(renderer, mappedInput, title, initialText, MESHCORE_SEND_CHAR_LIMIT,
-                                   InputType::Text),
-      [this, messenger](const ActivityResult& result) mutable { messenger.onSendComplete(*this, result); });
+  startActivityForResult(textentry::makeEntryActivity(renderer, mappedInput, title, initialText,
+                                                      MESHCORE_SEND_CHAR_LIMIT, InputType::Text),
+                         [this](const ActivityResult& result) {
+                           // Build the messenger inside the handler instead of capturing it: a
+                           // lambda capturing only `this` fits std::function's small-object
+                           // buffer, so the handler is not heap-allocated on every send.
+                           ThreadMessenger messenger{client,        store,      isChannel,  channelIdx,
+                                                     contactPubkey, threadName, _bodyFontId};
+                           messenger.onSendComplete(*this, result);
+                         });
 }
 
 // --- Rendering ---

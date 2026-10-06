@@ -104,6 +104,12 @@ class T4UserLexicon {
   /// @return false when the header is missing or invalid.
   bool loadFromBuffer(const uint8_t* data, size_t len);
 
+  /// Exact number of bytes serialize() writes for the current entries.
+  /// Sizing the save buffer with this instead of kMaxSerializedSize keeps the
+  /// allocation proportional to the words actually stored (~1.5 KB typical
+  /// against a 128-entry cap) on the tight MeshCore heap.
+  size_t serializedSize() const;
+
   /// Write the store to @p out. Clears the dirty flag on success.
   /// @return number of bytes written, or 0 when @p cap is too small.
   size_t serialize(uint8_t* out, size_t cap);

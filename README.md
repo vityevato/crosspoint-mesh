@@ -72,7 +72,12 @@ Check [our Devices page](https://crosspointreader.com/devices) for the full list
     and manual route reset for stale paths
   - **Menu tab** — Discovery Nodes (browse nearby mesh nodes and add as contacts),
     Send Advert / Send Flood Advert (broadcast presence on the mesh),
-    Status (companion device info), Disconnect
+    Status (companion device info), GPS Tracking (turn the companion's GPS
+    on/off), Disconnect
+  - **GPS** — see the companion's GPS state on the Status screen, toggle
+    GPS tracking from the Menu, and send your current coordinates from a
+    contact or channel conversation (requires a companion with a detected
+    GPS module)
   - **QR contact sharing** — display your node as a `meshcore://contact/add` QR
     code on the e-ink screen so another MeshCore client can add your node
   - **Contact file exchange** — save your node's contact link to an SD file
@@ -84,8 +89,10 @@ Check [our Devices page](https://crosspointreader.com/devices) for the full list
   up with the app beforehand):
 
   - Initial node setup and configuration: node name, BLE PIN, and radio
-    parameters (frequency, bandwidth, spreading factor, TX power, GPS), as well
-    as provisioning a new node's identity.
+    parameters (frequency, bandwidth, spreading factor, TX power), as well
+    as provisioning a new node's identity. GPS setup (update interval,
+    advert-location policy) is also app-only; GPS itself can be toggled
+    from the Menu once the node is configured.
   - QR channel sharing/joining (`meshcore://channel/add`) and QR *scanning* — the
     device has no camera, so it can only emit the contact QR code, not import
     channels or contacts by scanning them.
@@ -265,6 +272,11 @@ status, thread) compile and render in the simulator. Place a
 BLE operations return data from JSON instead of no-ops. Without the
 JSON file, all BLE operations are no-ops (the simulator has no real
 BLE hardware). All UI screens remain interactive regardless.
+
+For GPS testing, add optional fields to a mock companion: `"gps": true`
+(module detected), plus `"latitude"` and `"longitude"` for the fix
+coordinates (omit them or use `0.0` to simulate "no fix"). The mock then
+answers the GPS custom-vars and self-telemetry commands.
 
 Mock hotkeys for injecting BLE events:
 

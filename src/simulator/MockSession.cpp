@@ -102,6 +102,43 @@ void mockHandleRemoveContact(NimBLERemoteCharacteristic* txChar, const uint8_t* 
   }
 }
 
+// Free function (declared in NimBLEDevice.h) to handle CMD_SET_CUSTOM_VAR.
+// Only the "gps" custom var is simulated. The real companion rejects the
+// write when no GPS module was detected, so mirror that with an error frame.
+void mockHandleSetCustomVar(NimBLERemoteCharacteristic* txChar, const uint8_t* data, size_t len) {
+  if (!txChar || len < 4) return;
+
+  // Wire format: [0x29]["name:value"] — not NUL-terminated.
+  char payload[64] = {};
+  size_t n = len - 1;
+  if (n > sizeof(payload) - 1) n = sizeof(payload) - 1;
+  memcpy(payload, data + 1, n);
+
+  char* colon = strchr(payload, ':');
+  if (!colon) {
+    uint8_t errFrame[2] = {0x01, 0x06};  // PKT_ERROR, ERR_CODE_ILLEGAL_ARG
+    txChar->injectRawPacket(errFrame, sizeof(errFrame));
+    LOG_INF("MOCK", "CMD_SET_CUSTOM_VAR malformed → ERROR");
+    return;
+  }
+  *colon = '\0';
+  const char* name = payload;
+  const char* value = colon + 1;
+
+  const MockCompanion* comp = txChar->getMockCompanion();
+  if (strcmp(name, "gps") == 0 && comp && comp->gps) {
+    sMockGpsEnabled = (value[0] == '1');
+    uint8_t ok = 0x00;
+    txChar->injectRawPacket(&ok, 1);
+    LOG_INF("MOCK", "CMD_SET_CUSTOM_VAR gps:%s → OK", sMockGpsEnabled ? "1" : "0");
+    return;
+  }
+
+  uint8_t errFrame[2] = {0x01, 0x06};  // PKT_ERROR, ERR_CODE_ILLEGAL_ARG
+  txChar->injectRawPacket(errFrame, sizeof(errFrame));
+  LOG_INF("MOCK", "CMD_SET_CUSTOM_VAR %s → ERROR (unsupported)", name);
+}
+
 bool MockSession::loadMockConfig(const char* jsonPath) {
   // Clean up any previously loaded config
   unloadMockConfig();
@@ -202,6 +239,11 @@ bool MockSession::parseCompanion(JsonObjectConst obj, MockCompanion& out) {
   out.radioCr = obj["radio_cr"] | 0;
   out.maxContacts = obj["max_contacts"] | 0;
   out.maxChannels = obj["max_channels"] | 8;
+
+  // GPS simulation (optional): module detection + fix coordinates.
+  out.gps = obj["gps"] | false;
+  out.latitude = obj["latitude"] | 0.0f;
+  out.longitude = obj["longitude"] | 0.0f;
 
   // Parse contacts array
   JsonArrayConst contactsArr = obj["contacts"];

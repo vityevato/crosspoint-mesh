@@ -118,6 +118,12 @@ class MeshCoreThreadActivity final : public Activity {
   // empty space at the bottom of the viewport). id == 0 means no filler.
   MeshCoreMessage _fillerMsg = {};
 
+  // Reusable scratch for the MENU scans (refreshLastSent / refreshTargets).
+  // Scanning one message at a time replaces the old MeshCoreMessage[16] heap
+  // batch (~4.3 KB transient) whose allocation split the largest free block
+  // and starved the font prewarm after the reply/repeat flow.
+  MeshCoreMessage _scanMsg = {};
+
   // Cached conversation metadata (scroll state lives here)
   ConvMeta _meta = {};
 
@@ -135,16 +141,22 @@ class MeshCoreThreadActivity final : public Activity {
   // Async BLE operations (mirror Discovery's pattern): the UI shows a
   // persistent toast, then polls for the companion's PKT_OK/error before
   // committing any local state.
-  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT, SETTING_FAVOURITE };
+  enum class PendingOp : uint8_t { IDLE, DELETING_CONTACT, SETTING_FAVOURITE, SENDING_LOCATION };
   PendingOp _pendingOp = PendingOp::IDLE;
   uint32_t _pendingStartMs = 0;
   /// Target favourite state for an in-flight SETTING_FAVOURITE op.
   bool _pendingFavouriteTarget = false;
   void completeUnlistOp(bool success);
   void completeFavouriteOp(bool success);
+  /// Completion handler for SENDING_LOCATION: formats the fresh companion fix
+  /// as "lat,lon" and opens the composer prefilled, or toasts "no fix".
+  void completeLocationOp(bool success);
+  /// Shared menu action for channel and DM menus: validates GPS availability
+  /// and queues CMD_SEND_TELEMETRY_REQ ('self'). Returns true when handled.
+  bool startSendCoordinates();
 
-  // Scroll state machine — created in onEnter, deleted in onExit.
-  ThreadScroller* _scroller = nullptr;
+  // Scroll state machine — created in onEnter, released in onExit.
+  std::unique_ptr<ThreadScroller> _scroller;
 
   // Confirmation popup state (shown before destructive menu actions)
   enum class ConfirmAction : uint8_t { NONE, CLEAR_CONVERSATION, REMOVE_CONTACT };
@@ -168,6 +180,10 @@ class MeshCoreThreadActivity final : public Activity {
   // tab while active; _replyNames backs its options and the select callback.
   OptionPopup _replyPopup;
   std::vector<std::string> _replyNames;
+  /// True when the last refresh found at least one reply target. Kept after
+  /// _replyNames is released before opening the composer, so the MENU item
+  /// stays enabled and openPicker() can rebuild the list lazily.
+  bool _hasReplyTargets = false;
   /// True while the Confirm press that opens the picker is still held; the
   /// picker itself opens on the release (see _loopInput).
   bool _replyPickerPending = false;
@@ -176,6 +192,10 @@ class MeshCoreThreadActivity final : public Activity {
   // MENU entry by refreshLastSent(). Empty means "Repeat Last Message" is
   // dimmed — the user has not sent anything here yet.
   std::string _lastSentText;
+
+  // Scratch for the contact-share URL built by shareContactQr(): a member
+  // instead of a 384-byte stack local (heap-discipline stack budget).
+  char _shareUrl[384] = {};
 
   int contentHeight() const;
 

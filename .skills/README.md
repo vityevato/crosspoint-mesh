@@ -33,3 +33,6 @@ Edit the `SKILL.md` under each directory. Keep them tight. Do not restate
 `AGENTS.md`; add the judgment that file cannot afford to carry. Trigger quality
 lives in the `description` field: it must name the situations that should pull
 the skill in, in the words a contributor's task would use.
+
+When a skill's trigger changes, update the routing list in `AGENTS.md`
+(`### Project Skills`) so the two stay in sync.

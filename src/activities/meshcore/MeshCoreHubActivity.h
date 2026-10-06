@@ -109,6 +109,15 @@ class MeshCoreHubActivity final : public Activity {
   bool _advertIsFlood = false;
   uint32_t _advertSentTime = 0;
 
+  // GPS capability/state tracking: repaint when the companion's custom-vars
+  // reply changes any of these. Toggle-in-flight mirrors the advert pattern.
+  bool _lastCustomVarsReceived = false;
+  bool _lastHasGps = false;
+  bool _lastGpsEnabled = false;
+  bool _gpsToggleInFlight = false;
+  bool _gpsToggleTarget = false;
+  uint32_t _gpsToggleStartMs = 0;
+
   // Ephemeral toast overlay (status messages + standard subtitle)
   StatusMessageOverlay _toast;
 

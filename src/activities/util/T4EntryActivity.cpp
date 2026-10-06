@@ -17,18 +17,20 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
-// Count the UTF-8 code points (visual characters) in @p s.  The password mask
-// renders one '*' per code point so multi-byte text (Cyrillic, CJK, …) shows
-// as many dots as visible characters, not bytes.
-static size_t utf8CharCount(const char* s) {
-  size_t n = 0;
-  const unsigned char* p = reinterpret_cast<const unsigned char*>(s);
-  while (*p != '\0') {
-    utf8NextCodepoint(&p);
-    n++;
-  }
-  return n;
-}
+// Temporarily NUL-terminate a mutable text buffer at @p end so a subrange can
+// be passed to renderer APIs that take C strings; the byte is restored when
+// the guard leaves scope. This replaces std::string copies on the render path.
+struct LineGuard {
+  char* buf;
+  int end;
+  char saved;
+
+  LineGuard(char* b, int e) : buf(b), end(e), saved(b[e]) { b[e] = '\0'; }
+  ~LineGuard() { buf[end] = saved; }
+
+  LineGuard(const LineGuard&) = delete;
+  LineGuard& operator=(const LineGuard&) = delete;
+};
 
 // ── Constructor ──────────────────────────────────────────────────────────
 
@@ -70,8 +72,10 @@ void T4EntryActivity::onEnter() {
   LOG_DBG("MEMM", "T4 onEnter:start free=%u largest=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   Activity::onEnter();
 
-  // Allocate reusable render buffer on heap (512 bytes — too large for stack)
-  _displayBuf = makeUniqueNoThrow<char[]>(512);
+  // Allocate the reusable render buffer on the heap (kDisplayBufSize is too
+  // large for the activity's stack budget) and keep it for the activity's
+  // lifetime — render() must not allocate.
+  _displayBuf = makeUniqueNoThrow<char[]>(kDisplayBufSize);
   if (!_displayBuf) {
     LOG_ERR("T4", "OOM: display buffer");
     setResult(KeyboardResult{});
@@ -117,6 +121,15 @@ void T4EntryActivity::onEnter() {
   } else if (_inputType == InputType::Digit) {
     _lang = t4::T4Language::DIGIT;
   }
+
+  // Keep the per-node candidate buffer within the heap window left by the BLE
+  // stack: at most a third of the largest free block, clamped to the
+  // dictionary's supported span.
+  uint32_t candidateBudget = ESP.getMaxAllocHeap() / kCandidateBudgetDivisor;
+  if (candidateBudget < T4Dictionary::kMinCandidateBytes) candidateBudget = T4Dictionary::kMinCandidateBytes;
+  if (candidateBudget > T4Dictionary::kMaxCandidateBytes) candidateBudget = T4Dictionary::kMaxCandidateBytes;
+  LOG_DBG("T4", "onEnter: candidate budget=%u bytes (largest=%u)", candidateBudget, ESP.getMaxAllocHeap());
+  _inputEngine.setCandidateBudget(candidateBudget);
 
   _inputEngine.setLanguage(_lang);
   _sentenceCfg = t4::getSentenceConfig(_lang);
@@ -694,7 +707,7 @@ void T4EntryActivity::onComplete() {
     while (!result.empty() && result.back() == ' ') result.pop_back();
   }
   LOG_DBG("T4", "onComplete: mode=%d, result='%s'", static_cast<int>(_mode), result.c_str());
-  learnIntoLexicon(result);
+  learnIntoLexicon(result.c_str());
   setResult(KeyboardResult{std::move(result)});
   finish();
 }
@@ -749,20 +762,33 @@ bool T4EntryActivity::isAutoCapPunct(const char* punct, const t4::SentenceConfig
   return t4::isSentenceEndChar(cfg.endChars, punct, blen);
 }
 
+size_t T4EntryActivity::loadConfirmedText(char* dst) const {
+  constexpr size_t kMaxLen = decltype(_inputEngine)::kMaxTextLen;
+  const char* src = _inputEngine.getConfirmedText();
+  size_t len = strlen(src);
+  if (len > kMaxLen) len = kMaxLen;
+  memcpy(dst, src, len);
+  dst[len] = '\0';
+  return len;
+}
+
 void T4EntryActivity::handlePunctuation() {
   const char* candidate = _inputEngine.getCurrentCandidate();
   bool hasCandidate = candidate && candidate[0] != '\0';
 
-  // Work on a local mutable copy of engine text; sync back at the end.
-  std::string text(_inputEngine.getConfirmedText());
+  constexpr size_t kMaxLen = decltype(_inputEngine)::kMaxTextLen;
+
+  // Work on a member scratch copy of the engine text; sync back at the end.
+  char* text = _punctText;
+  size_t textLen = loadConfirmedText(text);
   LOG_DBG("T4", "handlePunct: mode=%d wjc=%d pIdx=%d hasCand=%d cand='%s' text='%s'", static_cast<int>(_mode),
-          _wordJustConfirmed, _punctIndex, hasCandidate, hasCandidate ? candidate : "(none)", text.c_str());
+          _wordJustConfirmed, _punctIndex, hasCandidate, hasCandidate ? candidate : "(none)", text);
 
   // MULTI_TAP: fix any cycling letter (no space — letters are already
   // individually confirmed by timeout or next press). Then apply punctuation.
   if (_mode == t4::T4Mode::MULTI_TAP) {
     _inputEngine.fixMultiTapLetter();
-    text = _inputEngine.getConfirmedText();
+    textLen = loadConfirmedText(text);
 
     if (_wordJustConfirmed && millis() - _lastConfirmMs <= decltype(_inputEngine)::kMultiTapTimeoutMs) {
       // Within timeout: cycle punctuation
@@ -774,14 +800,17 @@ void T4EntryActivity::handlePunctuation() {
       // the full entry would clip the preceding character's UTF-8 tail.
       uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
       const char* nextPunct = punctCycle()[nextIdx];
-      const size_t strippedLen = (text.length() >= _lastPunctLen) ? text.length() - _lastPunctLen : text.length();
+      const size_t strippedLen = (textLen >= _lastPunctLen) ? textLen - _lastPunctLen : textLen;
       const size_t usable = punctBytesWithin(strippedLen, nextPunct, textLimitBytes());
       if (usable > 0) {
-        if (text.length() >= _lastPunctLen) {
-          text.erase(text.length() - _lastPunctLen);
+        if (textLen >= _lastPunctLen) {
+          textLen -= _lastPunctLen;
+          text[textLen] = '\0';
         }
         _punctIndex = nextIdx;
-        text.append(nextPunct, usable);
+        memcpy(text + textLen, nextPunct, usable);
+        textLen += usable;
+        text[textLen] = '\0';
         _lastPunctLen = usable;
         // Sentence-ending punctuation → auto-cap next word (Text only).
         // Landing on a non-sentence-ending mark (e.g. ", " after cycling
@@ -803,21 +832,22 @@ void T4EntryActivity::handlePunctuation() {
       }
       _lastConfirmMs = millis();
       LOG_DBG("T4", "handlePunct: MULTI_TAP cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
-              text.c_str());
+              text);
     } else {
       // First confirm or timeout expired: add trailing space.  Refuse when
       // the field is at its limit so punctuation cannot exceed it.
-      if (text.length() < textLimitBytes()) {
-        text += ' ';
+      if (textLen < textLimitBytes()) {
+        text[textLen++] = ' ';
+        text[textLen] = '\0';
         _punctIndex = 0;
         _lastPunctLen = 1;
         _wordJustConfirmed = true;
         _candidateScrollX = 0;
         _lastConfirmMs = millis();
-        LOG_DBG("T4", "handlePunct: MULTI_TAP first confirm → text='%s'", text.c_str());
+        LOG_DBG("T4", "handlePunct: MULTI_TAP first confirm → text='%s'", text);
       }
     }
-    _inputEngine.setConfirmedText(text.c_str());
+    _inputEngine.setConfirmedText(text);
     requestUpdate();
     return;
   }
@@ -838,15 +868,18 @@ void T4EntryActivity::handlePunctuation() {
       // truncated to its glyph cannot clip the preceding character.
       uint8_t nextIdx = (_punctIndex + 1) % PUNCT_COUNT;
       const char* nextPunct = punctCycle()[nextIdx];
-      const size_t strippedLen = (text.length() >= _lastPunctLen) ? text.length() - _lastPunctLen : text.length();
+      const size_t strippedLen = (textLen >= _lastPunctLen) ? textLen - _lastPunctLen : textLen;
       // Only apply if it won't overflow the field limit
       const size_t usable = punctBytesWithin(strippedLen, nextPunct, textLimitBytes());
       if (usable > 0) {
-        if (text.length() >= _lastPunctLen) {
-          text.erase(text.length() - _lastPunctLen);
+        if (textLen >= _lastPunctLen) {
+          textLen -= _lastPunctLen;
+          text[textLen] = '\0';
         }
         _punctIndex = nextIdx;
-        text.append(nextPunct, usable);
+        memcpy(text + textLen, nextPunct, usable);
+        textLen += usable;
+        text[textLen] = '\0';
         _lastPunctLen = usable;
         // Sentence-ending punctuation → auto-cap next word (Text only).
         // Cycling onto a non-sentence-ending mark must cancel any pending
@@ -867,8 +900,8 @@ void T4EntryActivity::handlePunctuation() {
       }
       _lastConfirmMs = millis();
       LOG_DBG("T4", "handlePunct: PREDICT cycle punct[%d]='%s' → text='%s'", _punctIndex, punctCycle()[_punctIndex],
-              text.c_str());
-      _inputEngine.setConfirmedText(text.c_str());
+              text);
+      _inputEngine.setConfirmedText(text);
       requestUpdate();
       return;
     }
@@ -882,18 +915,22 @@ void T4EntryActivity::handlePunctuation() {
     }
     const char* word = _inputEngine.getCurrentCandidate();
     // Apply the active Shift/Caps state (Caps → whole word, Shift/auto-cap →
-    // first letter). Returns the raw candidate when neither is active.
-    std::string cased = applyWordCase(word);
-    if (!cased.empty()) word = cased.c_str();
+    // first letter). Keeps the raw candidate when neither is active.
+    char cased[64];
+    if (applyWordCase(word, cased, sizeof(cased)) > 0) word = cased;
 
     // Confirm only if the word plus its separator fits within the field
     // limit; otherwise leave the candidate unconfirmed (field at its cap).
-    std::string nextText = text;
-    if (!nextText.empty() && nextText.back() != ' ') nextText += ' ';
-    nextText += word;
-    if (nextText.length() > textLimitBytes()) {
+    const size_t wordLen = strlen(word);
+    const bool needSpace = (textLen > 0 && text[textLen - 1] != ' ');
+    const size_t extra = needSpace ? 1 : 0;
+    if (textLen + extra + wordLen > textLimitBytes() || textLen + extra + wordLen > kMaxLen) {
       return;
     }
+    if (needSpace) text[textLen++] = ' ';
+    memcpy(text + textLen, word, wordLen);
+    textLen += wordLen;
+    text[textLen] = '\0';
 
     // Consume the one-shot state: auto-cap and one-shot Shift last for a
     // single word; Caps Lock stays on until toggled off.
@@ -901,12 +938,11 @@ void T4EntryActivity::handlePunctuation() {
     _autoCapFromSentence = false;
     if (_inputEngine.getShiftLevel() == 1) _inputEngine.setShiftLevel(0);
 
-    text = std::move(nextText);
-
     // Reset predictor sequence for next word
     _inputEngine.confirmWord();
-    if (text.length() < textLimitBytes()) {
-      text += ' ';  // trailing space after confirmed word
+    if (textLen < textLimitBytes() && textLen < kMaxLen) {
+      text[textLen++] = ' ';  // trailing space after confirmed word
+      text[textLen] = '\0';
       _lastPunctLen = 1;
     } else {
       _lastPunctLen = 0;
@@ -915,17 +951,20 @@ void T4EntryActivity::handlePunctuation() {
     _wordJustConfirmed = true;
     _candidateScrollX = 0;
     _lastConfirmMs = millis();
-    LOG_DBG("T4", "handlePunct: PREDICT confirm '%s' → text='%s' autoCap=%d", word, text.c_str(), _autoCap);
+    LOG_DBG("T4", "handlePunct: PREDICT confirm '%s' → text='%s' autoCap=%d", word, text, _autoCap);
   } else if (!isTextInputFull()) {
     // No candidate: just append space
-    text += ' ';
-    _punctIndex = 0;
-    _lastPunctLen = 1;
-    _wordJustConfirmed = true;
-    _lastConfirmMs = millis();
-    LOG_DBG("T4", "handlePunct: PREDICT no-candidate → text='%s'", text.c_str());
+    if (textLen < kMaxLen) {
+      text[textLen++] = ' ';
+      text[textLen] = '\0';
+      _punctIndex = 0;
+      _lastPunctLen = 1;
+      _wordJustConfirmed = true;
+      _lastConfirmMs = millis();
+      LOG_DBG("T4", "handlePunct: PREDICT no-candidate → text='%s'", text);
+    }
   }
-  _inputEngine.setConfirmedText(text.c_str());
+  _inputEngine.setConfirmedText(text);
 }
 
 // ── Mode Transitions ─────────────────────────────────────────────────────
@@ -963,11 +1002,14 @@ bool T4EntryActivity::togglePredictMultiTap() {
     LOG_DBG("T4", "togglePredictMultiTap: PREDICT→MULTI_TAP, cand='%s' seqLen=%u", cand ? cand : "(null)",
             _inputEngine.getSequenceLength());
     if (cand && cand[0] != '\0') {
-      std::string t(_inputEngine.getConfirmedText());
-      if (t.length() + strlen(cand) <= textLimitBytes()) {
-        t += cand;
+      char* t = _punctText;
+      const size_t len = loadConfirmedText(t);
+      const size_t candLen = strlen(cand);
+      if (len + candLen <= textLimitBytes() && len + candLen <= decltype(_inputEngine)::kMaxTextLen) {
+        memcpy(t + len, cand, candLen);
+        t[len + candLen] = '\0';
       }
-      _inputEngine.setConfirmedText(t.c_str());
+      _inputEngine.setConfirmedText(t);
     }
   }
 
@@ -1035,12 +1077,13 @@ void T4EntryActivity::loadUserLexicon() {
 void T4EntryActivity::saveUserLexicon() {
   if (!_lexicon || !_lexicon->isDirty()) return;
 
-  auto buffer = makeUniqueNoThrow<uint8_t[]>(t4::T4UserLexicon::kMaxSerializedSize);
+  const size_t size = _lexicon->serializedSize();
+  auto buffer = makeUniqueNoThrow<uint8_t[]>(size);
   if (!buffer) {
-    LOG_ERR("T4", "OOM: user lexicon save buffer");
+    LOG_ERR("T4", "OOM: user lexicon save buffer (%u bytes)", static_cast<unsigned>(size));
     return;
   }
-  const size_t written = _lexicon->serialize(buffer.get(), t4::T4UserLexicon::kMaxSerializedSize);
+  const size_t written = _lexicon->serialize(buffer.get(), size);
   if (written == 0) {
     LOG_ERR("T4", "Failed to serialize user lexicon");
     return;
@@ -1059,11 +1102,11 @@ void T4EntryActivity::saveUserLexicon() {
   LOG_INF("T4", "Saved user lexicon: %u words, %u bytes", _lexicon->getEntryCount(), static_cast<unsigned>(written));
 }
 
-void T4EntryActivity::learnIntoLexicon(const std::string& text) {
+void T4EntryActivity::learnIntoLexicon(const char* text) {
   // Password and URL fields never allocate a lexicon, so this is also the
   // guard that keeps secrets out of the store.
   if (!_lexicon) return;
-  const uint16_t learned = _lexicon->learnText(_lang, text.c_str(), _initialText.c_str());
+  const uint16_t learned = _lexicon->learnText(_lang, text, _initialText.c_str());
   LOG_DBG("T4", "learnIntoLexicon: learned %u words", learned);
 }
 
@@ -1080,19 +1123,24 @@ void T4EntryActivity::cycleShift() {
   LOG_DBG("T4", "cycleShift: mode=%d → level=%u", static_cast<int>(_mode), level);
 }
 
-std::string T4EntryActivity::applyWordCase(const char* word) const {
-  if (!word || word[0] == '\0') return std::string();
+size_t T4EntryActivity::applyWordCase(const char* word, char* out, size_t cap) const {
+  if (!word || word[0] == '\0' || cap == 0) return 0;
 
+  const size_t wordLen = strlen(word);
   const uint8_t level = _inputEngine.getShiftLevel();
   const bool capsLock = (level == 2);
   // One-shot Shift and auto-cap are only meaningful for languages
   // that have letter case (English, Russian, etc.).  For DIGIT and
   // case-less scripts (Hebrew) they produce no change.
   const bool firstOnly = ((level == 1) || _autoCap) && _sentenceCfg->autoCapitalize;
-  if (!capsLock && !firstOnly) return std::string(word);
+  if (!capsLock && !firstOnly) {
+    if (wordLen >= cap) return 0;
+    memcpy(out, word, wordLen + 1);
+    return wordLen;
+  }
 
   // Caps: uppercase every letter. Shift/auto-cap: only the first letter.
-  std::string out;
+  size_t written = 0;
   const char* p = word;
   bool firstDone = false;
   while (*p) {
@@ -1107,15 +1155,20 @@ std::string T4EntryActivity::applyWordCase(const char* word) const {
 
     if (capsLock || !firstDone) {
       char up[4];
-      uint8_t upLen = t4::upperLetterUtf8(p, blen, up);
-      out.append(up, upLen);
+      const uint8_t upLen = t4::upperLetterUtf8(p, blen, up);
+      if (written + upLen >= cap) break;
+      memcpy(out + written, up, upLen);
+      written += upLen;
     } else {
-      out.append(p, blen);
+      if (written + blen >= cap) break;
+      memcpy(out + written, p, blen);
+      written += blen;
     }
     firstDone = true;
     p += blen;
   }
-  return out;
+  out[written] = '\0';
+  return written;
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────
@@ -1193,46 +1246,40 @@ void T4EntryActivity::renderHeader() {
 int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, bool& overflowOut) {
   const int pageWidth = renderer.getScreenWidth();
 
+  if (!_displayBuf) return startY;
+
   const char* candidate = _inputEngine.getCurrentCandidate();
   bool hasCandidate = (candidate != nullptr) && (candidate[0] != '\0');
 
   // Show the candidate in its committed case form so Shift/Caps is WYSIWYG.
-  std::string candCased;
+  char candCased[64];
   if (hasCandidate && _inputType != InputType::Password) {
-    candCased = applyWordCase(candidate);
-    if (!candCased.empty()) candidate = candCased.c_str();
+    if (applyWordCase(candidate, candCased, sizeof(candCased)) > 0) candidate = candCased;
   }
 
   const char* confirmedText = _inputEngine.getConfirmedText();
 
-  // Build full text (real content, not masked)
-  char fullText[512];
+  // Compose the field text into the reusable buffer. Password input is masked
+  // one '*' per UTF-8 code point (the cycling multi-tap letter may itself be
+  // multi-byte).
+  char* displayText = _displayBuf.get();
   if (_inputType == InputType::Password && !_passwordVisible) {
-    const size_t maskCount = utf8CharCount(confirmedText);
-    size_t i;
-    for (i = 0; i < maskCount && i < 511; i++) fullText[i] = '*';
-    if (hasCandidate) {
-      // Multi-tap: the cycling letter may itself be multi-byte — mask it as a
-      // single '*' per code point too.
-      const size_t candMask = utf8CharCount(candidate);
-      const size_t candFit = (i + candMask < 511) ? candMask : (511 - i);
-      for (size_t j = 0; j < candFit; j++) fullText[i + j] = '*';
-      fullText[i + candFit] = '\0';
-    } else {
-      fullText[i] = '\0';
+    size_t i = 0;
+    for (const unsigned char* t = reinterpret_cast<const unsigned char*>(confirmedText);
+         *t != '\0' && i < kDisplayBufSize - 1;) {
+      utf8NextCodepoint(&t);
+      displayText[i++] = '*';
     }
-  } else if (hasCandidate) {
-    snprintf(fullText, sizeof(fullText), "%s%s", confirmedText, candidate);
+    if (hasCandidate) {
+      for (const unsigned char* c = reinterpret_cast<const unsigned char*>(candidate);
+           *c != '\0' && i < kDisplayBufSize - 1;) {
+        utf8NextCodepoint(&c);
+        displayText[i++] = '*';
+      }
+    }
+    displayText[i] = '\0';
   } else {
-    snprintf(fullText, sizeof(fullText), "%s", confirmedText);
-  }
-
-  // Display text (masked for password)
-  std::string displayText;
-  if (_inputType == InputType::Password && !_passwordVisible) {
-    displayText = std::string(strlen(fullText), '*');
-  } else {
-    displayText = fullText;
+    snprintf(displayText, kDisplayBufSize, "%s%s", confirmedText, hasCandidate ? candidate : "");
   }
 
   const bool isPassword = (_inputType == InputType::Password);
@@ -1242,48 +1289,44 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
   const int maxLineWidth = pageWidth - leftMargin - rightMargin;
 
   // ── Pass 1: collect line boundaries (no rendering) ────────────────────
-  struct LineInfo {
-    int startIdx;  // byte offset in displayText
-    int endIdx;    // byte offset in displayText (exclusive)
-    bool hardBreak;
-  };
-  static constexpr int kMaxLines = 30;
-  LineInfo lines[kMaxLines];
+  const int textLen = static_cast<int>(strlen(displayText));
   int lineCount = 0;
 
   int lineStartIdx = 0;
-  int lineEndIdx = static_cast<int>(displayText.length());
+  int lineEndIdx = textLen;
 
-  while (lineCount < kMaxLines) {
+  while (lineCount < kMaxTextLines) {
     // Hard newline: force line break at \n before pixel-width check
     bool hardBreak = false;
     {
-      size_t nlPos = displayText.find('\n', static_cast<size_t>(lineStartIdx));
-      if (nlPos != std::string::npos && static_cast<int>(nlPos) < lineEndIdx) {
-        lineEndIdx = static_cast<int>(nlPos);
+      const char* nlPos = strchr(displayText + lineStartIdx, '\n');
+      if (nlPos != nullptr && static_cast<int>(nlPos - displayText) < lineEndIdx) {
+        lineEndIdx = static_cast<int>(nlPos - displayText);
         hardBreak = true;
       }
     }
 
-    std::string lineText =
-        displayText.substr(static_cast<size_t>(lineStartIdx), static_cast<size_t>(lineEndIdx - lineStartIdx));
-    int textWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
+    int textWidth;
+    {
+      LineGuard guard(displayText, lineEndIdx);
+      textWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, displayText + lineStartIdx, EpdFontFamily::REGULAR);
+    }
     if (textWidth <= maxLineWidth) {
-      lines[lineCount].startIdx = lineStartIdx;
-      lines[lineCount].endIdx = lineEndIdx;
-      lines[lineCount].hardBreak = hardBreak;
+      _lines[lineCount].startIdx = lineStartIdx;
+      _lines[lineCount].endIdx = lineEndIdx;
+      _lines[lineCount].hardBreak = hardBreak;
       lineCount++;
 
       // Last segment of the text?
-      if (lineEndIdx == static_cast<int>(displayText.length())) break;
+      if (lineEndIdx == textLen) break;
 
       lineStartIdx = hardBreak ? (lineEndIdx + 1) : lineEndIdx;
-      lineEndIdx = static_cast<int>(displayText.length());
+      lineEndIdx = textLen;
     } else {
       // Walk back one full UTF-8 character — not just one byte.
       lineEndIdx -= 1;
       while (lineEndIdx > lineStartIdx) {
-        unsigned char c = static_cast<unsigned char>(displayText[static_cast<size_t>(lineEndIdx)]);
+        unsigned char c = static_cast<unsigned char>(displayText[lineEndIdx]);
         if ((c & 0xC0) != 0x80) break;  // not a continuation byte
         lineEndIdx -= 1;
       }
@@ -1321,44 +1364,55 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
   int cursorLineY = startY;
 
   for (int li = firstVisible; li < lineCount; li++) {
-    const auto& line = lines[li];
+    const auto& line = _lines[li];
     const int drawY = startY + (li - firstVisible) * lineHeight;
     const int lineStartX = leftMargin;
-    std::string lineText =
-        displayText.substr(static_cast<size_t>(line.startIdx), static_cast<size_t>(line.endIdx - line.startIdx));
     const bool isLastLine = (li == lineCount - 1);
 
     if (isLastLine) {
       // Last visible line: handle candidate/tap-letter highlighting + cursor
-      size_t confLen = strlen(confirmedText);
+      const size_t confLen = strlen(confirmedText);
       int confLenInLine = static_cast<int>(confLen) - line.startIdx;
+      if (confLenInLine > line.endIdx - line.startIdx) confLenInLine = line.endIdx - line.startIdx;
 
       if (!isPassword && hasCandidate && _mode == t4::T4Mode::PREDICT && confLenInLine > 0) {
         // Draw confirmed portion normally, candidate inverted
-        std::string confPart = lineText.substr(0, static_cast<size_t>(confLenInLine));
-        renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, confPart.c_str(), true);
-        int confW = renderer.getTextAdvanceX(UI_12_FONT_ID, confPart.c_str(), EpdFontFamily::REGULAR);
-        std::string candPart = lineText.substr(static_cast<size_t>(confLenInLine));
-        int candW = renderer.getTextAdvanceX(UI_12_FONT_ID, candPart.c_str(), EpdFontFamily::REGULAR);
-        if (candW > 0) {
-          int candX = lineStartX + confW;
-          renderer.fillRect(candX, drawY, candW + 4, lineHeight, true);
-          renderer.drawText(UI_12_FONT_ID, candX + 2, drawY, candPart.c_str(), false);
+        const char* confPart = displayText + line.startIdx;
+        int confW;
+        {
+          LineGuard guard(displayText, line.startIdx + confLenInLine);
+          renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, confPart, true);
+          confW = renderer.getTextAdvanceX(UI_12_FONT_ID, confPart, EpdFontFamily::REGULAR);
         }
-        int beforeWidth = confW + (candW > 0 ? candW + 4 : 0);
+        const char* candPart = displayText + line.startIdx + confLenInLine;
+        int candW;
+        {
+          LineGuard guard(displayText, line.endIdx);
+          candW = renderer.getTextAdvanceX(UI_12_FONT_ID, candPart, EpdFontFamily::REGULAR);
+          if (candW > 0) {
+            const int candX = lineStartX + confW;
+            renderer.fillRect(candX, drawY, candW + 4, lineHeight, true);
+            renderer.drawText(UI_12_FONT_ID, candX + 2, drawY, candPart, false);
+          }
+        }
+        const int beforeWidth = confW + (candW > 0 ? candW + 4 : 0);
         cursorPixelX = lineStartX + beforeWidth;
       } else if (!isPassword && hasCandidate && _mode == t4::T4Mode::PREDICT && confLenInLine <= 0) {
         // Confirmed text ended on previous line; entire last line is candidate
-        int candW = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
+        LineGuard guard(displayText, line.endIdx);
+        const char* lineText = displayText + line.startIdx;
+        const int candW = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText, EpdFontFamily::REGULAR);
         renderer.fillRect(lineStartX, drawY, candW + 4, lineHeight, true);
-        renderer.drawText(UI_12_FONT_ID, lineStartX + 2, drawY, lineText.c_str(), false);
+        renderer.drawText(UI_12_FONT_ID, lineStartX + 2, drawY, lineText, false);
         cursorPixelX = lineStartX + candW + 4;
       } else if (!isPassword && _mode == t4::T4Mode::MULTI_TAP) {
         // Multi-tap: confirmed text + cycling letter highlighted
-        renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, lineText.c_str(), true);
+        LineGuard guard(displayText, line.endIdx);
+        const char* lineText = displayText + line.startIdx;
+        renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, lineText, true);
         uint8_t tapLen = 0;
         const char* tapPtr = _inputEngine.getCurrentTapLetter(tapLen);
-        int confW = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
+        const int confW = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText, EpdFontFamily::REGULAR);
         if (tapPtr && tapLen > 0) {
           char tapStr[5];
           uint8_t dispLen = tapLen;
@@ -1368,8 +1422,8 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
             memcpy(tapStr, tapPtr, tapLen);
           }
           tapStr[dispLen] = '\0';
-          int tapW = renderer.getTextWidth(UI_12_FONT_ID, tapStr);
-          int tapX = lineStartX + confW;
+          const int tapW = renderer.getTextWidth(UI_12_FONT_ID, tapStr);
+          const int tapX = lineStartX + confW;
           renderer.fillRect(tapX, drawY, tapW + 4, lineHeight, true);
           renderer.drawText(UI_12_FONT_ID, tapX + 2, drawY, tapStr, false);
           cursorPixelX = tapX + tapW + 4;
@@ -1378,14 +1432,17 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
         }
       } else {
         // Password or no candidate: draw all text normally
-        renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, lineText.c_str(), true);
-        int beforeWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
+        LineGuard guard(displayText, line.endIdx);
+        const char* lineText = displayText + line.startIdx;
+        renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, lineText, true);
+        const int beforeWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText, EpdFontFamily::REGULAR);
         cursorPixelX = lineStartX + beforeWidth;
       }
       cursorLineY = drawY;
     } else {
       // Non-last line: draw normally
-      renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, lineText.c_str(), true);
+      LineGuard guard(displayText, line.endIdx);
+      renderer.drawText(UI_12_FONT_ID, lineStartX, drawY, displayText + line.startIdx, true);
     }
   }
 
@@ -1393,13 +1450,14 @@ int T4EntryActivity::renderTextField(int startY, int lineHeight, int maxHeight, 
   // Single-line: use actual text width.  Multi-line: use maxLineWidth.
   int fieldWidth = maxLineWidth;
   if (lineCount <= 1) {
-    std::string lastLineText = (lineCount > 0)
-                                   ? displayText.substr(static_cast<size_t>(lines[0].startIdx),
-                                                        static_cast<size_t>(lines[0].endIdx - lines[0].startIdx))
-                                   : std::string();
-    fieldWidth = lastLineText.empty()
-                     ? 0
-                     : renderer.getTextAdvanceX(UI_12_FONT_ID, lastLineText.c_str(), EpdFontFamily::REGULAR);
+    if (lineCount > 0) {
+      LineGuard guard(displayText, _lines[0].endIdx);
+      const char* lastLineText = displayText + _lines[0].startIdx;
+      fieldWidth =
+          (*lastLineText == '\0') ? 0 : renderer.getTextAdvanceX(UI_12_FONT_ID, lastLineText, EpdFontFamily::REGULAR);
+    } else {
+      fieldWidth = 0;
+    }
   }
   GUI.drawTextField(renderer, Rect{0, startY, pageWidth, visibleHeight}, fieldWidth, false, leftMargin,
                     pageWidth - leftMargin - rightMargin);
@@ -1577,16 +1635,6 @@ int T4EntryActivity::maxLetterBlockHeight(int lineHeight) const {
 // ── renderModeHint ────────────────────────────────────────────────────────
 
 int T4EntryActivity::renderModeHint(int blocksBaseY) {
-  // Compose the hint text. Predict mode prepends the Up+Right candidate
-  // combo sentence; Multi-tap shows only the short/long-press legend.
-  const char* hints = tr(STR_T4_HINTS_LONG_PRESS);
-  char text[250];
-  if (_mode == t4::T4Mode::PREDICT) {
-    snprintf(text, sizeof(text), "%s %s", tr(STR_T4_HINTS_COMBO), hints);
-  } else {
-    snprintf(text, sizeof(text), "%s", hints);
-  }
-
   // Constrain to the text-field area (between side-button hint capsules)
   // and anchor the block's bottom edge just above the letter panels.
   const int pageWidth = renderer.getScreenWidth();
@@ -1595,19 +1643,45 @@ int T4EntryActivity::renderModeHint(int blocksBaseY) {
   textFieldMargins(pageWidth, leftMargin, rightMargin);
   const int maxWidth = pageWidth - leftMargin - rightMargin;
 
+  // Re-wrap the hint only when its content (mode) or available width changes;
+  // the wrapped lines are cached in _hintText, so render() never allocates.
+  if (_hintCacheMode != static_cast<int>(_mode) || _hintCacheWidth != maxWidth) {
+    // Compose the hint text. Predict mode prepends the Up+Right candidate
+    // combo sentence; Multi-tap shows only the short/long-press legend.
+    const char* hints = tr(STR_T4_HINTS_LONG_PRESS);
+    if (_mode == t4::T4Mode::PREDICT) {
+      snprintf(_hintText, sizeof(_hintText), "%s %s", tr(STR_T4_HINTS_COMBO), hints);
+    } else {
+      snprintf(_hintText, sizeof(_hintText), "%s", hints);
+    }
+
+    auto lines = renderer.wrappedText(SMALL_FONT_ID, _hintText, maxWidth, /*maxLines=*/kMaxHintLines);
+    _hintLineCount = 0;
+    size_t offset = 0;
+    for (size_t i = 0; i < lines.size() && i < kMaxHintLines; i++) {
+      const size_t len = lines[i].size();
+      if (offset + len + 1 > sizeof(_hintText)) break;
+      memcpy(_hintText + offset, lines[i].c_str(), len + 1);
+      _hintLineStart[_hintLineCount++] = static_cast<uint16_t>(offset);
+      offset += len + 1;
+    }
+    _hintCacheMode = static_cast<int>(_mode);
+    _hintCacheWidth = maxWidth;
+  }
+
   // Standard hint typography (SMALL_FONT_ID), same as drawHelpText.
   const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
   static constexpr int kHintGapAboveBlocks = 100;
-  auto lines = renderer.wrappedText(SMALL_FONT_ID, text, maxWidth, /*maxLines=*/6);
   const int bottomY = blocksBaseY - kHintGapAboveBlocks;
-  const int topY = bottomY - static_cast<int>(lines.size()) * lineHeight;
-  for (size_t i = 0; i < lines.size(); i++) {
-    const int w = renderer.getTextAdvanceX(SMALL_FONT_ID, lines[i].c_str(), EpdFontFamily::REGULAR);
+  const int topY = bottomY - static_cast<int>(_hintLineCount) * lineHeight;
+  for (uint8_t i = 0; i < _hintLineCount; i++) {
+    const char* line = _hintText + _hintLineStart[i];
+    const int w = renderer.getTextAdvanceX(SMALL_FONT_ID, line, EpdFontFamily::REGULAR);
     const int x = leftMargin + (maxWidth - w) / 2;
-    renderer.drawText(SMALL_FONT_ID, x, topY + static_cast<int>(i) * lineHeight, lines[i].c_str(), true);
+    renderer.drawText(SMALL_FONT_ID, x, topY + static_cast<int>(i) * lineHeight, line, true);
   }
 
-  return static_cast<int>(lines.size()) * lineHeight + kHintGapAboveBlocks;
+  return static_cast<int>(_hintLineCount) * lineHeight + kHintGapAboveBlocks;
 }
 
 // ── renderCandidateComboHint ─────────────────────────────────────────────

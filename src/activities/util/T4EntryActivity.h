@@ -30,6 +30,11 @@ class T4EntryActivity : public Activity {
   static constexpr unsigned long BACKSPACE_INITIAL_DELAY_MS = 500;
   static constexpr unsigned long BACKSPACE_REPEAT_MS = 150;
 
+  // Candidate-buffer budget: a third of the largest free block, clamped to
+  // the dictionary's supported span. Keeps the per-node word buffer small
+  // when BLE/MeshCore has already fragmented the heap.
+  static constexpr uint32_t kCandidateBudgetDivisor = 3;
+
   // Learned-word store, shared by every Text field (see docs/file-formats.md).
   static constexpr const char* USER_LEXICON_DIR = "/t4dicts";
   static constexpr const char* USER_LEXICON_PATH = "/t4dicts/user_words.bin";
@@ -83,14 +88,16 @@ class T4EntryActivity : public Activity {
 
   // Learn the words of the confirmed text. Words the field started with
   // are skipped — they were not typed by the user.
-  void learnIntoLexicon(const std::string& text);
+  void learnIntoLexicon(const char* text);
 
   // Shift/uppercase helpers
   void cycleShift();
   // Apply the active Shift/Caps state to a candidate word for display and
   // commit (Caps → whole word, Shift/auto-cap → first letter only). Pure:
   // reads state but does not consume the one-shot Shift / auto-cap.
-  std::string applyWordCase(const char* word) const;
+  // Writes the result into @p out (NUL-terminated) and returns its length,
+  // or 0 when @p word is empty or the result does not fit in @p cap.
+  size_t applyWordCase(const char* word, char* out, size_t cap) const;
 
   // ── Render helpers (called from render()) ─────────────────────────────
 
@@ -193,8 +200,41 @@ class T4EntryActivity : public Activity {
   // changes (cycleLanguage, setLanguage); never null.
   const t4::SentenceConfig* _sentenceCfg;
 
-  // Render buffer (heap-allocated, reused across render calls)
+  // Render scratch (no heap allocation on the render path).
+  //
+  // _displayBuf holds the composed text field for one render and _lines
+  // caches its wrapped line boundaries. The mode hint is wrapped only when
+  // its content or available width changes (_hintCache*) and stored as
+  // offsets into _hintText, so render() itself never allocates.
+  static constexpr int kDisplayBufSize = 512;
+  static constexpr int kMaxTextLines = 30;
+  static constexpr int kMaxHintLines = 6;
+
+  struct TextLineInfo {
+    int startIdx;
+    int endIdx;
+    bool hardBreak;
+  };
+
+  // Render buffer (heap-allocated in onEnter, reused across render calls)
   std::unique_ptr<char[]> _displayBuf;
+
+  // Keypress scratch for punctuation/mode-transition text edits. A fixed
+  // member replaces the std::string copies these paths used to make — they
+  // run on every keypress and must not allocate.
+  char _punctText[t4::T4InputEngine<>::kMaxTextLen + 1] = {};
+
+  // Copy the engine's confirmed text into @p dst (capacity kMaxTextLen + 1)
+  // and return its length. Fixed-buffer replacement for the std::string
+  // copies the keypress paths used to make.
+  size_t loadConfirmedText(char* dst) const;
+
+  TextLineInfo _lines[kMaxTextLines] = {};
+  char _hintText[256] = {};
+  uint16_t _hintLineStart[kMaxHintLines] = {};
+  uint8_t _hintLineCount = 0;
+  int16_t _hintCacheMode = -1;
+  int _hintCacheWidth = -1;
 
   // Learned words, merged into the predictions. Null for password and URL
   // input, which neither read from nor write to the lexicon.

@@ -57,6 +57,32 @@ std::vector<uint8_t> readFile(const std::string& path) {
   return data;
 }
 
+// Byte reader over a memory range, mirroring the file-backed lambda the
+// dictionary passes to the pure span helpers.
+struct MemoryByteReader {
+  const uint8_t* data = nullptr;
+  size_t size = 0;
+  size_t pos = 0;
+  int operator()() { return pos < size ? data[pos++] : -1; }
+};
+
+// Navigate the en_1000 trie along child-offset indices (button - 1).
+bool navigateEnTrie(const std::vector<uint8_t>& data, const uint32_t* seq, size_t seqLen, T4TrieNode& out) {
+  if (data.size() < T4_TRIE_HEADER_SIZE) return false;
+  T4TrieHeader hdr;
+  memcpy(&hdr, data.data(), sizeof(hdr));
+  const uint8_t* nodePool = data.data() + T4_TRIE_HEADER_SIZE;
+  T4TrieNode node;
+  if (!readTrieNode(nodePool, hdr.node_count, 0, node)) return false;
+  for (size_t i = 0; i < seqLen; i++) {
+    const uint32_t off = node.child_offset[seq[i]];
+    if (off == T4_TRIE_NULL_OFFSET) return false;
+    if (!readTrieNode(nodePool, hdr.node_count, (off - T4_TRIE_HEADER_SIZE) / T4_TRIE_NODE_SIZE, node)) return false;
+  }
+  out = node;
+  return true;
+}
+
 }  // namespace
 
 TEST(T4TrieFormat, ValidateRealEnTrie) {
@@ -98,6 +124,105 @@ TEST(T4TrieFormat, ValidateRealEnTrie) {
 
   // "hello" should be the first candidate (highest frequency)
   EXPECT_STREQ(buf, "hello");
+}
+
+TEST(T4TrieFormat, MeasureCandidateSpanMatchesExtract) {
+  auto data = readFile(testPath("en_1000.trie"));
+  ASSERT_FALSE(data.empty());
+
+  // Node with 7 words: "any", "cry", "box", "dry", "art", "boy", "fox".
+  const uint32_t seq[] = {0, 2, 3};
+  T4TrieNode node;
+  ASSERT_TRUE(navigateEnTrie(data, seq, 3, node));
+  ASSERT_EQ(node.word_count, 7u);
+
+  T4TrieHeader hdr;
+  memcpy(&hdr, data.data(), sizeof(hdr));
+  const uint8_t* stringPool = data.data() + T4_TRIE_HEADER_SIZE + hdr.node_count * T4_TRIE_NODE_SIZE;
+  const size_t poolLen = data.size() - (stringPool - data.data());
+  const uint32_t poolRelative = node.str_offset - T4_TRIE_HEADER_SIZE - hdr.node_count * T4_TRIE_NODE_SIZE;
+
+  std::vector<char> extracted(4096);
+  const size_t extractedWords =
+      extractCandidates(stringPool, poolLen, poolRelative, node.word_count, extracted.data(), extracted.size());
+  ASSERT_EQ(extractedWords, 7u);
+
+  // Measurement must cover exactly the extracted words, no more, no less.
+  MemoryByteReader reader{stringPool + poolRelative, poolLen - poolRelative};
+  uint16_t measuredWords = 0;
+  const size_t needed = measureCandidateSpan(reader, node.word_count, SIZE_MAX, measuredWords);
+  EXPECT_EQ(measuredWords, extractedWords);
+  size_t expectedBytes = 0;
+  for (size_t i = 0; i < extractedWords; i++) expectedBytes += strlen(extracted.data() + expectedBytes) + 1;
+  EXPECT_EQ(needed, expectedBytes);
+
+  // An exact-size read must reproduce every word (catches a tail off-by-one).
+  MemoryByteReader readReader{stringPool + poolRelative, poolLen - poolRelative};
+  std::vector<char> exact(needed);
+  const uint16_t readWords = readCandidateSpan(readReader, node.word_count, exact.data(), exact.size());
+  EXPECT_EQ(readWords, extractedWords);
+  size_t pos = 0;
+  for (size_t i = 0; i < readWords; i++) {
+    EXPECT_STREQ(exact.data() + pos, extracted.data() + pos);
+    pos += strlen(exact.data() + pos) + 1;
+  }
+}
+
+TEST(T4TrieFormat, MeasureCandidateSpanStopsBeforePartialWord) {
+  auto data = readFile(testPath("en_1000.trie"));
+  ASSERT_FALSE(data.empty());
+
+  const uint32_t seq[] = {0, 2, 3};
+  T4TrieNode node;
+  ASSERT_TRUE(navigateEnTrie(data, seq, 3, node));
+  ASSERT_EQ(node.word_count, 7u);
+
+  T4TrieHeader hdr;
+  memcpy(&hdr, data.data(), sizeof(hdr));
+  const uint8_t* stringPool = data.data() + T4_TRIE_HEADER_SIZE + hdr.node_count * T4_TRIE_NODE_SIZE;
+  const size_t poolLen = data.size() - (stringPool - data.data());
+  const uint32_t poolRelative = node.str_offset - T4_TRIE_HEADER_SIZE - hdr.node_count * T4_TRIE_NODE_SIZE;
+
+  // "any\0cry\0" is exactly 8 bytes; the cap must exclude the next word
+  // rather than count a partial one.
+  MemoryByteReader reader{stringPool + poolRelative, poolLen - poolRelative};
+  uint16_t measuredWords = 0;
+  const size_t needed = measureCandidateSpan(reader, node.word_count, 8, measuredWords);
+  EXPECT_EQ(needed, 8u);
+  EXPECT_EQ(measuredWords, 2u);
+
+  MemoryByteReader checkReader{stringPool + poolRelative, poolLen - poolRelative};
+  std::vector<char> buf(needed);
+  EXPECT_EQ(readCandidateSpan(checkReader, node.word_count, buf.data(), buf.size()), measuredWords);
+  EXPECT_EQ(buf[needed - 1], '\0');
+}
+
+TEST(T4TrieFormat, ReadCandidateSpanTruncatesAtCapacity) {
+  auto data = readFile(testPath("en_1000.trie"));
+  ASSERT_FALSE(data.empty());
+
+  const uint32_t seq[] = {0, 2, 3};
+  T4TrieNode node;
+  ASSERT_TRUE(navigateEnTrie(data, seq, 3, node));
+  ASSERT_EQ(node.word_count, 7u);
+
+  T4TrieHeader hdr;
+  memcpy(&hdr, data.data(), sizeof(hdr));
+  const uint8_t* stringPool = data.data() + T4_TRIE_HEADER_SIZE + hdr.node_count * T4_TRIE_NODE_SIZE;
+  const size_t poolLen = data.size() - (stringPool - data.data());
+  const uint32_t poolRelative = node.str_offset - T4_TRIE_HEADER_SIZE - hdr.node_count * T4_TRIE_NODE_SIZE;
+
+  // 6 bytes hold "any\0" plus two bytes of "cry"; the partial word is dropped.
+  MemoryByteReader reader{stringPool + poolRelative, poolLen - poolRelative};
+  std::vector<char> small(6);
+  EXPECT_EQ(readCandidateSpan(reader, node.word_count, small.data(), small.size()), 1u);
+}
+
+TEST(T4TrieFormat, MeasureCandidateSpanHandlesNoWords) {
+  MemoryByteReader reader{nullptr, 0};
+  uint16_t measuredWords = 0;
+  EXPECT_EQ(measureCandidateSpan(reader, 0, 4096, measuredWords), 0u);
+  EXPECT_EQ(measuredWords, 0u);
 }
 
 TEST(T4TrieFormat, DeadEndSequenceReturnsNoChild) {

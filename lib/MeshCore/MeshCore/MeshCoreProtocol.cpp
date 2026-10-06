@@ -143,6 +143,45 @@ size_t buildGetBattery(uint8_t* out, size_t maxLen) {
   return 1;
 }
 
+size_t buildGetCustomVars(uint8_t* out, size_t maxLen) {
+  if (maxLen < 1) {
+    LOG_ERR("MESH", "buildGetCustomVars: buffer too small");
+    return 0;
+  }
+  out[0] = CMD_GET_CUSTOM_VARS;
+  return 1;
+}
+
+size_t buildSetCustomVar(uint8_t* out, size_t maxLen, const char* name, const char* value) {
+  // Companion parses "name:value" from byte 1 (see MyMesh.cpp CMD_SET_CUSTOM_VAR).
+  const size_t nameLen = strlen(name);
+  const size_t valueLen = strlen(value);
+  const size_t needed = 1 + nameLen + 1 + valueLen;
+  if (maxLen < needed) {
+    LOG_ERR("MESH", "buildSetCustomVar: buffer too small");
+    return 0;
+  }
+  out[0] = CMD_SET_CUSTOM_VAR;
+  memcpy(out + 1, name, nameLen);
+  out[1 + nameLen] = ':';
+  memcpy(out + 1 + nameLen + 1, value, valueLen);
+  return needed;
+}
+
+size_t buildSendTelemetryReq(uint8_t* out, size_t maxLen) {
+  // A 4-byte frame (cmd + 3 zero bytes) is the companion's 'self' telemetry
+  // request (MyMesh.cpp: CMD_SEND_TELEMETRY_REQ && len == 4).
+  if (maxLen < 4) {
+    LOG_ERR("MESH", "buildSendTelemetryReq: buffer too small");
+    return 0;
+  }
+  out[0] = CMD_SEND_TELEMETRY_REQ;
+  out[1] = 0;
+  out[2] = 0;
+  out[3] = 0;
+  return 4;
+}
+
 size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact& contact) {
   // Format: 0x09 <pubkey[32]> <type> <flags> <out_path_len> <out_path[64]> <name[32]> <ts[4]>
   static constexpr size_t NEEDED = 1 + 32 + 1 + 1 + 1 + 64 + 32 + 4;
