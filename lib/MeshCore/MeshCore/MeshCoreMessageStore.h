@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "MeshCoreRecentSenders.h"
 #include "MeshCoreTypes.h"
 
 // Maximum messages stored per thread on SD card
@@ -107,15 +108,25 @@ class MeshCoreMessageStore {
   /// has no received messages; @p out is left untouched on failure.
   bool loadNewestReceivedDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out);
 
-  /// Loads the most recent outgoing (SENT) message in a channel conversation,
-  /// scanning backwards from the newest id. Returns false when nothing was
-  /// sent in this channel; @p out is left untouched on failure.
-  bool loadNewestSentChannelMessage(uint8_t channelIdx, MeshCoreMessage& out);
+  // Reply-picker caches (per conversation) -------------------------------
 
-  /// Loads the most recent outgoing (SENT) direct message to a contact,
-  /// scanning backwards from the newest id. Returns false when nothing was
-  /// sent to this contact; @p out is left untouched on failure.
-  bool loadNewestSentDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out);
+  /// Cached recent channel senders, newest first, into fixed 64-byte slots.
+  /// Read-only. @p cachePresent reports whether senders.bin exists: when it is
+  /// absent (a thread created before the cache), the caller keeps the picker
+  /// entry enabled and loadRecentChannelSenders() builds it on open.
+  /// Returns the number of names written (0 when none).
+  uint8_t readRecentChannelSenders(uint8_t channelIdx, char (*out)[64], uint8_t maxNames, bool& cachePresent);
+
+  /// Same, but when senders.bin is absent builds it once with a bounded
+  /// backward scan of the stored messages and persists it. Used when the
+  /// picker opens. Returns the number of names written (0 when none).
+  uint8_t loadRecentChannelSenders(uint8_t channelIdx, char (*out)[64], uint8_t maxNames);
+
+  /// Most recent outgoing text in the conversation (Repeat Last), cached on
+  /// send so the MENU entry does not scan the thread. Returns false when
+  /// nothing was sent yet.
+  bool loadLastSentChannelText(uint8_t channelIdx, char* out, size_t outSize);
+  bool loadLastSentDirectText(const uint8_t* pubkey32, char* out, size_t outSize);
 
   // Conversation metadata
   bool getChannelMeta(uint8_t channelIdx, ConvMeta& out);
@@ -163,6 +174,10 @@ class MeshCoreMessageStore {
   // Empty if no companion has been set.
   char companionDir[50] = {};
 
+  // Scratch for noteRecentSender()'s read-modify-write. Appends run on the UI
+  // task, so one shared slot avoids a 512-byte stack local.
+  char recentSendersScratch[MESHCORE_MAX_RECENT_SENDERS][64] = {};
+
   bool ensureDir(const char* path);
   void buildDataPath(const char* subPath, char* out, size_t maxLen) const;
   void buildChannelPath(uint8_t idx, char* out, size_t maxLen);
@@ -195,6 +210,22 @@ class MeshCoreMessageStore {
   /// Scan a conversation backwards from its newest id for the first message
   /// with the given direction. Returns false when none exists.
   bool loadNewestMessageByDirection(const char* convPath, MsgDirection direction, MeshCoreMessage& out);
+
+  // Recent-sender cache helpers (senders.bin).
+  /// Reads the cache into `out`. Returns false when the file is absent or
+  /// unreadable (the caller decides whether to backfill).
+  bool readRecentSenders(const char* convPath, char (*out)[64], uint8_t& count, uint8_t maxNames);
+  bool writeRecentSenders(const char* convPath, const char (*names)[64], uint8_t count);
+  /// Maintains an existing cache on message arrival (best-effort; a missing
+  /// file is left to the picker's one-time backfill).
+  void noteRecentSender(const char* convPath, const char* senderName);
+  /// One-time cache build from a bounded backward scan; persists the result
+  /// (even when empty) so later opens read the cache instead of rescanning.
+  void backfillRecentSenders(const char* convPath, char (*out)[64], uint8_t& count, uint8_t maxNames);
+
+  // Last-sent text cache helpers (lastsent.bin).
+  bool readLastSentText(const char* convPath, char* out, size_t outSize);
+  void writeLastSentText(const char* convPath, const char* text);
 
   /// Read a single message by id from a conversation directory.
   bool readMessage(const char* convPath, uint32_t id, MeshCoreMessage& msg);

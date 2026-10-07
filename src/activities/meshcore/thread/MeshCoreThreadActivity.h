@@ -8,7 +8,6 @@
 #include <cstring>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "../MeshCoreDisconnectPopup.h"
 #include "../MeshCoreSettings.h"
@@ -118,10 +117,11 @@ class MeshCoreThreadActivity final : public Activity {
   // empty space at the bottom of the viewport). id == 0 means no filler.
   MeshCoreMessage _fillerMsg = {};
 
-  // Reusable scratch for the MENU scans (refreshLastSent / refreshTargets).
-  // Scanning one message at a time replaces the old MeshCoreMessage[16] heap
-  // batch (~4.3 KB transient) whose allocation split the largest free block
-  // and starved the font prewarm after the reply/repeat flow.
+  // Reusable scratch for the MENU caches: refreshLastSent() reads the
+  // lastsent.bin text into _scanMsg.text. A single message instead of the old
+  // MeshCoreMessage[16] heap batch (~4.3 KB transient) whose allocation split
+  // the largest free block and starved the font prewarm after the
+  // reply/repeat flow.
   MeshCoreMessage _scanMsg = {};
 
   // Cached conversation metadata (scroll state lives here)
@@ -175,14 +175,15 @@ class MeshCoreThreadActivity final : public Activity {
   // Menu settings — loaded when MENU tab is opened, freed on tab switch or exit
   std::unique_ptr<MeshCoreSettings> _menuSettings;
 
-  // Reply picker (channel threads): recent senders, newest first, collected on
-  // MENU entry by ThreadReply::refreshTargets(). The popup overlays the MENU
-  // tab while active; _replyNames backs its options and the select callback.
+  // Reply picker (channel threads): recent senders, newest first, cached by
+  // the store (senders.bin) and refreshed on MENU entry by
+  // ThreadReply::refreshTargets(). Fixed slots — no heap, so nothing to
+  // release before the composer opens.
   OptionPopup _replyPopup;
-  std::vector<std::string> _replyNames;
-  /// True when the last refresh found at least one reply target. Kept after
-  /// _replyNames is released before opening the composer, so the MENU item
-  /// stays enabled and openPicker() can rebuild the list lazily.
+  char _replySenders[MESHCORE_MAX_RECENT_SENDERS][64] = {};
+  uint8_t _replySenderCount = 0;
+  /// True when the picker has targets, or when the cache is missing and the
+  /// picker's one-time backfill must decide. Gates the MENU item.
   bool _hasReplyTargets = false;
   /// True while the Confirm press that opens the picker is still held; the
   /// picker itself opens on the release (see _loopInput).

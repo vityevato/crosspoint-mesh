@@ -6,11 +6,14 @@ class MeshCoreThreadActivity;
 /// All methods are static — they take the Activity reference for state access
 /// (via friend), mirroring ThreadMessenger / ThreadMenuRenderer.
 struct ThreadReply {
-  /// Collect the most recent channel senders into act._replyNames, newest
-  /// first, capped at OptionPopup::MAX_OPTIONS. Runs on MENU tab entry (not
-  /// per render). On OOM the scan stops early and keeps the names collected
-  /// so far — the caller degrades to a shorter (or empty) picker.
-  static void refreshTargets(MeshCoreThreadActivity& act);
+  /// Refresh act._replySenders / _replySenderCount from the store's
+  /// per-channel sender cache (newest first, capped at
+  /// MESHCORE_MAX_RECENT_SENDERS). Runs on MENU tab entry and on picker open.
+  /// @param buildIfMissing when true, a missing cache is built once with a
+  ///        bounded backward scan of the stored messages (the picker's open
+  ///        path); when false the read is strictly read-only and a missing
+  ///        cache leaves the MENU item optimistically enabled.
+  static void refreshTargets(MeshCoreThreadActivity& act, bool buildIfMissing = false);
 
   /// Open the option picker over the MENU tab. Selecting a name launches the
   /// normal send activity with a "@[Name] " mention prefilled.

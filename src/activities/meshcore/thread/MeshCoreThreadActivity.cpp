@@ -236,9 +236,11 @@ void MeshCoreThreadActivity::scrollToEnd() {
 void MeshCoreThreadActivity::refreshLastSent() {
   MESHCORE_LOG_HEAP("Menu refreshLastSent:before");
   _lastSentText.clear();
+  // Read the per-conversation lastsent.bin cache written on every outgoing
+  // message. A missing cache means nothing was sent here yet.
   MeshCoreMessage& msg = _scanMsg;
-  const bool found = isChannel ? store.loadNewestSentChannelMessage(channelIdx, msg)
-                               : store.loadNewestSentDirectMessage(contactPubkey, msg);
+  const bool found = isChannel ? store.loadLastSentChannelText(channelIdx, msg.text, sizeof(msg.text))
+                               : store.loadLastSentDirectText(contactPubkey, msg.text, sizeof(msg.text));
   if (!found) {
     MESHCORE_LOG_HEAP("Menu refreshLastSent:after");
     return;
@@ -893,13 +895,8 @@ void MeshCoreThreadActivity::completeLocationOp(bool success) {
 // --- Message sending ---
 
 void MeshCoreThreadActivity::sendMessage(const char* initialText) {
-  // Release the reply-target list before the composer opens (same as the
-  // reply picker's select callback): the MENU caches must not stay live in
-  // the heap the keyboard allocates from, or their freed blocks cannot
-  // coalesce back into the large run the font prewarm needs. _hasReplyTargets
-  // stays set, so the MENU item remains enabled and the picker rebuilds the
-  // list lazily.
-  std::vector<std::string>().swap(_replyNames);
+  // The reply-target list is a fixed member buffer (no heap), so nothing needs
+  // releasing before the composer's keyboard allocates.
   MESHCORE_LOG_HEAP("sendMessage:before composer");
   char title[96];
   snprintf(title, sizeof(title), tr(STR_MESHCORE_SEND_TO), threadName);

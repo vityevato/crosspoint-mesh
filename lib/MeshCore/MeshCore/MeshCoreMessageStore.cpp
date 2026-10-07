@@ -20,6 +20,12 @@ static constexpr char COMPANION_FILE[] = "/.crosspoint/meshcore/companion.json";
 static constexpr uint8_t META_FILE_VERSION = 3;
 static constexpr uint8_t META_FILE_VERSION_PRE_META_FONT = 2;
 
+// Reply-picker caches (see docs/file-formats.md).
+static constexpr uint8_t SENDERS_FILE_VERSION = 1;
+static constexpr uint8_t LAST_SENT_FILE_VERSION = 1;
+// Upper bound on the one-time senders.bin backfill scan (messages read).
+static constexpr uint16_t RECENT_SENDERS_BACKFILL_SCAN = 32;
+
 void MeshCoreMessageStore::bleAddrToKey(const char* bleAddr, char* keyOut, size_t keySize) {
   if (!bleAddr || keySize < 13) {
     if (keySize > 0) keyOut[0] = '\0';
@@ -258,7 +264,17 @@ bool MeshCoreMessageStore::appendChannelMessage(uint8_t channelIdx, const MeshCo
   meta.count++;
   meta.endId = newId;
   meta.totalPx += msgWithId.heightPx;
-  return writeMeta(convPath, meta);
+  if (!writeMeta(convPath, meta)) return false;
+
+  // Best-effort reply-picker caches; a cache write failure must not fail the
+  // message append.
+  if (msgWithId.direction == MsgDirection::RECEIVED && msgWithId.senderName[0] != '\0') {
+    noteRecentSender(convPath, msgWithId.senderName);
+  }
+  if (msgWithId.direction == MsgDirection::SENT && msgWithId.text[0] != '\0') {
+    writeLastSentText(convPath, msgWithId.text);
+  }
+  return true;
 }
 
 bool MeshCoreMessageStore::loadChannelMessages(uint8_t channelIdx, uint32_t startId, uint8_t maxCount, bool up,
@@ -359,7 +375,13 @@ bool MeshCoreMessageStore::appendDirectMessage(const uint8_t* pubkey32, const Me
 
   if (outId) *outId = newId;
 
-  return writeMeta(convPath, meta);
+  if (!writeMeta(convPath, meta)) return false;
+  // Best-effort Repeat Last cache; a cache write failure must not fail the
+  // message append.
+  if (msgWithId.direction == MsgDirection::SENT && msgWithId.text[0] != '\0') {
+    writeLastSentText(convPath, msgWithId.text);
+  }
+  return true;
 }
 
 bool MeshCoreMessageStore::loadDirectMessages(const uint8_t* pubkey32, uint32_t startId, uint8_t maxCount, bool up,
@@ -424,16 +446,155 @@ bool MeshCoreMessageStore::loadNewestReceivedDirectMessage(const uint8_t* pubkey
   return loadNewestMessageByDirection(convPath, MsgDirection::RECEIVED, out);
 }
 
-bool MeshCoreMessageStore::loadNewestSentChannelMessage(uint8_t channelIdx, MeshCoreMessage& out) {
+// --- Reply-picker caches (senders.bin / lastsent.bin) ---
+
+uint8_t MeshCoreMessageStore::readRecentChannelSenders(uint8_t channelIdx, char (*out)[64], uint8_t maxNames,
+                                                       bool& cachePresent) {
   char convPath[64];
   buildConvPath(channelIdx, convPath, sizeof(convPath));
-  return loadNewestMessageByDirection(convPath, MsgDirection::SENT, out);
+
+  uint8_t count = 0;
+  cachePresent = readRecentSenders(convPath, out, count, maxNames);
+  return count;
 }
 
-bool MeshCoreMessageStore::loadNewestSentDirectMessage(const uint8_t* pubkey32, MeshCoreMessage& out) {
+uint8_t MeshCoreMessageStore::loadRecentChannelSenders(uint8_t channelIdx, char (*out)[64], uint8_t maxNames) {
+  char convPath[64];
+  buildConvPath(channelIdx, convPath, sizeof(convPath));
+
+  uint8_t count = 0;
+  if (readRecentSenders(convPath, out, count, maxNames)) return count;
+  backfillRecentSenders(convPath, out, count, maxNames);
+  return count;
+}
+
+bool MeshCoreMessageStore::readRecentSenders(const char* convPath, char (*out)[64], uint8_t& count, uint8_t maxNames) {
+  count = 0;
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/senders.bin", convPath);
+
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) return false;
+
+  uint8_t version = 0;
+  uint8_t stored = 0;
+  if (file.read(&version, 1) != 1 || version != SENDERS_FILE_VERSION) return false;
+  if (file.read(&stored, 1) != 1) return false;
+  if (stored > maxNames) stored = maxNames;
+  for (uint8_t i = 0; i < stored; ++i) {
+    if (file.read(reinterpret_cast<uint8_t*>(out[i]), sizeof(out[i])) != static_cast<int>(sizeof(out[i]))) break;
+    out[i][sizeof(out[i]) - 1] = '\0';
+    if (out[i][0] == '\0') break;
+    ++count;
+  }
+  return true;
+}
+
+bool MeshCoreMessageStore::writeRecentSenders(const char* convPath, const char (*names)[64], uint8_t count) {
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/senders.bin", convPath);
+
+  HalFile file;
+  if (!Storage.openFileForWrite("MESH", filePath, file)) return false;
+
+  uint8_t version = SENDERS_FILE_VERSION;
+  if (file.write(&version, 1) != 1) return false;
+  if (file.write(&count, 1) != 1) return false;
+  for (uint8_t i = 0; i < count; ++i) {
+    // Fixed 64-byte slots; snprintf both truncates and NUL-pads.
+    char slot[64] = {};
+    snprintf(slot, sizeof(slot), "%s", names[i]);
+    if (file.write(reinterpret_cast<const uint8_t*>(slot), sizeof(slot)) != sizeof(slot)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void MeshCoreMessageStore::noteRecentSender(const char* convPath, const char* senderName) {
+  uint8_t count = 0;
+  // Maintain an existing cache only: when senders.bin is absent, the picker's
+  // one-time backfill builds the list from the full recent history (which
+  // already includes the message being appended now).
+  if (!readRecentSenders(convPath, recentSendersScratch, count, MESHCORE_MAX_RECENT_SENDERS)) return;
+  if (count > 0 && strcmp(recentSendersScratch[0], senderName) == 0) return;  // already newest
+
+  const uint8_t updated =
+      meshcore::recentSendersNote(recentSendersScratch, count, MESHCORE_MAX_RECENT_SENDERS, senderName);
+  writeRecentSenders(convPath, recentSendersScratch, updated);
+}
+
+void MeshCoreMessageStore::backfillRecentSenders(const char* convPath, char (*out)[64], uint8_t& count,
+                                                 uint8_t maxNames) {
+  count = 0;
+  ConvMeta meta;
+  if (!readMeta(convPath, meta) || meta.count == 0) return;
+
+  MeshCoreMessage msg;
+  uint32_t scanned = 0;
+  for (uint32_t id = meta.endId; id >= meta.startId && scanned < RECENT_SENDERS_BACKFILL_SCAN && count < maxNames;
+       ++scanned) {
+    if (readMessage(convPath, id, msg) && msg.direction == MsgDirection::RECEIVED && msg.senderName[0] != '\0') {
+      count = meshcore::recentSendersAppend(out, count, maxNames, msg.senderName);
+    }
+    if (id == 0) break;
+    --id;
+  }
+
+  // Persist even an empty result: it marks the backfill as done so later
+  // picker opens read the cache instead of rescanning.
+  writeRecentSenders(convPath, out, count);
+}
+
+bool MeshCoreMessageStore::readLastSentText(const char* convPath, char* out, size_t outSize) {
+  if (out == nullptr || outSize == 0) return false;
+  out[0] = '\0';
+
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/lastsent.bin", convPath);
+
+  HalFile file;
+  if (!Storage.openFileForRead("MESH", filePath, file)) return false;
+
+  uint8_t version = 0;
+  uint16_t len = 0;
+  if (file.read(&version, 1) != 1 || version != LAST_SENT_FILE_VERSION) return false;
+  if (file.read(reinterpret_cast<uint8_t*>(&len), 2) != 2) return false;
+  if (len == 0) return false;
+
+  const size_t toRead = (len < outSize - 1) ? len : outSize - 1;
+  if (file.read(reinterpret_cast<uint8_t*>(out), toRead) != static_cast<int>(toRead)) return false;
+  out[toRead] = '\0';
+  return true;
+}
+
+void MeshCoreMessageStore::writeLastSentText(const char* convPath, const char* text) {
+  const size_t len = strnlen(text, MAX_MSG_TEXT_LEN);
+  if (len == 0) return;
+
+  char filePath[80];
+  snprintf(filePath, sizeof(filePath), "%s/lastsent.bin", convPath);
+
+  HalFile file;
+  if (!Storage.openFileForWrite("MESH", filePath, file)) return;
+
+  uint8_t version = LAST_SENT_FILE_VERSION;
+  uint16_t len16 = static_cast<uint16_t>(len);
+  if (file.write(&version, 1) != 1) return;
+  if (file.write(reinterpret_cast<const uint8_t*>(&len16), 2) != 2) return;
+  file.write(reinterpret_cast<const uint8_t*>(text), len);
+}
+
+bool MeshCoreMessageStore::loadLastSentChannelText(uint8_t channelIdx, char* out, size_t outSize) {
+  char convPath[64];
+  buildConvPath(channelIdx, convPath, sizeof(convPath));
+  return readLastSentText(convPath, out, outSize);
+}
+
+bool MeshCoreMessageStore::loadLastSentDirectText(const uint8_t* pubkey32, char* out, size_t outSize) {
   char convPath[64];
   buildConvPath(pubkey32, convPath, sizeof(convPath));
-  return loadNewestMessageByDirection(convPath, MsgDirection::SENT, out);
+  return readLastSentText(convPath, out, outSize);
 }
 
 bool MeshCoreMessageStore::updateDirectMessage(const uint8_t* pubkey32, uint32_t id, MeshCoreMessage& msg) {
