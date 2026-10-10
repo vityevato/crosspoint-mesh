@@ -45,3 +45,45 @@ TEST(MeshPath, UnknownSentinel) {
   EXPECT_FALSE(MeshPath::isUnknown(0xC1));
 }
 
+TEST(MeshPathHashSet, DeduplicatesByFullHashWidth) {
+  MeshPath::HashSet set;
+  const uint8_t first[2] = {0xAA, 0x11};
+  const uint8_t sameFirstByte[2] = {0xAA, 0x22};
+
+  EXPECT_TRUE(set.add(first, 2));
+  EXPECT_FALSE(set.add(first, 2));         // exact duplicate
+  EXPECT_TRUE(set.add(sameFirstByte, 2));  // shared first byte, distinct hash
+  EXPECT_EQ(set.count, 2);
+  EXPECT_EQ(set.hashSize, 2);
+}
+
+TEST(MeshPathHashSet, FirstByteOnlyHashesStillDeduplicate) {
+  MeshPath::HashSet set;
+  const uint8_t a[1] = {0xAA};
+  const uint8_t b[1] = {0xAA};
+  EXPECT_TRUE(set.add(a, 1));
+  EXPECT_FALSE(set.add(b, 1));
+  EXPECT_EQ(set.count, 1);
+  EXPECT_EQ(set.hashSize, 1);
+}
+
+TEST(MeshPathHashSet, CapsAtCapacity) {
+  MeshPath::HashSet set;
+  uint8_t hash[1] = {0};
+  for (uint8_t i = 0; i < MeshPath::HashSet::CAPACITY; ++i) {
+    hash[0] = i;
+    EXPECT_TRUE(set.add(hash, 1));
+  }
+  hash[0] = 0xFE;
+  EXPECT_FALSE(set.add(hash, 1));
+  EXPECT_EQ(set.count, MeshPath::HashSet::CAPACITY);
+}
+
+TEST(MeshPathHashSet, RejectsInvalidHashSizes) {
+  MeshPath::HashSet set;
+  const uint8_t hash[4] = {1, 2, 3, 4};
+  EXPECT_FALSE(set.add(hash, 0));
+  EXPECT_FALSE(set.add(hash, MeshPath::MAX_HASH_SIZE + 1));
+  EXPECT_EQ(set.count, 0);
+  EXPECT_EQ(set.hashSize, 0);
+}

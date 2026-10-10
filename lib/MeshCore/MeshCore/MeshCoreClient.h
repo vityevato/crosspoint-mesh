@@ -27,9 +27,8 @@ class MeshCoreClient {
   // Called during init if companion has a PIN (non-zero). Show PIN to user.
   using PinCallback = void (*)(uint32_t pin, void* ctx);
   // Fired when the count of distinct repeaters that re-flooded our most recent
-  // outgoing channel message increases. hashes points to heardCount routing
-  // hashes (first byte of each repeater public key).
-  using ChannelHeardCallback = void (*)(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx);
+  // outgoing channel message increases.
+  using ChannelHeardCallback = void (*)(uint8_t channelIdx, uint8_t heardCount, void* ctx);
 
   /// Fired when a direct message's delivery status changes (ACKED or FAILED).
   using DeliveryCallback = void (*)(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status, void* ctx);
@@ -142,8 +141,7 @@ class MeshCoreClient {
   void setPinCallback(PinCallback cb, void* ctx);
 
   /// Called when repeaters re-flood our outgoing channel message.
-  /// heardCount is the number of distinct repeaters heard so far, hashes
-  /// is an array of first-byte-of-public-key routing hashes. Use to
+  /// heardCount is the number of distinct repeaters heard so far. Use to
   /// update the message's pathLength in the store for live UI feedback.
   void setChannelHeardCallback(ChannelHeardCallback cb, void* ctx);
 
@@ -312,16 +310,15 @@ class MeshCoreClient {
   // payload byte of every GRP_TXT packet). When a matching GRP_TXT re-flood
   // arrives via PUSH_LOG_RX_DATA (0x88) on that channel within the lock
   // window, the tracker transitions from pending (payloadHash == 0) to locked
-  // (payloadHash != 0). Subsequent re-floods with the same payload hash
-  // increment echoCount (deduped by relay routing hash in seenHashes).
+  // (payloadHash != 0). Subsequent re-floods with the same payload hash add
+  // their relay hashes to seenHashes (deduped by the full routing hash).
   struct SentChannelTracker {
     char text[184];  // MAX_MSG_TEXT_LEN from MeshCoreTypes.h
     uint8_t channelIdx;
     uint8_t channelHash;  // GRP_TXT channel routing hash; 0 = unknown
     uint32_t sentTimeMs;
-    uint32_t payloadHash;  // 0 = pending (not yet locked)
-    uint8_t echoCount;
-    uint8_t seenHashes[MeshProto::MESH_MAX_PATH_HASHES];  // relay hashes already counted
+    uint32_t payloadHash;          // 0 = pending (not yet locked)
+    MeshPath::HashSet seenHashes;  // relay hashes already counted; .count = distinct repeaters
     bool active;
   };
   static constexpr uint8_t MAX_TRACKERS = 4;

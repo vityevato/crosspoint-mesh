@@ -210,7 +210,7 @@ class MeshCoreHubActivity final : public Activity {
   static void onContactReceived(const MeshCoreContact& c, bool isEnd, void* ctx);
   static void onAdvertReceived(const MeshCoreContact& node, void* ctx);
   static void onChannelReceived(const MeshCoreChannel& ch, void* ctx);
-  static void onChannelHeard(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx);
+  static void onChannelHeard(uint8_t channelIdx, uint8_t heardCount, void* ctx);
   static void onDeliveryStatic(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status, void* ctx);
 
   void handleStateChange(BleConnectionState state);
