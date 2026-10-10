@@ -144,6 +144,11 @@ void MeshCoreClient::deinit() {
   heardCb = nullptr;
   // Clear all active trackers
   for (auto& t : _trackers) t.active = false;
+  // A send in flight cannot complete once the link is torn down — report it
+  // instead of leaving the stored message stuck at SENT.
+  if (_pendingDm.active) {
+    fireDelivery(DeliveryStatus::FAILED);
+  }
   _pendingDm = {};
 
   // Interrupt any in-progress blocking connect/init so the worker can exit.
@@ -545,6 +550,11 @@ void MeshCoreClient::disconnect() {
   cmdExpectedResponse = 0;
   rxHead = 0;
   rxTail = 0;
+  // A send in flight can never complete on a torn-down link — report FAILED
+  // rather than leaving the stored message at SENT forever.
+  if (_pendingDm.active) {
+    fireDelivery(DeliveryStatus::FAILED);
+  }
   _pendingDm = {};
   initialRequestsPending = false;
   msgDrainCount = 0;
@@ -712,6 +722,12 @@ bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const cha
   size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), contact.publicKey, ts, text, /*attempt=*/0);
   if (len == 0) return false;
 
+  // Single tracker slot: a new send replaces the previous in-flight one, which
+  // can no longer be tracked — report it FAILED instead of leaving it at SENT.
+  if (_pendingDm.active) {
+    fireDelivery(DeliveryStatus::FAILED);
+  }
+
   // Fill the in-flight tracker slot
   _pendingDm = {};
   _pendingDm.active = true;
@@ -747,12 +763,38 @@ bool MeshCoreClient::resetPath(const MeshCoreContact& contact) {
   MeshCoreContact resetContact = contact;
   resetContact.pathLength = 0xFF;
   // buildAddUpdateContact zeros the 64-byte path — exactly what we want.
-  return addUpdateContact(resetContact);
+  const bool queued = addUpdateContact(resetContact);
+  if (queued && pathResetCb) {
+    pathResetCb(contact.publicKey, pathResetCbCtx);
+  }
+  return queued;
+}
+
+void MeshCoreClient::handlePathUpdated() {
+  // The push carries only the pubkey; the companion bumps the contact's
+  // lastmod on a path update, so an incremental sync pulls the fresh record.
+  // Skip during init: runInitSequence() drains responses on the worker task
+  // and enqueues must stay on the main-loop thread — the post-init full
+  // contact sync brings fresh paths anyway.
+  if (inInitSequence || state != BleConnectionState::CONNECTED) return;
+
+  const uint32_t now = millis();
+  if (lastPathSyncRequestMs != 0 && (now - lastPathSyncRequestMs) < PATH_SYNC_DEBOUNCE_MS) {
+    return;
+  }
+  lastPathSyncRequestMs = now;
+  LOG_DBG("MESH", "Path updated push — requesting incremental contact sync");
+  requestNewContacts();
 }
 
 void MeshCoreClient::setDeliveryCallback(DeliveryCallback cb, void* ctx) {
   deliveryCb = cb;
   deliveryCbCtx = ctx;
+}
+
+void MeshCoreClient::setPathResetCallback(PathResetCallback cb, void* ctx) {
+  pathResetCb = cb;
+  pathResetCbCtx = ctx;
 }
 
 bool MeshCoreClient::setChannel(uint8_t idx, const char* name, const uint8_t* secret16) {
@@ -922,6 +964,13 @@ void MeshCoreClient::poll() {
     cmdPending = false;
     lastCmdSuccess = false;
     cmdCount = 0;
+    // An in-flight send can no longer be confirmed — report FAILED now.
+    // Leaving the tracker active would let escalation resume after an
+    // auto-reconnect and re-send a message the user saw as pending.
+    if (_pendingDm.active) {
+      fireDelivery(DeliveryStatus::FAILED);
+      _pendingDm = {};
+    }
     setState(BleConnectionState::DISCONNECTED);
     return;
   }
@@ -1292,6 +1341,9 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     }
 
     case 0x81:  // PUSH_CODE_PATH_UPDATED
+      handlePathUpdated();
+      break;
+
     case 0x84:  // PUSH_CODE_RAW_DATA
     case 0x85:  // PUSH_CODE_LOGIN_SUCCESS
     case 0x86:  // PUSH_CODE_LOGIN_FAIL
@@ -1310,15 +1362,14 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
         uint32_t hash32;
         memcpy(&hash32, ackHash, 4);  // RISC-V unaligned-load safe
         LOG_DBG("MESH", "ACK received: hash=0x%08lX", (unsigned long)hash32);
-        if (_pendingDm.active && !_pendingDm.awaitingSent && _pendingDm.ackTag == hash32) {
+        if (_pendingDm.active && !_pendingDm.awaitingSent && _pendingDm.matchesAck(hash32)) {
           LOG_INF("MESH", "DM ACK matched: msgId=%lu pubkey=%02X%02X", (unsigned long)_pendingDm.msgId,
                   _pendingDm.pubkey[0], _pendingDm.pubkey[1]);
           _pendingDm.active = false;
           fireDelivery(DeliveryStatus::ACKED);
         } else {
-          LOG_DBG("MESH", "ACK hash 0x%08lX: no matching in-flight DM (active=%d awaiting=%d ackTag=0x%08lX)",
-                  (unsigned long)hash32, (int)_pendingDm.active, (int)_pendingDm.awaitingSent,
-                  (unsigned long)_pendingDm.ackTag);
+          LOG_DBG("MESH", "ACK hash 0x%08lX: no matching in-flight DM (active=%d awaiting=%d)", (unsigned long)hash32,
+                  (int)_pendingDm.active, (int)_pendingDm.awaitingSent);
         }
       }
       break;
@@ -1331,7 +1382,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
         LOG_DBG("MESH", "Msg sent, ack tag=%lu timeout=%lu flood=%d", (unsigned long)ackTag, (unsigned long)timeout,
                 (int)isSentFlood);
         if (_pendingDm.active && _pendingDm.awaitingSent) {
-          _pendingDm.ackTag = ackTag;
+          _pendingDm.ackTags[_pendingDm.stage] = ackTag;
           _pendingDm.sentFlood = isSentFlood;
           _pendingDm.awaitingSent = false;
           _pendingDm.sentAtMs = millis();
@@ -1466,16 +1517,17 @@ void MeshCoreClient::startDmEscalation() {
   if (!_pendingDm.active || _pendingDm.awaitingSent) return;
 
   _pendingDm.stage++;
-  if (_pendingDm.stage >= 4) {
+  if (_pendingDm.stage >= DM_STAGE_COUNT) {
     LOG_INF("MESH", "DM escalation exhausted: msgId=%lu marking FAILED", (unsigned long)_pendingDm.msgId);
     _pendingDm.active = false;
     fireDelivery(DeliveryStatus::FAILED);
     return;
   }
 
-  // Before the first flood stage (stage 2), reset the companion's route
-  // to clear any stale direct route.
-  if (_pendingDm.stage == 2) {
+  // Before each flood stage (2-3), reset the companion's route: stage 2 clears
+  // the stale direct route, stage 3 re-clears a route the companion may have
+  // re-learned from a late path-return while the flood was in flight.
+  if (_pendingDm.stage >= 2) {
     LOG_INF("MESH", "DM escalation: resetting path before flood stage for %s", _pendingDm.name);
     MeshCoreContact resetContact = {};
     memcpy(resetContact.publicKey, _pendingDm.pubkey, 32);

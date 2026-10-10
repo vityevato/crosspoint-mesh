@@ -212,6 +212,7 @@ class MeshCoreHubActivity final : public Activity {
   static void onChannelReceived(const MeshCoreChannel& ch, void* ctx);
   static void onChannelHeard(uint8_t channelIdx, uint8_t heardCount, void* ctx);
   static void onDeliveryStatic(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status, void* ctx);
+  static void onPathResetStatic(const uint8_t* pubkey32, void* ctx);
 
   void handleStateChange(BleConnectionState state);
   void handleMessage(const MeshCoreMessage& msg);
@@ -220,6 +221,7 @@ class MeshCoreHubActivity final : public Activity {
   void handleChannel(const MeshCoreChannel& ch);
   void handleChannelHeard(uint8_t channelIdx, uint8_t heardCount);
   void handleDelivery(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status);
+  void handlePathReset(const uint8_t* pubkey32);
 
   void renderChannelList(const Rect& contentRect);
   void renderContactList(const Rect& contentRect);
