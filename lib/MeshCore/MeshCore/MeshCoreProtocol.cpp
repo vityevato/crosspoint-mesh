@@ -5,6 +5,8 @@
 
 #include <cstring>
 
+#include "MeshCorePath.h"
+
 namespace MeshProto {
 
 // --- Command builders ---
@@ -195,8 +197,13 @@ size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact&
   off += 32;
   out[off++] = nodeTypeToWire(contact.type);  // internal enum → wire (1=CLIENT, 2=REPEATER, …)
   out[off++] = contact.flags;                 // flags (bit 0 = favorites)
-  out[off++] = contact.pathLength;            // out_path_len (may be 0)
-  memset(out + off, 0, 64);                   // out_path — not tracked locally
+  // out_path_len: the app never retains the companion's 64-byte route, so it
+  // must claim "no path" instead of echoing contact.pathLength — a non-0xFF
+  // length with the zeroed path below would install a bogus route (all-zero
+  // hashes) in the companion. With 0xFF the companion floods and re-learns
+  // the route on the next round-trip.
+  out[off++] = MeshPath::UNKNOWN;  // out_path_len (no path)
+  memset(out + off, 0, 64);        // out_path — not tracked locally
   off += 64;
   // Name: up to 31 chars + null
   size_t nameLen = strlen(contact.name);
