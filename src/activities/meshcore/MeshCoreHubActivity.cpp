@@ -62,7 +62,7 @@ void MeshCoreHubActivity::onChannelReceived(const MeshCoreChannel& ch, void* ctx
   static_cast<MeshCoreHubActivity*>(ctx)->handleChannel(ch);
 }
 
-void MeshCoreHubActivity::onChannelHeard(uint8_t channelIdx, uint8_t heardCount, const uint8_t* hashes, void* ctx) {
+void MeshCoreHubActivity::onChannelHeard(uint8_t channelIdx, uint8_t heardCount, void* ctx) {
   static_cast<MeshCoreHubActivity*>(ctx)->handleChannelHeard(channelIdx, heardCount);
 }
 

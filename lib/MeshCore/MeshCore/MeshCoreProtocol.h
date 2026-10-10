@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "MeshCorePath.h"
 #include "MeshCoreTypes.h"
 
 // MeshCore companion protocol command/packet constants
@@ -59,7 +60,6 @@ static constexpr uint8_t RAW_ROUTE_TRANSPORT_DIRECT = 0x03;
 static constexpr uint8_t RAW_PTYPE_SHIFT = 2;
 static constexpr uint8_t RAW_PTYPE_MASK = 0x0F;
 static constexpr uint8_t RAW_PAYLOAD_GRP_TXT = 0x05;  // group/channel text message
-static constexpr uint8_t MESH_MAX_PATH_HASHES = 16;
 
 // Command timeout
 static constexpr uint32_t CMD_TIMEOUT_MS = 5000;
@@ -173,15 +173,18 @@ bool parseMsgSent(const uint8_t* data, size_t len, uint32_t& expectedAck, uint32
 bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]);
 
 // Parse a PUSH_LOG_RX_DATA (0x88) frame. If the embedded raw LoRa packet is a
-// group/channel text message (GRP_TXT), extracts the forwarding repeater hashes
-// (first byte of each path element) into outHashes, the channel hash (first
-// payload byte, unencrypted in GRP_TXT) into outChannelHash, and a content hash
-// of the encrypted payload into outPayloadHash. The payload hash is identical
-// across every re-flood of the same message, letting the caller count distinct
-// repeaters; the channel hash identifies which channel the re-flood belongs to.
-// Returns true only for GRP_TXT packets.
-bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, uint8_t maxHashes, uint8_t& outHashCount,
-                         uint32_t& outPayloadHash, uint8_t& outChannelHash);
+// group/channel text message (GRP_TXT), extracts the forwarding repeater
+// routing hashes (full hashSize-byte prefixes of the repeater public keys)
+// into outHashes, the channel hash (first payload byte, unencrypted in
+// GRP_TXT) into outChannelHash, and a content hash of the encrypted payload
+// into outPayloadHash. The payload hash is identical across every re-flood of
+// the same message, letting the caller count distinct repeaters; the channel
+// hash identifies which channel the re-flood belongs to. The hash size is
+// encoded per packet (top 2 bits of the path byte + 1) and applies to every
+// element; outHashes deduplicates by the full hash width. Returns true only
+// for GRP_TXT packets.
+bool parseChannelReflood(const uint8_t* frame, size_t len, MeshPath::HashSet& outHashes, uint32_t& outPayloadHash,
+                         uint8_t& outChannelHash);
 
 // MeshCore channel routing hash: first byte of SHA256(secret16). This is the
 // unencrypted channel_hash byte carried in every GRP_TXT packet (firmware

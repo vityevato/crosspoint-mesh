@@ -195,8 +195,13 @@ size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact&
   off += 32;
   out[off++] = nodeTypeToWire(contact.type);  // internal enum → wire (1=CLIENT, 2=REPEATER, …)
   out[off++] = contact.flags;                 // flags (bit 0 = favorites)
-  out[off++] = contact.pathLength;            // out_path_len (may be 0)
-  memset(out + off, 0, 64);                   // out_path — not tracked locally
+  // out_path_len: the app never retains the companion's 64-byte route, so it
+  // must claim "no path" instead of echoing contact.pathLength — a non-0xFF
+  // length with the zeroed path below would install a bogus route (all-zero
+  // hashes) in the companion. With 0xFF the companion floods and re-learns
+  // the route on the next round-trip.
+  out[off++] = MeshPath::UNKNOWN;  // out_path_len (no path)
+  memset(out + off, 0, 64);        // out_path — not tracked locally
   off += 64;
   // Name: up to 31 chars + null
   size_t nameLen = strlen(contact.name);
@@ -513,9 +518,9 @@ bool parseAck(const uint8_t* data, size_t len, uint8_t ackHash[4]) {
   return true;
 }
 
-bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, uint8_t maxHashes, uint8_t& outHashCount,
-                         uint32_t& outPayloadHash, uint8_t& outChannelHash) {
-  outHashCount = 0;
+bool parseChannelReflood(const uint8_t* frame, size_t len, MeshPath::HashSet& outHashes, uint32_t& outPayloadHash,
+                         uint8_t& outChannelHash) {
+  outHashes = {};
   outPayloadHash = 0;
   outChannelHash = 0;
 
@@ -538,18 +543,17 @@ bool parseChannelReflood(const uint8_t* frame, size_t len, uint8_t* outHashes, u
   if (off >= pktLen) return false;
 
   uint8_t pathLen = pkt[off++];
-  uint8_t hashSize = (pathLen >> 6) + 1;  // top 2 bits: 1..4 byte hashes
-  uint8_t hashCount = pathLen & 0x3F;     // bottom 6 bits: hop count
+  uint8_t hashSize = MeshPath::hashSize(pathLen);   // top 2 bits: 1..4 byte hashes
+  uint8_t hashCount = MeshPath::hopCount(pathLen);  // bottom 6 bits: hop count
   size_t pathBytes = static_cast<size_t>(hashCount) * hashSize;
   if (off + pathBytes > pktLen) return false;
 
   // Each path element identifies a forwarding repeater by its routing hash
-  // (first byte of the element, which is the first byte of its public key).
-  // NOTE: the message origin's hash is NOT in the path — the origin transmits
-  // with an empty path (zero hop) and every flood forwarder appends only its
-  // own hash (firmware Mesh::routeRecvPacket()).
-  for (uint8_t i = 0; i < hashCount && outHashCount < maxHashes; ++i) {
-    outHashes[outHashCount++] = pkt[off + static_cast<size_t>(i) * hashSize];
+  // (prefix of its public key). NOTE: the message origin's hash is NOT in the
+  // path — the origin transmits with an empty path (zero hop) and every flood
+  // forwarder appends only its own hash (firmware Mesh::routeRecvPacket()).
+  for (uint8_t i = 0; i < hashCount; ++i) {
+    outHashes.add(pkt + off + static_cast<size_t>(i) * hashSize, hashSize);
   }
   off += pathBytes;
 

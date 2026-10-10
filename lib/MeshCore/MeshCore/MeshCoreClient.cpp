@@ -688,7 +688,7 @@ bool MeshCoreClient::sendChannelMessage(uint8_t channelIdx, const char* text) {
           (channelIdx < MESHCORE_MAX_CHANNELS && _channelHashValid[channelIdx]) ? _channelHash[channelIdx] : 0;
       t.sentTimeMs = millis();
       t.payloadHash = 0;  // pending
-      t.echoCount = 0;
+      t.seenHashes = {};  // fresh slot (trackers are reused)
       t.active = true;
       registered = true;
       if (t.channelHash == 0) {
@@ -802,16 +802,15 @@ void MeshCoreClient::setChannelHeardCallback(ChannelHeardCallback cb, void* ctx)
 }
 
 void MeshCoreClient::handleRxLog(const uint8_t* data, size_t len) {
-  uint8_t hashes[MeshProto::MESH_MAX_PATH_HASHES];
-  uint8_t hashCount = 0;
+  MeshPath::HashSet refloodHashes;
   uint8_t channelHash = 0;
   uint32_t payloadHash = 0;
-  if (!MeshProto::parseChannelReflood(data, len, hashes, sizeof(hashes), hashCount, payloadHash, channelHash)) {
+  if (!MeshProto::parseChannelReflood(data, len, refloodHashes, payloadHash, channelHash)) {
     return;  // not a GRP_TXT packet
   }
 
-  LOG_DBG("MESH", "ECHO RX_LOG: GRP_TXT ch=0x%02X payloadHash=0x%08lX hashCount=%d", (int)channelHash,
-          (unsigned long)payloadHash, (int)hashCount);
+  LOG_DBG("MESH", "ECHO RX_LOG: GRP_TXT ch=0x%02X payloadHash=0x%08lX hashCount=%d hashSize=%d", (int)channelHash,
+          (unsigned long)payloadHash, (int)refloodHashes.count, (int)refloodHashes.hashSize);
 
   uint32_t now = millis();
 
@@ -833,9 +832,9 @@ void MeshCoreClient::handleRxLog(const uint8_t* data, size_t len) {
       // Pending tracker: lock onto the first re-flood of our channel within
       // the lock window. Trackers are scanned in send order, so when several
       // pending trackers share a channel the oldest message locks first.
-      // hashCount == 0 means the packet still has an empty flood path, i.e.
+      // count == 0 means the packet still has an empty flood path, i.e.
       // it is someone's origin transmission, never a re-flood of ours.
-      if (hashCount == 0) continue;
+      if (refloodHashes.count == 0) continue;
       if (now - t.sentTimeMs > TRACKER_LOCK_WINDOW_MS) {
         LOG_DBG("MESH", "ECHO EXPIRE pending: ch=%d \"%.20s\" age=%lums", (int)t.channelIdx, t.text,
                 (unsigned long)(now - t.sentTimeMs));
@@ -850,8 +849,8 @@ void MeshCoreClient::handleRxLog(const uint8_t* data, size_t len) {
     } else if (t.payloadHash == payloadHash) {
       // Already-locked tracker: match by payload hash
       found = &t;
-      LOG_DBG("MESH", "ECHO MATCH: locked tracker ch=%d echoCount=%d payloadHash=0x%08lX", (int)t.channelIdx,
-              (int)t.echoCount, (unsigned long)payloadHash);
+      LOG_DBG("MESH", "ECHO MATCH: locked tracker ch=%d count=%d payloadHash=0x%08lX", (int)t.channelIdx,
+              (int)t.seenHashes.count, (unsigned long)payloadHash);
       break;
     }
   }
@@ -868,21 +867,12 @@ void MeshCoreClient::handleRxLog(const uint8_t* data, size_t len) {
     return;
   }
 
-  // Count distinct repeaters: append every relay hash not seen in previous
-  // re-floods of this message.
+  // Count distinct repeaters: add every relay hash not seen in previous
+  // re-floods of this message. Dedup uses the full hash width, so repeaters
+  // sharing a first byte are not collapsed in 2/3/4-byte hash modes.
   bool changed = false;
-  for (uint8_t i = 0; i < hashCount; ++i) {
-    uint8_t h = hashes[i];
-    bool known = false;
-    for (uint8_t j = 0; j < found->echoCount; ++j) {
-      if (found->seenHashes[j] == h) {
-        known = true;
-        break;
-      }
-    }
-    if (!known && found->echoCount < MeshProto::MESH_MAX_PATH_HASHES) {
-      found->seenHashes[found->echoCount] = h;
-      found->echoCount++;
+  for (uint8_t i = 0; i < refloodHashes.count; ++i) {
+    if (found->seenHashes.add(refloodHashes.entries[i], refloodHashes.hashSize)) {
       changed = true;
     }
   }
@@ -890,15 +880,16 @@ void MeshCoreClient::handleRxLog(const uint8_t* data, size_t len) {
   if (found->payloadHash == 0) {
     // Transition from pending → locked on the first matching re-flood.
     found->payloadHash = payloadHash;
-    LOG_DBG("MESH", "ECHO FIRST: ch=%d echoCount=%d", (int)found->channelIdx, (int)found->echoCount);
+    LOG_DBG("MESH", "ECHO FIRST: ch=%d count=%d", (int)found->channelIdx, (int)found->seenHashes.count);
     if (heardCb) {
-      heardCb(found->channelIdx, found->echoCount, hashes, heardCbCtx);
+      heardCb(found->channelIdx, found->seenHashes.count, heardCbCtx);
     }
   } else if (changed && heardCb) {
-    LOG_DBG("MESH", "ECHO UPDATE: ch=%d echoCount=%d", (int)found->channelIdx, (int)found->echoCount);
-    heardCb(found->channelIdx, found->echoCount, hashes, heardCbCtx);
+    LOG_DBG("MESH", "ECHO UPDATE: ch=%d count=%d", (int)found->channelIdx, (int)found->seenHashes.count);
+    heardCb(found->channelIdx, found->seenHashes.count, heardCbCtx);
   } else {
-    LOG_DBG("MESH", "ECHO NODUP: ch=%d echoCount=%d (no new repeaters)", (int)found->channelIdx, (int)found->echoCount);
+    LOG_DBG("MESH", "ECHO NODUP: ch=%d count=%d (no new repeaters)", (int)found->channelIdx,
+            (int)found->seenHashes.count);
   }
 }
 

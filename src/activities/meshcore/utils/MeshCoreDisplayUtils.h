@@ -1,6 +1,7 @@
 #pragma once
 
 #include <I18n.h>
+#include <MeshCore/MeshCorePath.h>
 #include <fontIds.h>
 
 #include <cstdio>
@@ -34,20 +35,22 @@ inline std::string formatMeshCoreListTitle(uint16_t unreadCount, const char* nam
 }
 
 /**
- * Formats a path length (hop count) into a readable string.
+ * Formats a received path byte into a readable hop count.
  *
- * In the MeshCore protocol, 0xFF (255) is a sentinel meaning "direct" —
- * the message was sent directly to a neighbor without mesh flooding.
+ * The companion reports the encoded MeshCore path byte: low 6 bits are the
+ * hop count, top 2 bits + 1 are the hash size (see MeshPath). 0xFF is the
+ * "direct route / no path" sentinel and is not a valid encoding.
  *
- * @param pathLength  Number of hops (0xFF = direct)
+ * @param pathLength  Encoded path byte as received (0xFF = direct)
  * @param buf         Destination buffer (must fit the localized strings)
  * @param bufSize     Size of destination buffer
  */
 inline void formatMeshCoreHopCount(uint8_t pathLength, char* buf, size_t bufSize) {
-  if (pathLength == 0xFF || pathLength == 0) {
+  const uint8_t hops = MeshPath::hopCount(pathLength);
+  if (MeshPath::isUnknown(pathLength) || hops == 0) {
     snprintf(buf, bufSize, "%s", tr(STR_MESHCORE_MSG_DIRECT));
   } else {
-    snprintf(buf, bufSize, tr(STR_MESHCORE_MSG_HOPS), pathLength);
+    snprintf(buf, bufSize, tr(STR_MESHCORE_MSG_HOPS), hops);
   }
 }
 

@@ -68,9 +68,11 @@ struct MeshCoreContact {
   MeshNodeType type = MeshNodeType::UNKNOWN;  ///< Mesh node type
   uint8_t flags = 0;                          ///< Wire format flags (bit 0 = favourite)
   uint32_t lastSeen = 0;                      ///< Last seen time (unix timestamp, sec)
-  /// Number of hops to the node. 0xFF = no known path / flood (reset sentinel),
-  /// 0 = zero-hop direct neighbour, > 0 = hop count. Path bytes themselves are
+  /// Companion routing metadata: the encoded MeshCore path byte — low 6 bits
+  /// are the hop count, top 2 bits + 1 are the hash size (see MeshPath).
+  /// 0xFF = no known path (reset/flood sentinel). Path bytes themselves are
   /// owned by the companion firmware — the app never stores route bytes.
+  /// Use MeshPath::hopCount()/hashSize() before displaying a hop count.
   uint8_t pathLength = 0xFF;
   int8_t snr = 0;            ///< SNR of last received packet (dB)
   bool isSaved = false;      ///< Whether the contact is saved in the address book
@@ -119,7 +121,11 @@ struct MeshCoreMessage {
   uint8_t channelIdx = 0;                           ///< Channel index (for channel messages)
   uint32_t timestamp = 0;                           ///< Message timestamp (unix timestamp, sec)
   int8_t snr = 0;                                   ///< SNR at reception (dB)
-  uint8_t pathLength = 0;  ///< Received: hop count; Sent (channel): number of repeaters that reflooded
+  /// Received: encoded MeshCore path byte (low 6 bits = hop count, top 2 bits
+  /// + 1 = hash size; 0xFF = arrived via a direct route). Sent (channel):
+  /// number of distinct repeaters that re-flooded the message (0 = none heard
+  /// yet). Decode with MeshPath helpers before displaying.
+  uint8_t pathLength = 0;
   DeliveryStatus deliveryStatus = DeliveryStatus::SENT;  ///< Delivery status
   uint32_t id = 0;                                       ///< Monotonic ID, never resets on truncate
   uint16_t heightPx = 0;             ///< Cached rendered height in pixels (for thread view scrolling)
