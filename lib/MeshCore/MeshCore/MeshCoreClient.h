@@ -4,8 +4,10 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 
 #include "MeshCoreProtocol.h"
 #include "MeshCoreTypes.h"
@@ -32,6 +34,11 @@ class MeshCoreClient {
 
   /// Fired when a direct message's delivery status changes (ACKED or FAILED).
   using DeliveryCallback = void (*)(uint32_t msgId, const uint8_t* pubkey32, DeliveryStatus status, void* ctx);
+
+  /// Fired when the companion's stored route for a contact is reset to
+  /// "no path" (flood). The app's cached contact path goes stale from that
+  /// moment on — the companion neither notifies nor bumps lastmod on reset.
+  using PathResetCallback = void (*)(const uint8_t* pubkey32, void* ctx);
 
   MeshCoreClient();
   ~MeshCoreClient();
@@ -148,6 +155,11 @@ class MeshCoreClient {
   /// Called when a direct message's delivery status changes.
   /// Fires on ACK (PKT_ACK received) or FAILED (all escalation stages exhausted).
   void setDeliveryCallback(DeliveryCallback cb, void* ctx);
+
+  /// Called when resetPath() queues a route reset. Mirror it in the local
+  /// contact store so path-derived UI (the "Reset Path" menu item) does not
+  /// keep showing a path the companion no longer has.
+  void setPathResetCallback(PathResetCallback cb, void* ctx);
 
   // Must be called from activity loop() to process responses and timeouts
   void poll();
@@ -274,11 +286,21 @@ class MeshCoreClient {
   void* heardCbCtx = nullptr;
   DeliveryCallback deliveryCb = nullptr;
   void* deliveryCbCtx = nullptr;
+  PathResetCallback pathResetCb = nullptr;
+  void* pathResetCbCtx = nullptr;
 
   // ── In-flight DM delivery tracker (single slot, runtime-only) ──
+  // Escalation stages: direct (0-1), then flood (2-3). Each attempt gets its
+  // own expected-ACK tag so a late ACK from an earlier attempt still matches
+  // after escalation has moved on.
+  static constexpr uint8_t DM_STAGE_COUNT = 4;
+  // Escalation timeouts per stage (direct stages 0-1, flood stages 2-3).
+  static constexpr uint32_t DM_STAGE_TIMEOUT_MS[DM_STAGE_COUNT] = {3000, 7000, 5000, 15000};
+  static constexpr uint32_t DM_FALLBACK_TIMEOUT_MS = 30000;
+
   // Tracks one outstanding direct message awaiting PKT_MSG_SENT + PKT_ACK.
   // These fields are never serialized — only deliveryStatus (persisted per
-  // message record) is written to SD. ackTag, sentAtMs, stage, and sentFlood
+  // message record) is written to SD. ackTags, sentAtMs, stage, and sentFlood
   // are meaningless across a reboot (millis() resets, ACK slots reset).
   struct PendingDm {
     bool active = false;
@@ -286,19 +308,41 @@ class MeshCoreClient {
     uint8_t pubkey[32] = {};  // recipient, for resend / store update
     char name[64] = {};       // contact name, needed to reset route
     MeshNodeType type = MeshNodeType::UNKNOWN;
-    char text[MAX_MSG_TEXT_LEN] = {};  // copy, for resend
-    uint32_t ackTag = 0;               // expectedAck from PKT_MSG_SENT
-    uint32_t sentAtMs = 0;             // millis() of last send
-    uint32_t timeoutMs = 0;            // max(stageTable, companionEstimate)
-    uint8_t stage = 0;                 // escalation stage 0..3
-    bool awaitingSent = false;         // true until PKT_MSG_SENT arrives
-    bool sentFlood = false;            // last isSentFlood, for UI/logging
+    char text[MAX_MSG_TEXT_LEN] = {};       // copy, for resend
+    uint32_t timestamp = 0;                 // original unix ts, reused for retries
+    uint32_t ackTags[DM_STAGE_COUNT] = {};  // expectedAck per attempt (stage)
+    uint32_t sentAtMs = 0;                  // millis() of last send
+    uint32_t timeoutMs = 0;                 // max(stageTable, companionEstimate)
+    uint8_t stage = 0;                      // escalation stage 0..3
+    bool awaitingSent = false;              // true until PKT_MSG_SENT arrives
+    bool sentFlood = false;                 // last isSentFlood, for UI/logging
+
+    /// True when @p hash is the expected ACK of any attempt sent so far.
+    /// Attempts use distinct payload hashes (the attempt byte is hashed in),
+    /// so an ACK arriving after escalation moved on carries an older tag.
+    bool matchesAck(uint32_t hash) const {
+      if (hash == 0) return false;
+      return std::any_of(std::begin(ackTags), std::end(ackTags), [hash](uint32_t tag) { return tag == hash; });
+    }
   };
   PendingDm _pendingDm = {};
 
-  // Escalation timeouts per stage (direct stages 0-1, flood stages 2-3).
-  static constexpr uint32_t DM_STAGE_TIMEOUT_MS[4] = {3000, 7000, 5000, 15000};
-  static constexpr uint32_t DM_FALLBACK_TIMEOUT_MS = 30000;
+  // Duplicate suppression for received DMs. A sender's retry attempts share
+  // the message timestamp and text — only the attempt byte differs — so they
+  // pass the mesh payload-hash dedup and would be stored as separate
+  // messages. Drop arrivals whose (sender, timestamp, text) was already
+  // delivered recently.
+  static constexpr uint8_t RX_DEDUP_SLOTS = 8;
+  struct RxDedupEntry {
+    uint8_t pubkeyPrefix[6] = {};
+    uint32_t timestamp = 0;
+    uint32_t textHash = 0;
+    bool valid = false;
+  };
+  RxDedupEntry rxDedup[RX_DEDUP_SLOTS] = {};
+  uint8_t rxDedupNext = 0;
+  bool isDuplicateRx(const MeshCoreMessage& msg);
+  void rememberRx(const MeshCoreMessage& msg);
 
   void startDmEscalation();
   void resendDm(uint8_t attempt);
@@ -359,6 +403,14 @@ class MeshCoreClient {
   // overwritten in rxBuf during e-ink refresh (1-2s) before poll() could run.
   static constexpr uint32_t MESSAGE_POLL_INTERVAL_MS = 30000;  // 30s
   uint32_t lastMessagePollTime = 0;
+
+  // PUSH_CODE_PATH_UPDATED (0x81) fires whenever the companion learns or
+  // refreshes a route. The push carries only the pubkey, so the fresh
+  // pathLength is pulled via an incremental contact sync — debounced so a
+  // burst of path updates costs one GET_CONTACTS.
+  static constexpr uint32_t PATH_SYNC_DEBOUNCE_MS = 5000;
+  uint32_t lastPathSyncRequestMs = 0;
+  void handlePathUpdated();
 
   // Bounded message-queue drain. CMD_GET_MESSAGE pops one queued message per
   // request; the drain re-requests after each message and terminates on

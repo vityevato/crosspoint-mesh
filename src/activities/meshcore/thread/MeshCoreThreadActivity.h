@@ -68,6 +68,11 @@ class MeshCoreThreadActivity final : public Activity {
   /// in-RAM scroll position (heard-count flips never move the view).
   void onChannelHeardUpdate(uint8_t chIdx, uint8_t heardCount);
 
+  /// Called by Hub after the companion's route for this contact was reset.
+  /// The menu's "Reset Path" availability is derived from the store, which the
+  /// Hub has just updated — repaint so the item reflects the reset immediately.
+  void onPathResetUpdate();
+
   /**
    * Show the disconnect popup and return to the hub shortly after.
    * @param sendFailed true when a just-typed message could not be sent

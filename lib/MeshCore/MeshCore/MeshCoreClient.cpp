@@ -3,7 +3,9 @@
 #include <Logging.h>
 #include <NimBLEDevice.h>
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 
 #include "MeshCoreClock.h"
 #include "MeshCoreGpsParse.h"
@@ -61,6 +63,16 @@ struct InFlightScope {
 /// each step to attribute the spend in /system.log (grep tag "MEMM").
 void logBleHeap(const char* step) {
   LOG_DBG("MEMM", "%s free=%u largest=%u", step, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+}
+
+/// FNV-1a fingerprint of a received message text, for duplicate detection.
+uint32_t fnv1a32(const char* s) {
+  uint32_t h = 2166136261u;
+  for (; *s != '\0'; ++s) {
+    h ^= static_cast<uint8_t>(*s);
+    h *= 16777619u;
+  }
+  return h;
 }
 
 /// BLE worker task stack. Reviewed against the measured high-water mark
@@ -144,6 +156,11 @@ void MeshCoreClient::deinit() {
   heardCb = nullptr;
   // Clear all active trackers
   for (auto& t : _trackers) t.active = false;
+  // A send in flight cannot complete once the link is torn down — report it
+  // instead of leaving the stored message stuck at SENT.
+  if (_pendingDm.active) {
+    fireDelivery(DeliveryStatus::FAILED);
+  }
   _pendingDm = {};
 
   // Interrupt any in-progress blocking connect/init so the worker can exit.
@@ -545,6 +562,11 @@ void MeshCoreClient::disconnect() {
   cmdExpectedResponse = 0;
   rxHead = 0;
   rxTail = 0;
+  // A send in flight can never complete on a torn-down link — report FAILED
+  // rather than leaving the stored message at SENT forever.
+  if (_pendingDm.active) {
+    fireDelivery(DeliveryStatus::FAILED);
+  }
   _pendingDm = {};
   initialRequestsPending = false;
   msgDrainCount = 0;
@@ -712,6 +734,12 @@ bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const cha
   size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), contact.publicKey, ts, text, /*attempt=*/0);
   if (len == 0) return false;
 
+  // Single tracker slot: a new send replaces the previous in-flight one, which
+  // can no longer be tracked — report it FAILED instead of leaving it at SENT.
+  if (_pendingDm.active) {
+    fireDelivery(DeliveryStatus::FAILED);
+  }
+
   // Fill the in-flight tracker slot
   _pendingDm = {};
   _pendingDm.active = true;
@@ -720,6 +748,10 @@ bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const cha
   snprintf(_pendingDm.name, sizeof(_pendingDm.name), "%s", contact.name);
   _pendingDm.type = contact.type;
   snprintf(_pendingDm.text, sizeof(_pendingDm.text), "%s", text);
+  // Reuse this timestamp for every retry so all attempts of one logical send
+  // are recognisable as the same message (the attempt byte already makes each
+  // ACK hash unique).
+  _pendingDm.timestamp = ts;
   _pendingDm.awaitingSent = true;
   _pendingDm.stage = 0;
 
@@ -747,12 +779,38 @@ bool MeshCoreClient::resetPath(const MeshCoreContact& contact) {
   MeshCoreContact resetContact = contact;
   resetContact.pathLength = 0xFF;
   // buildAddUpdateContact zeros the 64-byte path — exactly what we want.
-  return addUpdateContact(resetContact);
+  const bool queued = addUpdateContact(resetContact);
+  if (queued && pathResetCb) {
+    pathResetCb(contact.publicKey, pathResetCbCtx);
+  }
+  return queued;
+}
+
+void MeshCoreClient::handlePathUpdated() {
+  // The push carries only the pubkey; the companion bumps the contact's
+  // lastmod on a path update, so an incremental sync pulls the fresh record.
+  // Skip during init: runInitSequence() drains responses on the worker task
+  // and enqueues must stay on the main-loop thread — the post-init full
+  // contact sync brings fresh paths anyway.
+  if (inInitSequence || state != BleConnectionState::CONNECTED) return;
+
+  const uint32_t now = millis();
+  if (lastPathSyncRequestMs != 0 && (now - lastPathSyncRequestMs) < PATH_SYNC_DEBOUNCE_MS) {
+    return;
+  }
+  lastPathSyncRequestMs = now;
+  LOG_DBG("MESH", "Path updated push — requesting incremental contact sync");
+  requestNewContacts();
 }
 
 void MeshCoreClient::setDeliveryCallback(DeliveryCallback cb, void* ctx) {
   deliveryCb = cb;
   deliveryCbCtx = ctx;
+}
+
+void MeshCoreClient::setPathResetCallback(PathResetCallback cb, void* ctx) {
+  pathResetCb = cb;
+  pathResetCbCtx = ctx;
 }
 
 bool MeshCoreClient::setChannel(uint8_t idx, const char* name, const uint8_t* secret16) {
@@ -922,6 +980,13 @@ void MeshCoreClient::poll() {
     cmdPending = false;
     lastCmdSuccess = false;
     cmdCount = 0;
+    // An in-flight send can no longer be confirmed — report FAILED now.
+    // Leaving the tracker active would let escalation resume after an
+    // auto-reconnect and re-send a message the user saw as pending.
+    if (_pendingDm.active) {
+      fireDelivery(DeliveryStatus::FAILED);
+      _pendingDm = {};
+    }
     setState(BleConnectionState::DISCONNECTED);
     return;
   }
@@ -1109,6 +1174,23 @@ void MeshCoreClient::handleCompanionErrorResponse(const uint8_t* data, size_t le
   LOG_ERR("MESH", "Error response from companion: cmd=0x%02X err=%u", (unsigned)inFlightCmd, (unsigned)err);
 }
 
+bool MeshCoreClient::isDuplicateRx(const MeshCoreMessage& msg) {
+  const uint32_t textHash = fnv1a32(msg.text);
+  return std::any_of(std::begin(rxDedup), std::end(rxDedup), [&](const RxDedupEntry& e) {
+    return e.valid && e.timestamp == msg.timestamp && e.textHash == textHash &&
+           memcmp(e.pubkeyPrefix, msg.pubkeyPrefix, sizeof(e.pubkeyPrefix)) == 0;
+  });
+}
+
+void MeshCoreClient::rememberRx(const MeshCoreMessage& msg) {
+  RxDedupEntry& e = rxDedup[rxDedupNext];
+  rxDedupNext = static_cast<uint8_t>((rxDedupNext + 1) % RX_DEDUP_SLOTS);
+  memcpy(e.pubkeyPrefix, msg.pubkeyPrefix, sizeof(e.pubkeyPrefix));
+  e.timestamp = msg.timestamp;
+  e.textHash = fnv1a32(msg.text);
+  e.valid = true;
+}
+
 void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
   if (len == 0) return;
   uint8_t pktType = data[0];
@@ -1250,11 +1332,20 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     case MeshProto::PKT_CONTACT_MSG_V3: {
       MeshCoreMessage msg = {};
       if (MeshProto::parseContactMessage(data, len, msg)) {
-        LOG_DBG("MESH", "Contact msg from %02X%02X%02X: %.40s", msg.pubkeyPrefix[0], msg.pubkeyPrefix[1],
-                msg.pubkeyPrefix[2], msg.text);
         msg.direction = MsgDirection::RECEIVED;
         msg.type = MsgType::DIRECT;
-        if (msgCb) msgCb(msg, msgCbCtx);
+        // Retry attempts of one logical send share timestamp and text (only
+        // the attempt byte differs), so the mesh payload-hash dedup lets each
+        // attempt through. Drop repeats already delivered to the UI.
+        if (isDuplicateRx(msg)) {
+          LOG_DBG("MESH", "Contact msg duplicate dropped: %02X%02X%02X ts=%lu", msg.pubkeyPrefix[0],
+                  msg.pubkeyPrefix[1], msg.pubkeyPrefix[2], (unsigned long)msg.timestamp);
+        } else {
+          LOG_DBG("MESH", "Contact msg from %02X%02X%02X: %.40s", msg.pubkeyPrefix[0], msg.pubkeyPrefix[1],
+                  msg.pubkeyPrefix[2], msg.text);
+          if (msgCb) msgCb(msg, msgCbCtx);
+        }
+        rememberRx(msg);  // refresh the entry so long bursts stay suppressed
         // Drain the companion's offline queue (see channel-msg comment above).
         drainNextMessage();
       } else {
@@ -1292,6 +1383,9 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     }
 
     case 0x81:  // PUSH_CODE_PATH_UPDATED
+      handlePathUpdated();
+      break;
+
     case 0x84:  // PUSH_CODE_RAW_DATA
     case 0x85:  // PUSH_CODE_LOGIN_SUCCESS
     case 0x86:  // PUSH_CODE_LOGIN_FAIL
@@ -1310,15 +1404,14 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
         uint32_t hash32;
         memcpy(&hash32, ackHash, 4);  // RISC-V unaligned-load safe
         LOG_DBG("MESH", "ACK received: hash=0x%08lX", (unsigned long)hash32);
-        if (_pendingDm.active && !_pendingDm.awaitingSent && _pendingDm.ackTag == hash32) {
+        if (_pendingDm.active && !_pendingDm.awaitingSent && _pendingDm.matchesAck(hash32)) {
           LOG_INF("MESH", "DM ACK matched: msgId=%lu pubkey=%02X%02X", (unsigned long)_pendingDm.msgId,
                   _pendingDm.pubkey[0], _pendingDm.pubkey[1]);
           _pendingDm.active = false;
           fireDelivery(DeliveryStatus::ACKED);
         } else {
-          LOG_DBG("MESH", "ACK hash 0x%08lX: no matching in-flight DM (active=%d awaiting=%d ackTag=0x%08lX)",
-                  (unsigned long)hash32, (int)_pendingDm.active, (int)_pendingDm.awaitingSent,
-                  (unsigned long)_pendingDm.ackTag);
+          LOG_DBG("MESH", "ACK hash 0x%08lX: no matching in-flight DM (active=%d awaiting=%d)", (unsigned long)hash32,
+                  (int)_pendingDm.active, (int)_pendingDm.awaitingSent);
         }
       }
       break;
@@ -1331,7 +1424,7 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
         LOG_DBG("MESH", "Msg sent, ack tag=%lu timeout=%lu flood=%d", (unsigned long)ackTag, (unsigned long)timeout,
                 (int)isSentFlood);
         if (_pendingDm.active && _pendingDm.awaitingSent) {
-          _pendingDm.ackTag = ackTag;
+          _pendingDm.ackTags[_pendingDm.stage] = ackTag;
           _pendingDm.sentFlood = isSentFlood;
           _pendingDm.awaitingSent = false;
           _pendingDm.sentAtMs = millis();
@@ -1466,16 +1559,17 @@ void MeshCoreClient::startDmEscalation() {
   if (!_pendingDm.active || _pendingDm.awaitingSent) return;
 
   _pendingDm.stage++;
-  if (_pendingDm.stage >= 4) {
+  if (_pendingDm.stage >= DM_STAGE_COUNT) {
     LOG_INF("MESH", "DM escalation exhausted: msgId=%lu marking FAILED", (unsigned long)_pendingDm.msgId);
     _pendingDm.active = false;
     fireDelivery(DeliveryStatus::FAILED);
     return;
   }
 
-  // Before the first flood stage (stage 2), reset the companion's route
-  // to clear any stale direct route.
-  if (_pendingDm.stage == 2) {
+  // Before each flood stage (2-3), reset the companion's route: stage 2 clears
+  // the stale direct route, stage 3 re-clears a route the companion may have
+  // re-learned from a late path-return while the flood was in flight.
+  if (_pendingDm.stage >= 2) {
     LOG_INF("MESH", "DM escalation: resetting path before flood stage for %s", _pendingDm.name);
     MeshCoreContact resetContact = {};
     memcpy(resetContact.publicKey, _pendingDm.pubkey, 32);
@@ -1494,7 +1588,8 @@ void MeshCoreClient::resendDm(uint8_t attempt) {
   if (!_pendingDm.active) return;
 
   uint8_t buf[CMD_BUF_SIZE];
-  uint32_t ts = meshcoreNowUtc();
+  // Same timestamp as the first attempt — a retry is the same logical message.
+  const uint32_t ts = _pendingDm.timestamp != 0 ? _pendingDm.timestamp : meshcoreNowUtc();
   size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), _pendingDm.pubkey, ts, _pendingDm.text, attempt);
   if (len == 0) return;
 

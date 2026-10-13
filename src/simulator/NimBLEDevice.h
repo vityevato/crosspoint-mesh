@@ -123,6 +123,11 @@ struct MockCompanion {
   uint8_t maxContacts = 0;
   uint8_t maxChannels = 8;
 
+  // Deterministic DM failure simulation: PKT_MSG_SENT is returned (the client
+  // arms its delivery tracker) but no echo/ACK follows — exercises the
+  // escalation → FAILED path and the flood-stage path resets.
+  bool suppressDmDelivery = false;
+
   // GPS simulation: `gps` = module detected (exposes the "gps" custom var),
   // latitude/longitude are returned in self-telemetry. 0/0 means "no fix".
   bool gps = false;
@@ -338,6 +343,15 @@ class NimBLERemoteCharacteristic {
       return true;
     }
     if (cmd == 0x02) {  // CMD_SEND_DM → PKT_MSG_SENT + schedule DM echo
+      // Deterministic delivery failure: arm the client's tracker with
+      // PKT_MSG_SENT, then never echo or ACK — the client escalates to flood
+      // and marks the message FAILED.
+      if (mockCompanion->suppressDmDelivery) {
+        injectMsgSent();
+        LOG_INF("MOCK", "CMD_SEND_DM → PKT_MSG_SENT (delivery suppressed)");
+        return true;
+      }
+
       // Alternate DM responses to exercise the companion error path and
       // verify UI updates from DeliveryStatus::FAILED.
       static uint8_t dmModeCounter = 0;

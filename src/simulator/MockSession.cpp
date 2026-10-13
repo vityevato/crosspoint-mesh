@@ -239,6 +239,7 @@ bool MockSession::parseCompanion(JsonObjectConst obj, MockCompanion& out) {
   out.radioCr = obj["radio_cr"] | 0;
   out.maxContacts = obj["max_contacts"] | 0;
   out.maxChannels = obj["max_channels"] | 8;
+  out.suppressDmDelivery = obj["suppress_dm_delivery"] | false;
 
   // GPS simulation (optional): module detection + fix coordinates.
   out.gps = obj["gps"] | false;

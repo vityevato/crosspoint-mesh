@@ -70,6 +70,10 @@ void MeshCoreHubActivity::onDeliveryStatic(uint32_t msgId, const uint8_t* pubkey
   static_cast<MeshCoreHubActivity*>(ctx)->handleDelivery(msgId, pubkey32, status);
 }
 
+void MeshCoreHubActivity::onPathResetStatic(const uint8_t* pubkey32, void* ctx) {
+  static_cast<MeshCoreHubActivity*>(ctx)->handlePathReset(pubkey32);
+}
+
 // --- Lifecycle ---
 
 void MeshCoreHubActivity::onEnter() {
@@ -126,6 +130,7 @@ void MeshCoreHubActivity::onEnter() {
   client.setChannelCallback(onChannelReceived, this);
   client.setChannelHeardCallback(onChannelHeard, this);
   client.setDeliveryCallback(onDeliveryStatic, this);  // persistent — never cleared
+  client.setPathResetCallback(onPathResetStatic, this);
 
   if (hasAddr && addr[0] != '\0') {
     client.setAutoReconnectAddress(addr, addrType);
@@ -1370,6 +1375,30 @@ void MeshCoreHubActivity::handleDelivery(uint32_t msgId, const uint8_t* pubkey32
   // forward the update so it can reload messages and repaint.
   if (_activeThread && memcmp(pubkey32, _activeThread->contactPubkeyForDelivery(), 32) == 0) {
     _activeThread->onDeliveryUpdate(msgId, pubkey32, status);
+  }
+}
+
+void MeshCoreHubActivity::handlePathReset(const uint8_t* pubkey32) {
+  // The companion's route is cleared; mirror it locally. The DM menu's
+  // "Reset Path" item reads the local store, and the companion sends no push
+  // and bumps no lastmod on reset — without this the item keeps offering a
+  // reset for a path the companion no longer has.
+  if (savedContacts) {
+    for (uint16_t i = 0; i < savedContactCount; ++i) {
+      if (memcmp(savedContacts[i].publicKey, pubkey32, 32) != 0) continue;
+      savedContacts[i].pathLength = MeshPath::UNKNOWN;
+      // Persist immediately, mirroring the favourite-toggle path: the reset
+      // was already queued to the companion, so the store must not lag behind
+      // until the next contact-list sync or the hub's onExit.
+      _contactsDirty = false;
+      store.saveContacts(savedContacts.get(), savedContactCount);
+      break;
+    }
+  }
+
+  // Repaint an open conversation so the menu state reflects the reset now.
+  if (_activeThread && memcmp(pubkey32, _activeThread->contactPubkeyForDelivery(), 32) == 0) {
+    _activeThread->onPathResetUpdate();
   }
 }
 

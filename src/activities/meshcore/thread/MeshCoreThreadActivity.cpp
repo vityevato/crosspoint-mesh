@@ -86,6 +86,8 @@ void MeshCoreThreadActivity::onChannelHeardUpdate(uint8_t chIdx, uint8_t heardCo
   LOG_INF("MESH", "Thread channel heard: ch=%d count=%d", (int)chIdx, (int)heardCount);
 }
 
+void MeshCoreThreadActivity::onPathResetUpdate() { requestUpdate(); }
+
 void MeshCoreThreadActivity::onEnter() {
   Activity::onEnter();
   MESHCORE_LOG_HEAP("Thread onEnter:start");
