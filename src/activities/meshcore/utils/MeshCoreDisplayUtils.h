@@ -39,15 +39,22 @@ inline std::string formatMeshCoreListTitle(uint16_t unreadCount, const char* nam
  *
  * The companion reports the encoded MeshCore path byte: low 6 bits are the
  * hop count, top 2 bits + 1 are the hash size (see MeshPath). 0xFF is the
- * "direct route / no path" sentinel and is not a valid encoding.
+ * "arrived via direct route" marker: the packet was source-routed (each
+ * listed repeater forwards it) and the companion does not forward the route,
+ * so the number of hops is unknown. A flood packet with 0 hops was heard
+ * directly from the sender.
  *
- * @param pathLength  Encoded path byte as received (0xFF = direct)
+ * @param pathLength  Encoded path byte as received (0xFF = direct route)
  * @param buf         Destination buffer (must fit the localized strings)
  * @param bufSize     Size of destination buffer
  */
 inline void formatMeshCoreHopCount(uint8_t pathLength, char* buf, size_t bufSize) {
+  if (MeshPath::isUnknown(pathLength)) {
+    snprintf(buf, bufSize, "%s", tr(STR_MESHCORE_MSG_ROUTED));
+    return;
+  }
   const uint8_t hops = MeshPath::hopCount(pathLength);
-  if (MeshPath::isUnknown(pathLength) || hops == 0) {
+  if (hops == 0) {
     snprintf(buf, bufSize, "%s", tr(STR_MESHCORE_MSG_DIRECT));
   } else {
     snprintf(buf, bufSize, tr(STR_MESHCORE_MSG_HOPS), hops);
