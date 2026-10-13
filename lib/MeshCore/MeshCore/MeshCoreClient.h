@@ -309,6 +309,7 @@ class MeshCoreClient {
     char name[64] = {};       // contact name, needed to reset route
     MeshNodeType type = MeshNodeType::UNKNOWN;
     char text[MAX_MSG_TEXT_LEN] = {};       // copy, for resend
+    uint32_t timestamp = 0;                 // original unix ts, reused for retries
     uint32_t ackTags[DM_STAGE_COUNT] = {};  // expectedAck per attempt (stage)
     uint32_t sentAtMs = 0;                  // millis() of last send
     uint32_t timeoutMs = 0;                 // max(stageTable, companionEstimate)
@@ -325,6 +326,23 @@ class MeshCoreClient {
     }
   };
   PendingDm _pendingDm = {};
+
+  // Duplicate suppression for received DMs. A sender's retry attempts share
+  // the message timestamp and text — only the attempt byte differs — so they
+  // pass the mesh payload-hash dedup and would be stored as separate
+  // messages. Drop arrivals whose (sender, timestamp, text) was already
+  // delivered recently.
+  static constexpr uint8_t RX_DEDUP_SLOTS = 8;
+  struct RxDedupEntry {
+    uint8_t pubkeyPrefix[6] = {};
+    uint32_t timestamp = 0;
+    uint32_t textHash = 0;
+    bool valid = false;
+  };
+  RxDedupEntry rxDedup[RX_DEDUP_SLOTS] = {};
+  uint8_t rxDedupNext = 0;
+  bool isDuplicateRx(const MeshCoreMessage& msg);
+  void rememberRx(const MeshCoreMessage& msg);
 
   void startDmEscalation();
   void resendDm(uint8_t attempt);

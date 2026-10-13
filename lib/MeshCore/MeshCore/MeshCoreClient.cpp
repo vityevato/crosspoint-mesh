@@ -3,7 +3,9 @@
 #include <Logging.h>
 #include <NimBLEDevice.h>
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 
 #include "MeshCoreClock.h"
 #include "MeshCoreGpsParse.h"
@@ -61,6 +63,16 @@ struct InFlightScope {
 /// each step to attribute the spend in /system.log (grep tag "MEMM").
 void logBleHeap(const char* step) {
   LOG_DBG("MEMM", "%s free=%u largest=%u", step, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+}
+
+/// FNV-1a fingerprint of a received message text, for duplicate detection.
+uint32_t fnv1a32(const char* s) {
+  uint32_t h = 2166136261u;
+  for (; *s != '\0'; ++s) {
+    h ^= static_cast<uint8_t>(*s);
+    h *= 16777619u;
+  }
+  return h;
 }
 
 /// BLE worker task stack. Reviewed against the measured high-water mark
@@ -736,6 +748,10 @@ bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const cha
   snprintf(_pendingDm.name, sizeof(_pendingDm.name), "%s", contact.name);
   _pendingDm.type = contact.type;
   snprintf(_pendingDm.text, sizeof(_pendingDm.text), "%s", text);
+  // Reuse this timestamp for every retry so all attempts of one logical send
+  // are recognisable as the same message (the attempt byte already makes each
+  // ACK hash unique).
+  _pendingDm.timestamp = ts;
   _pendingDm.awaitingSent = true;
   _pendingDm.stage = 0;
 
@@ -1158,6 +1174,23 @@ void MeshCoreClient::handleCompanionErrorResponse(const uint8_t* data, size_t le
   LOG_ERR("MESH", "Error response from companion: cmd=0x%02X err=%u", (unsigned)inFlightCmd, (unsigned)err);
 }
 
+bool MeshCoreClient::isDuplicateRx(const MeshCoreMessage& msg) {
+  const uint32_t textHash = fnv1a32(msg.text);
+  return std::any_of(std::begin(rxDedup), std::end(rxDedup), [&](const RxDedupEntry& e) {
+    return e.valid && e.timestamp == msg.timestamp && e.textHash == textHash &&
+           memcmp(e.pubkeyPrefix, msg.pubkeyPrefix, sizeof(e.pubkeyPrefix)) == 0;
+  });
+}
+
+void MeshCoreClient::rememberRx(const MeshCoreMessage& msg) {
+  RxDedupEntry& e = rxDedup[rxDedupNext];
+  rxDedupNext = static_cast<uint8_t>((rxDedupNext + 1) % RX_DEDUP_SLOTS);
+  memcpy(e.pubkeyPrefix, msg.pubkeyPrefix, sizeof(e.pubkeyPrefix));
+  e.timestamp = msg.timestamp;
+  e.textHash = fnv1a32(msg.text);
+  e.valid = true;
+}
+
 void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
   if (len == 0) return;
   uint8_t pktType = data[0];
@@ -1299,11 +1332,20 @@ void MeshCoreClient::processResponse(const uint8_t* data, size_t len) {
     case MeshProto::PKT_CONTACT_MSG_V3: {
       MeshCoreMessage msg = {};
       if (MeshProto::parseContactMessage(data, len, msg)) {
-        LOG_DBG("MESH", "Contact msg from %02X%02X%02X: %.40s", msg.pubkeyPrefix[0], msg.pubkeyPrefix[1],
-                msg.pubkeyPrefix[2], msg.text);
         msg.direction = MsgDirection::RECEIVED;
         msg.type = MsgType::DIRECT;
-        if (msgCb) msgCb(msg, msgCbCtx);
+        // Retry attempts of one logical send share timestamp and text (only
+        // the attempt byte differs), so the mesh payload-hash dedup lets each
+        // attempt through. Drop repeats already delivered to the UI.
+        if (isDuplicateRx(msg)) {
+          LOG_DBG("MESH", "Contact msg duplicate dropped: %02X%02X%02X ts=%lu", msg.pubkeyPrefix[0],
+                  msg.pubkeyPrefix[1], msg.pubkeyPrefix[2], (unsigned long)msg.timestamp);
+        } else {
+          LOG_DBG("MESH", "Contact msg from %02X%02X%02X: %.40s", msg.pubkeyPrefix[0], msg.pubkeyPrefix[1],
+                  msg.pubkeyPrefix[2], msg.text);
+          if (msgCb) msgCb(msg, msgCbCtx);
+        }
+        rememberRx(msg);  // refresh the entry so long bursts stay suppressed
         // Drain the companion's offline queue (see channel-msg comment above).
         drainNextMessage();
       } else {
@@ -1546,7 +1588,8 @@ void MeshCoreClient::resendDm(uint8_t attempt) {
   if (!_pendingDm.active) return;
 
   uint8_t buf[CMD_BUF_SIZE];
-  uint32_t ts = meshcoreNowUtc();
+  // Same timestamp as the first attempt — a retry is the same logical message.
+  const uint32_t ts = _pendingDm.timestamp != 0 ? _pendingDm.timestamp : meshcoreNowUtc();
   size_t len = MeshProto::buildSendDirectMsg(buf, sizeof(buf), _pendingDm.pubkey, ts, _pendingDm.text, attempt);
   if (len == 0) return;
 
