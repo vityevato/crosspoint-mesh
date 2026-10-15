@@ -604,7 +604,7 @@ bool MeshCoreThreadActivity::_loopInputConfirm() {
             requestUpdate();
             break;
           }
-          client.resetPath(found);
+          client.resetPath(found.publicKey);
           _toast.show(tr(STR_PATH_RESET), 3000);
           currentTab = Tab::MESSAGES;
           selectedIndex = 0;

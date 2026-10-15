@@ -746,7 +746,6 @@ bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const cha
   _pendingDm.msgId = msgId;
   memcpy(_pendingDm.pubkey, contact.publicKey, 32);
   snprintf(_pendingDm.name, sizeof(_pendingDm.name), "%s", contact.name);
-  _pendingDm.type = contact.type;
   snprintf(_pendingDm.text, sizeof(_pendingDm.text), "%s", text);
   // Reuse this timestamp for every retry so all attempts of one logical send
   // are recognisable as the same message (the attempt byte already makes each
@@ -771,17 +770,17 @@ bool MeshCoreClient::sendDirectMessage(const MeshCoreContact& contact, const cha
   return queued;
 }
 
-bool MeshCoreClient::resetPath(const MeshCoreContact& contact) {
-  // Build CMD_ADD_UPDATE_CONTACT with pathLength=0xFF and zeroed 64-byte path.
-  // This tells the companion to clear its stored route and re-learn it
-  // on the next round-trip. We pass the real name/type to avoid clobbering
-  // the contact's display name on the companion.
-  MeshCoreContact resetContact = contact;
-  resetContact.pathLength = 0xFF;
-  // buildAddUpdateContact zeros the 64-byte path — exactly what we want.
-  const bool queued = addUpdateContact(resetContact);
+bool MeshCoreClient::resetPath(const uint8_t* pubkey32) {
+  // CMD_RESET_PATH clears the companion's stored route (out_path_len =
+  // UNKNOWN) without touching any other contact field. Do NOT use
+  // CMD_ADD_UPDATE_CONTACT for this: it rewrites the whole record, and a
+  // partially-filled contact silently clears the companion-side favourite
+  // flag (and last_advert_timestamp) on every DM flood escalation.
+  uint8_t buf[1 + 32];
+  size_t len = MeshProto::buildResetPath(buf, sizeof(buf), pubkey32);
+  const bool queued = len > 0 && enqueueCmd(buf, len, MeshProto::PKT_OK);
   if (queued && pathResetCb) {
-    pathResetCb(contact.publicKey, pathResetCbCtx);
+    pathResetCb(pubkey32, pathResetCbCtx);
   }
   return queued;
 }
@@ -1571,12 +1570,7 @@ void MeshCoreClient::startDmEscalation() {
   // re-learned from a late path-return while the flood was in flight.
   if (_pendingDm.stage >= 2) {
     LOG_INF("MESH", "DM escalation: resetting path before flood stage for %s", _pendingDm.name);
-    MeshCoreContact resetContact = {};
-    memcpy(resetContact.publicKey, _pendingDm.pubkey, 32);
-    snprintf(resetContact.name, sizeof(resetContact.name), "%s", _pendingDm.name);
-    resetContact.type = _pendingDm.type;
-    resetContact.pathLength = 0xFF;
-    resetPath(resetContact);
+    resetPath(_pendingDm.pubkey);
   }
 
   LOG_INF("MESH", "DM escalation: resending msgId=%lu stage=%d attempt=%d", (unsigned long)_pendingDm.msgId,

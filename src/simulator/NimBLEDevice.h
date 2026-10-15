@@ -390,6 +390,11 @@ class NimBLERemoteCharacteristic {
       mockHandleRemoveContact(this, data, len);
       return true;
     }
+    if (cmd == 0x0D) {  // CMD_RESET_PATH → PKT_OK (companion clears route only)
+      injectPktOk();
+      LOG_INF("MOCK", "CMD_RESET_PATH → PKT_OK");
+      return true;
+    }
     // All other commands: ACK write, no response
     return true;
   }
