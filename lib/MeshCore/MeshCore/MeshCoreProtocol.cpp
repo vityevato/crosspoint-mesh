@@ -227,6 +227,18 @@ size_t buildRemoveContact(uint8_t* out, size_t maxLen, const uint8_t* pubkey32) 
   return NEEDED;
 }
 
+size_t buildResetPath(uint8_t* out, size_t maxLen, const uint8_t* pubkey32) {
+  // Format: 0x0D <pubkey[32]>  (MyMesh.cpp: CMD_RESET_PATH)
+  static constexpr size_t NEEDED = 1 + 32;
+  if (maxLen < NEEDED) {
+    LOG_ERR("MESH", "buildResetPath: buffer too small");
+    return 0;
+  }
+  out[0] = CMD_RESET_PATH;
+  memcpy(out + 1, pubkey32, 32);
+  return NEEDED;
+}
+
 // --- Packet parsers ---
 
 bool parseSelfInfo(const uint8_t* data, size_t len, MeshCoreCompanion& out) {

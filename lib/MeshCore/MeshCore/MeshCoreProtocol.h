@@ -15,6 +15,7 @@ static constexpr uint8_t CMD_SEND_DM = 0x02;
 static constexpr uint8_t CMD_SEND_CHAN_MSG = 0x03;
 static constexpr uint8_t CMD_GET_CONTACTS = 0x04;
 static constexpr uint8_t CMD_ADD_UPDATE_CONTACT = 0x09;
+static constexpr uint8_t CMD_RESET_PATH = 0x0D;
 static constexpr uint8_t CMD_REMOVE_CONTACT = 0x0F;
 static constexpr uint8_t CMD_SEND_SELF_ADVERT = 0x07;
 static constexpr uint8_t CMD_GET_MESSAGE = 0x0A;
@@ -117,6 +118,12 @@ size_t buildAddUpdateContact(uint8_t* out, size_t maxLen, const MeshCoreContact&
 
 // CMD_REMOVE_CONTACT: 0x0F <pubkey[32]>
 size_t buildRemoveContact(uint8_t* out, size_t maxLen, const uint8_t* pubkey32);
+
+// CMD_RESET_PATH: 0x0D <pubkey[32]> — clears the companion's stored route
+// (out_path_len = UNKNOWN) and nothing else: the favourite flag, name, type
+// and last_advert_timestamp stay untouched. Expects PKT_OK; the companion
+// re-learns the route on the next round-trip.
+size_t buildResetPath(uint8_t* out, size_t maxLen, const uint8_t* pubkey32);
 
 // CMD_GET_CHANNEL: 0x1F <index>
 size_t buildGetChannel(uint8_t* out, size_t maxLen, uint8_t channelIdx);

@@ -97,10 +97,11 @@ class MeshCoreClient {
   /// Wire format: CMD_REMOVE_CONTACT <pubkey[32]>. Expects PKT_OK.
   bool removeContact(const uint8_t* pubkey32);
   bool sendSelfAdvert(bool flood);
-  /// Reset the companion's stored route for a contact by sending
-  /// CMD_ADD_UPDATE_CONTACT with pathLength=0xFF (no path).
-  /// The companion will re-learn the route on the next round-trip.
-  bool resetPath(const MeshCoreContact& contact);
+  /// Reset the companion's stored route for a contact via CMD_RESET_PATH.
+  /// Only out_path_len is cleared (to "unknown"); the favourite flag, name,
+  /// type and last_advert_timestamp on the companion are NOT touched — unlike
+  /// CMD_ADD_UPDATE_CONTACT, which rewrites the whole record.
+  bool resetPath(const uint8_t* pubkey32);
 
   bool isCommandPending() const { return cmdPending; }
   /// Result of the last completed command. Reset on disconnect.
@@ -304,10 +305,9 @@ class MeshCoreClient {
   // are meaningless across a reboot (millis() resets, ACK slots reset).
   struct PendingDm {
     bool active = false;
-    uint32_t msgId = 0;       // store-assigned id, to update DeliveryStatus
-    uint8_t pubkey[32] = {};  // recipient, for resend / store update
-    char name[64] = {};       // contact name, needed to reset route
-    MeshNodeType type = MeshNodeType::UNKNOWN;
+    uint32_t msgId = 0;                     // store-assigned id, to update DeliveryStatus
+    uint8_t pubkey[32] = {};                // recipient, for resend / store update
+    char name[64] = {};                     // contact name, for the escalation log
     char text[MAX_MSG_TEXT_LEN] = {};       // copy, for resend
     uint32_t timestamp = 0;                 // original unix ts, reused for retries
     uint32_t ackTags[DM_STAGE_COUNT] = {};  // expectedAck per attempt (stage)
