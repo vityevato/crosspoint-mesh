@@ -53,6 +53,8 @@ Some flows use `src/activities/ActivityWithSubactivity.h` to host nested activit
 - `onEnter()` and `onExit()` manage setup/teardown
 - `loop()` handles per-frame behavior
 - `skipLoopDelay()` and `preventAutoSleep()` are used by long-running flows (for example web server mode)
+- `preventIdlePowerSaving()` keeps the CPU at full speed without blocking
+  auto-sleep (MeshCore: the idle downclock destabilises the BT controller)
 
 Top-level activity groups:
 

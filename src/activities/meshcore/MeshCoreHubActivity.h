@@ -52,12 +52,13 @@ class MeshCoreHubActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  /// Always prevent auto-sleep while the Hub is open, exactly like the stable
-  /// pre-reconnect firmware. Allowing auto-sleep during the reconnect dropped
-  /// the CPU into low-power mode, which destabilised the ESP32-C3 BT
-  /// controller's timing and crashed it (hci_reset / r_rwip_reset) at the
-  /// connect timeout. The user can still sleep manually via the power button.
-  bool preventAutoSleep() override { return true; }
+  /// Auto-sleep is allowed: the timeout path is the same graceful deep sleep
+  /// as the power button (BLE teardown first), so a device forgotten in
+  /// MeshCore does not drain the battery. The CPU must stay at full speed
+  /// while the Hub is open though — the idle downclock destabilised the
+  /// ESP32-C3 BT controller's timing and crashed it (hci_reset / r_rwip_reset)
+  /// at the connect timeout.
+  bool preventIdlePowerSaving() override { return true; }
   bool isMeshCoreActivity() const override { return true; }
 
  private:

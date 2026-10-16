@@ -382,6 +382,12 @@ bool ActivityManager::preventAutoSleep() const {
          (currentActivity && currentActivity->preventAutoSleep());
 }
 
+bool ActivityManager::preventIdlePowerSaving() const {
+  return std::any_of(stackActivities.begin(), stackActivities.end(),
+                     [](const auto& activity) { return activity->preventIdlePowerSaving(); }) ||
+         (currentActivity && currentActivity->preventIdlePowerSaving());
+}
+
 bool ActivityManager::requiresExclusiveStorageLoop() const {
   return currentActivity && currentActivity->requiresExclusiveStorageLoop();
 }
