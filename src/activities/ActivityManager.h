@@ -111,6 +111,7 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  bool preventIdlePowerSaving() const;
   bool requiresExclusiveStorageLoop() const;
   bool isReaderActivity() const;
   bool isMeshCoreActivity() const;

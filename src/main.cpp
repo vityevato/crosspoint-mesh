@@ -735,10 +735,19 @@ void loop() {
 
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
-  if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || gpio.wasTouchActivity() || halTiltSensor.hadActivity() ||
-      activityManager.preventAutoSleep()) {
-    lastActivityTime = millis();         // Reset inactivity timer
-    powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
+  const bool userActivity =
+      gpio.wasAnyPressed() || gpio.wasAnyReleased() || gpio.wasTouchActivity() || halTiltSensor.hadActivity();
+  // Auto-sleep timer: reset by user activity, or held indefinitely while an
+  // activity that must stay awake is on screen.
+  if (userActivity || activityManager.preventAutoSleep()) {
+    lastActivityTime = millis();
+  }
+  // Idle CPU downclock: a separate concern from auto-sleep. Activities that
+  // must stay awake keep the CPU fast as before; MeshCore additionally keeps
+  // the CPU fast while still allowing auto-sleep (the downclock destabilised
+  // the BT controller, a graceful deep sleep does not).
+  if (userActivity || activityManager.preventAutoSleep() || activityManager.preventIdlePowerSaving()) {
+    powerManager.setPowerSaving(false);  // Restore normal CPU frequency
   }
 
   // Let wake continue as soon as its hold has been verified. The release can
@@ -867,7 +876,8 @@ void loop() {
     powerManager.setPowerSaving(false);  // Make sure we're at full performance when skipLoopDelay is requested
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
-    if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
+    if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS &&
+        !activityManager.preventIdlePowerSaving()) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
       delay(50);

@@ -43,6 +43,12 @@ class Activity {
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
+  // Keep the CPU at full speed while the inactivity timer still runs (i.e.
+  // auto-sleep stays allowed). Defaults to preventAutoSleep() so activities
+  // that must stay awake keep the CPU fast too, as before. MeshCore overrides
+  // this to true: the idle downclock destabilised the ESP32-C3 BT controller,
+  // but a graceful deep sleep does not.
+  virtual bool preventIdlePowerSaving() { return preventAutoSleep(); }
   // Exclusive storage activities suspend global controls and normal activity
   // transitions so no filesystem code races a raw SD-card owner.
   virtual bool requiresExclusiveStorageLoop() const { return false; }

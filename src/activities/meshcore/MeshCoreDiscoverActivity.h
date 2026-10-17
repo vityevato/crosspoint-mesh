@@ -30,7 +30,9 @@ class MeshCoreDiscoverActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool preventAutoSleep() override { return true; }
+  // Auto-sleep is allowed here (graceful deep sleep, like the power button);
+  // the CPU stays at full speed while MeshCore is open (see the Hub header).
+  bool preventIdlePowerSaving() override { return true; }
 
  private:
   MeshCoreClient& client;

@@ -56,7 +56,9 @@ class MeshCoreThreadActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool preventAutoSleep() override { return true; }
+  // Auto-sleep is allowed here (graceful deep sleep, like the power button);
+  // the CPU stays at full speed while MeshCore is open (see the Hub header).
+  bool preventIdlePowerSaving() override { return true; }
 
   /// Called by Hub when a delivery callback fires for this conversation.
   /// Reloads visible messages from store and triggers a repaint, keeping the
